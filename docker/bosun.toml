@@ -1,0 +1,23 @@
+# Container defaults. Inside a container both listeners must bind 0.0.0.0 to be reachable through published
+# ports; what keeps them private is publishing them on 127.0.0.1 only (see compose.example.yaml).
+
+project = "default"
+
+[proxy]
+listen = "0.0.0.0:8080"
+# Docker's port publishing makes every client appear to come from a private bridge address, so this allowlist
+# alone does not restrict who can use the proxy: publish the port on 127.0.0.1, or add [proxy.auth] below
+# before publishing it anywhere else.
+allow_clients = ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"]
+
+# [proxy.auth]
+# username = "bosun"
+# password = "at least twelve characters"
+
+[api]
+listen = "0.0.0.0:8090"
+# Host names you reach the UI by, besides localhost/127.0.0.1 (DNS rebinding protection rejects all others):
+hosts = []
+# If you publish the UI on a different host port, or put it behind a reverse proxy, list the exact origin:
+# origins = ["http://localhost:9000", "https://bosun.lab.example"]
+# secure_cookies = true   # behind a TLS reverse proxy

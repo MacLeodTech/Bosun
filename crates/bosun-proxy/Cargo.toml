@@ -1,0 +1,43 @@
+[package]
+name = "bosun-proxy"
+description = "The intercepting MITM proxy: HTTP/1.1, HTTP/2, WebSockets, intercept queue, match and replace."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-ca.workspace = true
+bosun-store.workspace = true
+bosun-scope.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
+tower-service.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+regex.workspace = true
+base64.workspace = true
+subtle.workspace = true
+ipnet.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+reqwest.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+rcgen.workspace = true
+
+[lints]
+workspace = true

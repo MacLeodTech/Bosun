@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No IPC at all: the window shows the same web UI as a browser would, served by the in-process engine over loopback, and gets no Tauri commands.",
+  "windows": [],
+  "permissions": []
+}

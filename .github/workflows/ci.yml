@@ -1,0 +1,208 @@
+# Tests plus the security gate. Runs on pull requests, pushes to main, and once a week (new CVEs land without
+# any code change). Results go to the Security tab (code scanning) as well as failing the job.
+#
+# What fails the build:
+#   - rustfmt / clippy -D warnings / cargo test failures
+#   - the web UI type check (svelte-check, warnings are errors) or build
+#   - cargo-deny: a RustSec advisory, a disallowed licence, a banned crate (OpenSSL), an unknown source
+#   - npm audit: a high or critical advisory in the UI's dependencies
+#   - gitleaks: any secret in the git history
+#   - Trivy (repo and image): a fixable HIGH or CRITICAL. Unfixed ones are reported, not enforced.
+#
+# Runners: `vars.RUNNER` picks the pool (default GitHub-hosted). Jobs that need Docker or apt run on
+# GitHub-hosted runners or the homelab-sysbox pool, never homelab-lite.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 1"   # Mondays
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.100.0
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Toolchain
+        run: &toolchain |
+          # GitHub-hosted images ship rustup; the homelab runners don't, so install it into their persistent
+          # /cache the first time. The exact toolchain version is pinned and rustup verifies its downloads.
+          if ! command -v rustup >/dev/null; then
+            if [ -d /cache ] && [ -w /cache ]; then
+              export RUSTUP_HOME=/cache/rustup CARGO_HOME=/cache/cargo
+              rm -rf "$CARGO_HOME/registry/src"
+            else
+              export RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo"
+            fi
+            echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+            echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+            echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+            export PATH="$CARGO_HOME/bin:$PATH"
+            if ! command -v rustup >/dev/null; then
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+            fi
+          fi
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Format
+        run: cargo fmt --all --check
+      # Default members: everything except the desktop shell (built in its own job, it needs the webview).
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
+
+  web:
+    name: Web UI (check, build, audit)
+    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - name: Install (lockfile only, no install scripts)
+        working-directory: web
+        run: npm ci --no-fund --ignore-scripts
+      - name: Type check
+        working-directory: web
+        run: npm run check
+      - name: Build
+        working-directory: web
+        run: npm run build
+      - name: No inline script or style in the build (the UI's CSP forbids them)
+        working-directory: web
+        run: |
+          ! grep -E '<script>|<script [^>]*>[^<]|<style|style=' dist/index.html
+      - name: npm audit
+        working-directory: web
+        run: npm audit --audit-level=high
+
+  deny:
+    name: cargo-deny (advisories, licences, bans, sources)
+    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Toolchain
+        run: *toolchain
+      # A prebuilt release verified against a pinned SHA-256, kept in the job's temp dir (never the shared /cache).
+      - name: Install cargo-deny
+        env:
+          VERSION: 0.21.0
+          SHA256: a2170b854ff697e79e39c4c538981c9c1bdd803addbae6719a4cb66b4585a903
+        run: |
+          set -euo pipefail
+          f=cargo-deny-$VERSION-x86_64-unknown-linux-musl
+          curl --proto '=https' --tlsv1.2 -sSfL -o "$RUNNER_TEMP/cd.tgz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$VERSION/$f.tar.gz"
+          echo "$SHA256  $RUNNER_TEMP/cd.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/cd.tgz" -C "$RUNNER_TEMP" "$f/cargo-deny"
+          echo "$RUNNER_TEMP/$f" >> "$GITHUB_PATH"
+      - name: cargo deny
+        run: cargo deny --workspace check
+
+  desktop:
+    name: Desktop shell builds (Linux)
+    # Needs apt for the webview libraries, so always a GitHub-hosted runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - name: Webview libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+      - name: Toolchain
+        run: *toolchain
+      - name: Web UI
+        run: npm --prefix web ci --no-fund --ignore-scripts && npm --prefix web run build
+      - name: Build
+        run: cargo build --locked -p bosun-desktop
+
+  security:
+    name: SAST + SCA (gitleaks, Trivy fs)
+    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: {fetch-depth: 0}   # gitleaks scans the whole history
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: gitleaks (secrets, full history)
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --no-banner --redact .
+      - name: Trivy fs (dependencies, Dockerfile/compose misconfig, secrets)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: sarif
+          output: trivy-fs.sarif
+          limit-severities-for-sarif: true
+      - name: Upload Trivy fs results
+        if: ${{ always() && hashFiles('trivy-fs.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        with: {sarif_file: trivy-fs.sarif, category: trivy-fs}
+
+  image:
+    name: Container image (build + Trivy)
+    # Needs Docker: GitHub-hosted, or the homelab-sysbox pool.
+    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: bosun:ci
+      - name: Smoke test (starts, prints the setup code, refuses an open proxy)
+        run: |
+          set -euo pipefail
+          docker run --rm bosun:ci --version
+          docker run -d --name bosun --read-only --cap-drop ALL -p 127.0.0.1:18090:8090 bosun:ci
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18090/api/v1/status && break; sleep 1; done
+          docker logs bosun 2>&1 | grep -q "setup code"
+          docker rm -f bosun
+      - name: Trivy image (a fixable HIGH or CRITICAL fails)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: image
+          image-ref: bosun:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: sarif
+          output: trivy-image.sarif
+          limit-severities-for-sarif: true
+      - name: Upload Trivy image results
+        if: ${{ always() && hashFiles('trivy-image.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
+        with: {sarif_file: trivy-image.sarif, category: trivy-image}

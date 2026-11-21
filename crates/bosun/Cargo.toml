@@ -1,0 +1,40 @@
+[package]
+name = "bosun"
+description = "Bosun: a free, low-footprint intercepting proxy and DAST toolkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+name = "bosun"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bosun"
+path = "src/main.rs"
+
+[dependencies]
+bosun-model.workspace = true
+bosun-ca.workspace = true
+bosun-store.workspace = true
+bosun-scope.workspace = true
+bosun-proxy.workspace = true
+bosun-api.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

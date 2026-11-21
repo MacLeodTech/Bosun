@@ -1,0 +1,45 @@
+# cargo-deny policy. Run: cargo deny --workspace check
+
+[graph]
+all-features = false
+
+[advisories]
+# RustSec database. Yanked crates are errors; unmaintained crates are reported.
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",   # webpki-roots (the Mozilla root list)
+  "MPL-2.0",               # file-level copyleft only; used unmodified
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# Our own crates are never published and carry the project licence (LICENSE).
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+# No OpenSSL in the default build: TLS is rustls only. (A future `legacy-tls` feature for very old targets will
+# be opt-in and listed here as an exception.)
+deny = [
+  { name = "openssl-sys" },
+  { name = "native-tls" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

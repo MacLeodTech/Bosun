@@ -1,0 +1,8 @@
+target
+web/node_modules
+web/dist
+data
+**/*.bosun
+.env
+.git
+crates/bosun-desktop/gen

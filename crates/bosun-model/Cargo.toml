@@ -1,0 +1,16 @@
+[package]
+name = "bosun-model"
+description = "Core data types shared by every Bosun component. No I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+httparse.workspace = true
+
+[lints]
+workspace = true

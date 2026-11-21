@@ -1,0 +1,28 @@
+# Bosun in a container. Start: docker compose -f compose.example.yaml up -d
+# First run: `docker compose logs bosun` shows the one-time setup link/code for the admin account.
+services:
+  bosun:
+    image: ghcr.io/macleodtech/bosun:latest
+    build: .
+    restart: unless-stopped
+    ports:
+      # Loopback only. To reach it from other machines, add [proxy.auth] to the config and use a TLS
+      # reverse proxy for the UI (set api.origins and api.secure_cookies).
+      - "127.0.0.1:8080:8080"   # proxy
+      - "127.0.0.1:8090:8090"   # web UI / API
+    volumes:
+      - bosun-data:/data
+    # Optional: keep the data key out of the data volume.
+    # environment:
+    #   BOSUN_DATA_KEY_FILE: /run/secrets/bosun_data_key
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 256
+
+volumes:
+  bosun-data:

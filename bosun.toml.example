@@ -1,0 +1,51 @@
+# Bosun configuration. Every setting is optional; the defaults are the safe choice.
+# Unknown keys are errors, so typos don't go unnoticed.
+
+# Where keys, the CA, accounts and projects live. Default: $BOSUN_DATA_DIR, else
+# ~/.local/share/bosun (Linux), ~/Library/Application Support/Bosun (macOS), %APPDATA%\Bosun.
+# data_dir = "/data"
+
+# The data key encrypts the CA private key and other secrets at rest. Default: <data_dir>/data.key
+# (created on first run, mode 0600). In containers prefer a mounted secret, or $BOSUN_DATA_KEY (base64).
+# data_key_file = "/run/secrets/bosun_data_key"
+
+# Project name (stored as <data_dir>/projects/<name>.bosun) or a path to a .bosun file.
+project = "default"
+
+[proxy]
+# Loopback by default. Any other address needs [proxy.auth] or allow_clients, so the proxy is never open.
+listen = "127.0.0.1:8080"
+# allow_clients = ["192.168.1.0/24"]
+http2 = true
+# Check upstream certificates (off by default: testing targets often have self-signed certificates).
+verify_upstream_tls = false
+# Hosts to tunnel without interception (certificate-pinned apps), e.g. ["*.apple.com"].
+tls_passthrough = []
+# Accept requests from clients that don't know they are proxied (DNS/iptables redirection).
+invisible = false
+record_out_of_scope = true
+upstream_timeout_secs = 120
+
+# [proxy.auth]
+# username = "bosun"
+# password = "at least twelve characters"
+
+# [proxy.upstream]
+# kind = "http"           # or "socks5"
+# addr = "127.0.0.1:3128"
+
+[api]
+# The web UI and API. Loopback by default.
+listen = "127.0.0.1:8090"
+# Extra host names the UI is reached by (DNS rebinding protection rejects all others).
+hosts = []
+# Exact extra origins, e.g. when behind a reverse proxy: ["https://bosun.lab.example"]
+origins = []
+# Serve the UI over HTTPS with a certificate from this install's CA.
+tls = false
+# secure_cookies = true   # set when a TLS reverse proxy sits in front
+session_hours = 12
+
+[browser]
+# Browser for "Open browser". Default: bundled, then a system Chromium/Chrome/Edge/Brave.
+# path = "/usr/bin/chromium"

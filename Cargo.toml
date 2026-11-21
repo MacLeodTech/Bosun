@@ -1,0 +1,97 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/bosun-model",
+  "crates/bosun-ca",
+  "crates/bosun-store",
+  "crates/bosun-scope",
+  "crates/bosun-proxy",
+  "crates/bosun-api",
+  "crates/bosun",
+  "crates/bosun-desktop",
+]
+# The desktop shell needs the WebKitGTK system libraries (libwebkit2gtk-4.1-dev) on Linux,
+# so plain `cargo build` / `cargo test` skip it. Build it with `cargo build -p bosun-desktop`.
+default-members = [
+  "crates/bosun-model",
+  "crates/bosun-ca",
+  "crates/bosun-store",
+  "crates/bosun-scope",
+  "crates/bosun-proxy",
+  "crates/bosun-api",
+  "crates/bosun",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+license-file = "LICENSE"
+publish = false
+
+[workspace.dependencies]
+bosun-model = { path = "crates/bosun-model" }
+bosun-ca = { path = "crates/bosun-ca" }
+bosun-store = { path = "crates/bosun-store" }
+bosun-scope = { path = "crates/bosun-scope" }
+bosun-proxy = { path = "crates/bosun-proxy" }
+bosun-api = { path = "crates/bosun-api" }
+bosun = { path = "crates/bosun" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { version = "1.2", default-features = false, features = ["parse", "serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal", "fs", "sync", "time", "io-util", "process"] }
+bytes = "1"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "client-legacy", "client-proxy", "http1", "http2"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto", "x509-parser"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+zstd = { version = "0.13", default-features = false }
+flate2 = "1"
+brotli = { version = "8", default-features = false, features = ["std"] }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.9"
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+httparse = "1"
+regex = "1"
+lru = "0.18.2"
+time = { version = "0.3", features = ["formatting", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "tokio", "json", "query", "ws"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+cookie = "0.18"
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+mime_guess = "2"
+ipnet = { version = "2", features = ["serde"] }
+tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "http2"] }
+tokio-tungstenite = "0.27"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tower-service = "0.3"
+subtle = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+dbg_macro = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

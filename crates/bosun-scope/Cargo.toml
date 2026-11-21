@@ -1,0 +1,17 @@
+[package]
+name = "bosun-scope"
+description = "Scope rules and the outbound-traffic gate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+serde.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

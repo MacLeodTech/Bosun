@@ -9,8 +9,7 @@
 #   - gitleaks: any secret in the git history
 #   - Trivy (repo and image): a fixable HIGH or CRITICAL. Unfixed ones are reported, not enforced.
 #
-# Runners: `vars.RUNNER` picks the pool (default GitHub-hosted). Jobs that need Docker or apt run on
-# GitHub-hosted runners or the homelab-sysbox pool, never homelab-lite.
+# Runners: GitHub-hosted only (this repo is public; never the homelab self-hosted pools).
 name: ci
 
 on:
@@ -34,7 +33,7 @@ env:
 jobs:
   rust:
     name: Rust (fmt, clippy, test)
-    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Toolchain
@@ -69,7 +68,7 @@ jobs:
 
   web:
     name: Web UI (check, build, audit)
-    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
@@ -94,7 +93,7 @@ jobs:
 
   deny:
     name: cargo-deny (advisories, licences, bans, sources)
-    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Toolchain
@@ -138,7 +137,7 @@ jobs:
 
   security:
     name: SAST + SCA (gitleaks, Trivy fs)
-    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
@@ -170,8 +169,8 @@ jobs:
 
   image:
     name: Container image (build + Trivy)
-    # Needs Docker: GitHub-hosted, or the homelab-sysbox pool.
-    runs-on: ${{ fromJSON(vars.RUNNER || '"ubuntu-latest"') }}
+    # Needs Docker.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write

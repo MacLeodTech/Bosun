@@ -196,6 +196,7 @@ jobs:
           scan-type: image
           image-ref: bosun:ci
           severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
           ignore-unfixed: true
           exit-code: "1"
           format: sarif

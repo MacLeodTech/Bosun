@@ -1,0 +1,5 @@
+# Each entry needs a reason and an expiry (exp:). Re-check when it expires.
+#
+# libssl3 in the distroless base image. The fix is in Debian but the newest distroless image does not have it yet.
+# Bosun does not use OpenSSL (TLS is rustls) and never speaks DTLS, so the base image's libssl3 is not reachable.
+CVE-2026-84782 exp:2026-12-14

@@ -99,10 +99,19 @@ test('the render view cannot run script from a hostile page', async () => {
   expect(seen.some((s) => s.path === '/hit')).toBe(false);
 });
 
+/// Switch request interception on or off and wait until the server has saved it. The checkbox flips in the browser at
+/// once, but the proxy only holds requests after the `PUT /intercept` has returned.
+async function setIntercept(on: boolean) {
+  const box = page.getByLabel('Intercept requests');
+  const saved = page.waitForResponse((r) => r.request().method() === 'PUT' && /\/intercept$/.test(r.url()));
+  await box.setChecked(on);
+  expect((await saved).ok()).toBe(true);
+  await expect(box).toBeChecked({ checked: on });
+}
+
 test('intercept: hold a request, edit it, forward it, and the target sees the edit', async () => {
   await page.getByRole('navigation').getByRole('button', { name: 'Intercept' }).click();
-  await page.getByLabel('Intercept requests').check();
-  await expect(page.getByLabel('Intercept requests')).toBeChecked();
+  await setIntercept(true);
 
   const pending = viaProxy(PROXY_PORT, `${TARGET}/echo`);
   await expect(page.locator('.list li button', { hasText: '/echo' })).toBeVisible();
@@ -117,18 +126,18 @@ test('intercept: hold a request, edit it, forward it, and the target sees the ed
   expect(reply.status).toBe(200);
   expect(JSON.parse(reply.body)['x-edited-by-test']).toBe('yes');
 
-  await page.getByLabel('Intercept requests').uncheck();
+  await setIntercept(false);
 });
 
 test('intercept: dropping a request answers the client with an error', async () => {
-  await page.getByLabel('Intercept requests').check();
+  await setIntercept(true);
   const pending = viaProxy(PROXY_PORT, `${TARGET}/dropped`).catch((e) => ({ status: 0, body: String(e) }));
   await expect(page.locator('.list li button', { hasText: '/dropped' })).toBeVisible();
   await page.getByRole('button', { name: 'Drop', exact: true }).click();
   const reply = await pending;
   expect(reply.status).not.toBe(200);
   expect(seen.some((s) => s.path === '/dropped')).toBe(false);
-  await page.getByLabel('Intercept requests').uncheck();
+  await setIntercept(false);
 });
 
 test('projects: a new project starts empty, and the first one comes back with its history', async () => {

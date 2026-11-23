@@ -235,9 +235,15 @@ impl AppDb {
             .optional()?;
         if let Some(mut u) = found {
             if u.role != role {
-                let admins: i64 = tx.query_row("SELECT count(*) FROM users WHERE role = 'admin'", [], |r| r.get(0))?;
+                let admins: i64 =
+                    tx.query_row("SELECT count(*) FROM users WHERE role = 'admin'", [], |r| {
+                        r.get(0)
+                    })?;
                 if !(u.role == Role::Admin && admins <= 1) {
-                    tx.execute("UPDATE users SET role = ?1 WHERE id = ?2", params![role.as_str(), u.id])?;
+                    tx.execute(
+                        "UPDATE users SET role = ?1 WHERE id = ?2",
+                        params![role.as_str(), u.id],
+                    )?;
                     u.role = role;
                 }
             }
@@ -247,7 +253,10 @@ impl AppDb {
         let base: String = email.chars().take(60).collect();
         let mut name = base.clone();
         let mut n = 2;
-        while tx.query_row("SELECT count(*) FROM users WHERE username = ?1", [&name], |r| r.get::<_, i64>(0))? > 0 {
+        while tx.query_row("SELECT count(*) FROM users WHERE username = ?1", [&name], |r| {
+            r.get::<_, i64>(0)
+        })? > 0
+        {
             name = format!("{base}-{n}");
             n += 1;
         }
@@ -258,7 +267,12 @@ impl AppDb {
         )?;
         let id = tx.last_insert_rowid();
         tx.commit()?;
-        Ok(User { id, username: name, role, created_ms: now })
+        Ok(User {
+            id,
+            username: name,
+            role,
+            created_ms: now,
+        })
     }
 
     /// The user and their password hash, for login.

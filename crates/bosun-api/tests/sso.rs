@@ -47,8 +47,14 @@ async fn idp(key: &RsaPrivateKey) -> Idp {
         "jwks_uri": format!("{url}/jwks"), "response_types_supported": ["code"], "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256"]});
     let app = axum::Router::new()
-        .route("/.well-known/openid-configuration", axum::routing::get(move || async move { axum::Json(disc) }))
-        .route("/jwks", axum::routing::get(move || async move { axum::Json(jwks) }));
+        .route(
+            "/.well-known/openid-configuration",
+            axum::routing::get(move || async move { axum::Json(disc) }),
+        )
+        .route(
+            "/jwks",
+            axum::routing::get(move || async move { axum::Json(jwks) }),
+        );
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
     Idp { url }
 }
@@ -68,7 +74,11 @@ fn config(idp: &Idp, proxies: &str) -> SsoConfig {
         client_secret: Some("s3cret".into()),
         public_url: "http://localhost:8090".into(),
         name: "Test".into(),
-        email_roles: [("me@example.com".to_string(), "admin".to_string()), ("you@example.com".to_string(), "viewer".to_string())].into(),
+        email_roles: [
+            ("me@example.com".to_string(), "admin".to_string()),
+            ("you@example.com".to_string(), "viewer".to_string()),
+        ]
+        .into(),
         edge_audience: Some(PROXY_CLIENT.into()),
         edge_trusted_proxies: vec![proxies.parse().unwrap()],
     }
@@ -83,12 +93,31 @@ async fn serve(sso: SsoConfig) -> (SocketAddr, Arc<AppDb>) {
     let api_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = api_l.local_addr().unwrap();
     let proxy_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let pcfg = ProxyConfig { listen: proxy_l.local_addr().unwrap(), ..Default::default() };
+    let pcfg = ProxyConfig {
+        listen: proxy_l.local_addr().unwrap(),
+        ..Default::default()
+    };
     let proxy = Proxy::new(pcfg, ca.clone(), gate.clone(), project.clone(), events.clone()).unwrap();
     let p = proxy.clone();
     tokio::spawn(async move { p.serve(proxy_l, std::future::pending()).await });
-    let cfg = ApiConfig { listen: api, sso: Some(sso), ..Default::default() };
-    let (st, _) = AppState::new(&cfg, Deps { app: app.clone(), project, proxy, gate, ca, events, browser: None }).unwrap();
+    let cfg = ApiConfig {
+        listen: api,
+        sso: Some(sso),
+        ..Default::default()
+    };
+    let (st, _) = AppState::new(
+        &cfg,
+        Deps {
+            app: app.clone(),
+            project,
+            proxy,
+            gate,
+            ca,
+            events,
+            browser: None,
+        },
+    )
+    .unwrap();
     tokio::spawn(bosun_api::serve(st, api_l, std::future::pending()));
     (api, app)
 }
@@ -109,11 +138,22 @@ async fn edge(c: &reqwest::Client, api: SocketAddr, token: Option<&str>) -> (Sta
         r = r.bearer_auth(t);
     }
     let r = r.send().await.unwrap();
-    (r.status(), r.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("").to_string())
+    (
+        r.status(),
+        r.headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string(),
+    )
 }
 
 async fn me(c: &reqwest::Client, api: SocketAddr) -> (StatusCode, Value) {
-    let r = c.get(format!("http://{api}/api/v1/auth/me")).send().await.unwrap();
+    let r = c
+        .get(format!("http://{api}/api/v1/auth/me"))
+        .send()
+        .await
+        .unwrap();
     (r.status(), r.json().await.unwrap_or(Value::Null))
 }
 
@@ -125,7 +165,14 @@ async fn edge_sso_signs_in_listed_addresses_and_refuses_the_rest() {
     let (api, _app) = serve(config(&idp, "127.0.0.0/8")).await;
 
     // The sign-in page learns the button.
-    let r: Value = browser().get(format!("http://{api}/api/v1/auth/sso")).send().await.unwrap().json().await.unwrap();
+    let r: Value = browser()
+        .get(format!("http://{api}/api/v1/auth/sso"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(r["sso"]["edge"], "/auth/oidc/edge");
 
     // A listed, verified address signs in and gets the listed role and an account named after the email.
@@ -153,18 +200,61 @@ async fn edge_sso_signs_in_listed_addresses_and_refuses_the_rest() {
     let cases: Vec<(&str, Option<String>)> = vec![
         ("no token", None),
         ("garbage", Some("not.a.jwt".into())),
-        ("this app's own audience", Some(sign(&key, &idp.claims("own-client", "me@example.com", true, 3600)))),
-        ("another audience", Some(sign(&key, &idp.claims("someone-else", "me@example.com", true, 3600)))),
-        ("another signing key", Some(sign(&other, &idp.claims(PROXY_CLIENT, "me@example.com", true, 3600)))),
-        ("expired", Some(sign(&key, &idp.claims(PROXY_CLIENT, "me@example.com", true, -3600)))),
-        ("unverified email", Some(sign(&key, &idp.claims(PROXY_CLIENT, "me@example.com", false, 3600)))),
-        ("not on the list", Some(sign(&key, &idp.claims(PROXY_CLIENT, "mallory@example.com", true, 3600)))),
+        (
+            "this app's own audience",
+            Some(sign(
+                &key,
+                &idp.claims("own-client", "me@example.com", true, 3600),
+            )),
+        ),
+        (
+            "another audience",
+            Some(sign(
+                &key,
+                &idp.claims("someone-else", "me@example.com", true, 3600),
+            )),
+        ),
+        (
+            "another signing key",
+            Some(sign(
+                &other,
+                &idp.claims(PROXY_CLIENT, "me@example.com", true, 3600),
+            )),
+        ),
+        (
+            "expired",
+            Some(sign(
+                &key,
+                &idp.claims(PROXY_CLIENT, "me@example.com", true, -3600),
+            )),
+        ),
+        (
+            "unverified email",
+            Some(sign(
+                &key,
+                &idp.claims(PROXY_CLIENT, "me@example.com", false, 3600),
+            )),
+        ),
+        (
+            "not on the list",
+            Some(sign(
+                &key,
+                &idp.claims(PROXY_CLIENT, "mallory@example.com", true, 3600),
+            )),
+        ),
     ];
     for (name, tok) in cases {
         let c = browser();
         let (s, loc) = edge(&c, api, tok.as_deref()).await;
-        assert!(s == StatusCode::FOUND && loc.starts_with("/?sso_error="), "{name}: {s} {loc}");
-        assert_eq!(me(&c, api).await.0, StatusCode::UNAUTHORIZED, "{name} left a session");
+        assert!(
+            s == StatusCode::FOUND && loc.starts_with("/?sso_error="),
+            "{name}: {s} {loc}"
+        );
+        assert_eq!(
+            me(&c, api).await.0,
+            StatusCode::UNAUTHORIZED,
+            "{name} left a session"
+        );
     }
 }
 
@@ -176,7 +266,10 @@ async fn edge_sso_refuses_a_peer_that_is_not_the_trusted_proxy() {
     let c = browser();
     let good = sign(&key, &idp.claims(PROXY_CLIENT, "me@example.com", true, 3600));
     let (s, loc) = edge(&c, api, Some(&good)).await;
-    assert!(s == StatusCode::FOUND && loc.starts_with("/?sso_error="), "{s} {loc}");
+    assert!(
+        s == StatusCode::FOUND && loc.starts_with("/?sso_error="),
+        "{s} {loc}"
+    );
     assert_eq!(me(&c, api).await.0, StatusCode::UNAUTHORIZED);
 }
 
@@ -203,12 +296,48 @@ fn unsafe_sso_setups_are_refused() {
     };
     assert!(base.validate().is_ok());
     let bad: Vec<(&str, SsoConfig)> = vec![
-        ("no allow-list", SsoConfig { email_roles: Default::default(), ..base.clone() }),
-        ("http issuer", SsoConfig { issuer: "http://idp.example.com".into(), ..base.clone() }),
-        ("http public url", SsoConfig { public_url: "http://bosun.example.com".into(), ..base.clone() }),
-        ("unknown role", SsoConfig { email_roles: [("a@b.co".to_string(), "root".to_string())].into(), ..base.clone() }),
-        ("upper-case email", SsoConfig { email_roles: [("A@b.co".to_string(), "admin".to_string())].into(), ..base.clone() }),
-        ("edge without proxies", SsoConfig { edge_audience: Some("p".into()), ..base.clone() }),
+        (
+            "no allow-list",
+            SsoConfig {
+                email_roles: Default::default(),
+                ..base.clone()
+            },
+        ),
+        (
+            "http issuer",
+            SsoConfig {
+                issuer: "http://idp.example.com".into(),
+                ..base.clone()
+            },
+        ),
+        (
+            "http public url",
+            SsoConfig {
+                public_url: "http://bosun.example.com".into(),
+                ..base.clone()
+            },
+        ),
+        (
+            "unknown role",
+            SsoConfig {
+                email_roles: [("a@b.co".to_string(), "root".to_string())].into(),
+                ..base.clone()
+            },
+        ),
+        (
+            "upper-case email",
+            SsoConfig {
+                email_roles: [("A@b.co".to_string(), "admin".to_string())].into(),
+                ..base.clone()
+            },
+        ),
+        (
+            "edge without proxies",
+            SsoConfig {
+                edge_audience: Some("p".into()),
+                ..base.clone()
+            },
+        ),
     ];
     for (name, c) in bad {
         assert!(c.validate().is_err(), "{name} was accepted");

@@ -7,6 +7,12 @@ all-features = false
 # RustSec database. Yanked crates are errors; unmaintained crates are reported.
 yanked = "deny"
 unmaintained = "workspace"
+ignore = [
+  # rsa (Marvin attack, no fixed release): reached only through openidconnect, which uses it to verify RS256
+  # ID-token signatures with the provider's public key. The timing leak is in private-key operations, and Bosun
+  # never decrypts or signs with RSA. Revisit when rsa ships a fix (WP-34).
+  { id = "RUSTSEC-2023-0071", reason = "public-key verification only; no private-key RSA operations" },
+]
 
 [licenses]
 allow = [

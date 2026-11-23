@@ -25,8 +25,8 @@ use axum::response::{IntoResponse, Response};
 use bosun_store::Role;
 use ipnet::IpNet;
 use openidconnect::{
-    AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
     core::{CoreClient, CoreIdToken, CoreIdTokenClaims, CoreProviderMetadata, CoreResponseType},
     reqwest,
 };
@@ -39,7 +39,11 @@ use crate::{AppState, Peer};
 /// A client for the given provider metadata (the typestate type is unwieldy to name).
 macro_rules! client {
     ($meta:expr, $id:expr, $secret:expr) => {
-        CoreClient::from_provider_metadata($meta, ClientId::new($id.to_string()), $secret.map(ClientSecret::new))
+        CoreClient::from_provider_metadata(
+            $meta,
+            ClientId::new($id.to_string()),
+            $secret.map(ClientSecret::new),
+        )
     };
 }
 
@@ -72,7 +76,9 @@ pub struct SsoConfig {
 
 impl std::fmt::Debug for SsoConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SsoConfig").field("issuer", &self.issuer).finish_non_exhaustive()
+        f.debug_struct("SsoConfig")
+            .field("issuer", &self.issuer)
+            .finish_non_exhaustive()
     }
 }
 
@@ -90,15 +96,24 @@ impl SsoConfig {
             return Err("sso public_url must be the https address people use".into());
         }
         if self.email_roles.is_empty() {
-            return Err("sso email_roles must name who may sign in: an empty list would let nobody in".into());
+            return Err(
+                "sso email_roles must name who may sign in: an empty list would let nobody in".into(),
+            );
         }
         for (e, r) in &self.email_roles {
             if !e.contains('@') || e.to_ascii_lowercase() != *e || Role::parse(r).is_none() {
-                return Err(format!("sso email_roles {e:?} = {r:?}: want a lower-case email and admin, tester or viewer"));
+                return Err(format!(
+                    "sso email_roles {e:?} = {r:?}: want a lower-case email and admin, tester or viewer"
+                ));
             }
         }
-        if self.edge_audience.as_deref().is_some_and(|a| !a.is_empty()) && self.edge_trusted_proxies.is_empty() {
-            return Err("sso edge_audience needs edge_trusted_proxies: only the sign-in proxy may present a token".into());
+        if self.edge_audience.as_deref().is_some_and(|a| !a.is_empty())
+            && self.edge_trusted_proxies.is_empty()
+        {
+            return Err(
+                "sso edge_audience needs edge_trusted_proxies: only the sign-in proxy may present a token"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -141,12 +156,19 @@ impl Sso {
             .timeout(Duration::from_secs(15))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Self { cfg: cfg.clone(), http, meta: RwLock::new(None), pending: Mutex::new(HashMap::new()) })
+        Ok(Self {
+            cfg: cfg.clone(),
+            http,
+            meta: RwLock::new(None),
+            pending: Mutex::new(HashMap::new()),
+        })
     }
 
     async fn fetch(&self) -> R<CoreProviderMetadata> {
         let issuer = IssuerUrl::new(self.cfg.issuer.clone()).map_err(|e| e.to_string())?;
-        CoreProviderMetadata::discover_async(issuer, &self.http).await.map_err(|e| format!("provider discovery: {e}"))
+        CoreProviderMetadata::discover_async(issuer, &self.http)
+            .await
+            .map_err(|e| format!("provider discovery: {e}"))
     }
 
     async fn metadata(&self) -> R<CoreProviderMetadata> {
@@ -181,7 +203,11 @@ impl Sso {
     /// Verify the ID token the sign-in proxy forwarded. Same signature, issuer and expiry checks as the callback, but
     /// the audience is the proxy's client id and there is no nonce (the proxy ran the browser flow).
     async fn verify_edge(&self, raw: &str) -> R<Identity> {
-        let aud = self.cfg.edge_audience.clone().ok_or("Edge SSO is not configured")?;
+        let aud = self
+            .cfg
+            .edge_audience
+            .clone()
+            .ok_or("Edge SSO is not configured")?;
         let token: CoreIdToken = raw.parse().map_err(|_| "not an ID token".to_string())?;
         let no_nonce = |_: Option<&Nonce>| Ok(());
         let client = client!(self.metadata().await?, aud, None::<String>);
@@ -190,11 +216,12 @@ impl Sso {
         }
         // Keys may have rotated since we last looked: refresh once and verify again.
         let client = client!(self.refresh().await?, aud, None::<String>);
-        let claims = token.claims(&client.id_token_verifier(), no_nonce).map_err(|e| format!("ID token rejected: {e}"))?;
+        let claims = token
+            .claims(&client.id_token_verifier(), no_nonce)
+            .map_err(|e| format!("ID token rejected: {e}"))?;
         Ok(identity(claims))
     }
 }
-
 
 fn identity(claims: &CoreIdTokenClaims) -> Identity {
     // Only a provider-verified email is an identity; the allow-list is keyed on it.
@@ -202,12 +229,22 @@ fn identity(claims: &CoreIdTokenClaims) -> Identity {
         .email()
         .filter(|_| claims.email_verified() == Some(true))
         .map(|e| e.as_str().to_ascii_lowercase());
-    Identity { issuer: claims.issuer().as_str().to_string(), subject: claims.subject().as_str().to_string(), email }
+    Identity {
+        issuer: claims.issuer().as_str().to_string(),
+        subject: claims.subject().as_str().to_string(),
+        email,
+    }
 }
 
 fn enc(s: &str) -> String {
     s.bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
         .collect()
 }
 
@@ -241,7 +278,11 @@ pub async fn config(State(st): State<AppState>) -> Response {
     let Some(s) = &st.inner.sso else {
         return Json(serde_json::json!({ "sso": null })).into_response();
     };
-    let name = if s.cfg.name.is_empty() { "single sign-on" } else { &s.cfg.name };
+    let name = if s.cfg.name.is_empty() {
+        "single sign-on"
+    } else {
+        &s.cfg.name
+    };
     Json(serde_json::json!({ "sso": {
         "name": name,
         "login": "/auth/oidc/login",
@@ -252,7 +293,9 @@ pub async fn config(State(st): State<AppState>) -> Response {
 
 /// `GET /auth/oidc/login`: send the browser to the provider.
 pub async fn login(State(st): State<AppState>) -> Response {
-    let Some(s) = &st.inner.sso else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(s) = &st.inner.sso else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let meta = match s.metadata().await {
         Ok(m) => m,
         Err(e) => {
@@ -260,11 +303,17 @@ pub async fn login(State(st): State<AppState>) -> Response {
             return fail("the sign-in provider could not be reached");
         }
     };
-    let Ok(redirect_url) = RedirectUrl::new(s.redirect_url()) else { return fail("sign-in is misconfigured") };
+    let Ok(redirect_url) = RedirectUrl::new(s.redirect_url()) else {
+        return fail("sign-in is misconfigured");
+    };
     let client = client!(meta, s.cfg.client_id, s.cfg.secret()).set_redirect_uri(redirect_url);
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let (url, state, nonce) = client
-        .authorize_url(AuthenticationFlow::<CoreResponseType>::AuthorizationCode, CsrfToken::new_random, Nonce::new_random)
+        .authorize_url(
+            AuthenticationFlow::<CoreResponseType>::AuthorizationCode,
+            CsrfToken::new_random,
+            Nonce::new_random,
+        )
         .add_scope(Scope::new("email".into()))
         .add_scope(Scope::new("profile".into()))
         .set_pkce_challenge(challenge)
@@ -277,15 +326,28 @@ pub async fn login(State(st): State<AppState>) -> Response {
         }
         p.insert(
             state.secret().clone(),
-            Pending { nonce: nonce.secret().clone(), verifier: verifier.secret().clone(), expires: Instant::now() + PENDING_TTL },
+            Pending {
+                nonce: nonce.secret().clone(),
+                verifier: verifier.secret().clone(),
+                expires: Instant::now() + PENDING_TTL,
+            },
         );
     }
-    redirect(url.as_str(), Some(pending_cookie(&st, state.secret(), PENDING_TTL.as_secs() as i64)))
+    redirect(
+        url.as_str(),
+        Some(pending_cookie(&st, state.secret(), PENDING_TTL.as_secs() as i64)),
+    )
 }
 
 /// `GET /auth/oidc/callback`: the provider sends the browser back here.
-pub async fn callback(State(st): State<AppState>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response {
-    let Some(s) = &st.inner.sso else { return StatusCode::NOT_FOUND.into_response() };
+pub async fn callback(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(s) = &st.inner.sso else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let clear = pending_cookie(&st, "", 0);
     let state = q.get("state").cloned().unwrap_or_default();
     let jar = headers
@@ -299,18 +361,27 @@ pub async fn callback(State(st): State<AppState>, headers: HeaderMap, Query(q): 
         .unwrap_or_default();
     // A state works once, and only in the browser that started it.
     let pending = s.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&state);
-    let Some(p) = pending.filter(|p| p.expires > Instant::now() && bool::from(jar.as_bytes().ct_eq(state.as_bytes()))) else {
-        return redirect("/?sso_error=the%20sign-in%20expired%20or%20did%20not%20start%20here%3B%20try%20again", Some(clear));
+    let Some(p) =
+        pending.filter(|p| p.expires > Instant::now() && bool::from(jar.as_bytes().ct_eq(state.as_bytes())))
+    else {
+        return redirect(
+            "/?sso_error=the%20sign-in%20expired%20or%20did%20not%20start%20here%3B%20try%20again",
+            Some(clear),
+        );
     };
     if q.contains_key("error") {
         return with(fail("the provider refused the sign-in"), clear);
     }
-    let Some(code) = q.get("code") else { return with(fail("the provider sent no code"), clear) };
+    let Some(code) = q.get("code") else {
+        return with(fail("the provider sent no code"), clear);
+    };
     let meta = match s.metadata().await {
         Ok(m) => m,
         Err(_) => return with(fail("the sign-in provider could not be reached"), clear),
     };
-    let Ok(redirect_url) = RedirectUrl::new(s.redirect_url()) else { return with(fail("sign-in is misconfigured"), clear) };
+    let Ok(redirect_url) = RedirectUrl::new(s.redirect_url()) else {
+        return with(fail("sign-in is misconfigured"), clear);
+    };
     let client = client!(meta, s.cfg.client_id, s.cfg.secret()).set_redirect_uri(redirect_url);
     let exchange = match client.exchange_code(AuthorizationCode::new(code.clone())) {
         Ok(x) => x.set_pkce_verifier(PkceCodeVerifier::new(p.verifier.clone())),
@@ -323,13 +394,17 @@ pub async fn callback(State(st): State<AppState>, headers: HeaderMap, Query(q): 
             return with(fail("the provider rejected the sign-in"), clear);
         }
     };
-    let Some(id_token) = tokens.id_token() else { return with(fail("the provider sent no identity token"), clear) };
+    let Some(id_token) = tokens.id_token() else {
+        return with(fail("the provider sent no identity token"), clear);
+    };
     let nonce = Nonce::new(p.nonce.clone());
     let id = match id_token.claims(&client.id_token_verifier(), &nonce) {
         Ok(c) => identity(c),
         Err(_) => {
             // The provider may have rotated its keys since we last looked: refresh once and verify again.
-            let Ok(fresh) = s.refresh().await else { return with(fail("the provider's identity token was not valid"), clear) };
+            let Ok(fresh) = s.refresh().await else {
+                return with(fail("the provider's identity token was not valid"), clear);
+            };
             let client = client!(fresh, s.cfg.client_id, s.cfg.secret());
             match id_token.claims(&client.id_token_verifier(), &nonce) {
                 Ok(c) => identity(c),
@@ -344,8 +419,14 @@ pub async fn callback(State(st): State<AppState>, headers: HeaderMap, Query(q): 
 }
 
 /// `GET /auth/oidc/edge`: sign in with the ID token the trusted front door forwarded.
-pub async fn edge(State(st): State<AppState>, peer: Option<axum::Extension<Peer>>, headers: HeaderMap) -> Response {
-    let Some(s) = &st.inner.sso else { return StatusCode::NOT_FOUND.into_response() };
+pub async fn edge(
+    State(st): State<AppState>,
+    peer: Option<axum::Extension<Peer>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(s) = &st.inner.sso else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     if !s.edge_on() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -394,14 +475,25 @@ async fn finish(st: &AppState, s: &Sso, id: Identity, how: &str, fail_key: Optio
         if let Some(k) = fail_key {
             st.inner.limiter.fail(k);
         }
-        let _ = st.inner.app.audit(who, "login.refused", &format!("{how}: {why}"), None);
+        let _ = st
+            .inner
+            .app
+            .audit(who, "login.refused", &format!("{how}: {why}"), None);
         fail(msg)
     };
     let Some(email) = id.email else {
-        return refuse("email missing or not verified", None, "your email address is not verified with the provider");
+        return refuse(
+            "email missing or not verified",
+            None,
+            "your email address is not verified with the provider",
+        );
     };
     let Some(role) = s.cfg.email_roles.get(&email).and_then(|r| Role::parse(r)) else {
-        return refuse("not on the allow-list", Some(&email), "your account has no access here; ask an admin");
+        return refuse(
+            "not on the allow-list",
+            Some(&email),
+            "your account has no access here; ask an admin",
+        );
     };
     let app = st.inner.app.clone();
     let key = format!("{}|{}", id.issuer, id.subject);
@@ -414,6 +506,9 @@ async fn finish(st: &AppState, s: &Sso, id: Identity, how: &str, fail_key: Optio
         Ok(c) => c,
         Err(_) => return fail("could not create a session"),
     };
-    let _ = st.inner.app.audit(Some(&user.username), "login", &format!("signed in ({how})"), None);
+    let _ = st
+        .inner
+        .app
+        .audit(Some(&user.username), "login", &format!("signed in ({how})"), None);
     redirect("/", Some(cookie))
 }

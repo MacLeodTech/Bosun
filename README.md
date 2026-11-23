@@ -85,6 +85,4 @@ the UI's origin; the CA key is encrypted at rest; no `unsafe` code.
 
 ## Licence
 
-[PolyForm Noncommercial 1.0.0](LICENSE). Free for personal, hobby, research, educational and non-profit use.
-**It does not allow commercial use, which includes paid penetration-testing work for clients.** The licence is
-under review before the first public release.
+[Apache-2.0](LICENSE). Free for any use, including paid penetration-testing work for clients.

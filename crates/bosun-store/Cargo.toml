@@ -4,7 +4,7 @@ description = "Project storage: flows, bodies, WebSocket messages, settings (SQL
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

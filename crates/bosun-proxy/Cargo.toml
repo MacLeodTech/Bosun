@@ -4,7 +4,7 @@ description = "The intercepting MITM proxy: HTTP/1.1, HTTP/2, WebSockets, interc
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

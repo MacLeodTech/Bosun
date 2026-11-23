@@ -4,7 +4,7 @@ description = "Bosun desktop app: the engine in-process, the web UI in a native 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 publish.workspace = true
 
 # Not a default workspace member: building it needs the platform webview

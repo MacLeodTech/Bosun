@@ -23,7 +23,7 @@ FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57
 LABEL org.opencontainers.image.title="Bosun" \
       org.opencontainers.image.description="Free, low-footprint intercepting proxy and DAST toolkit" \
       org.opencontainers.image.source="https://github.com/MacLeodTech/Bosun" \
-      org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0"
+      org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build /out/bosun /usr/local/bin/bosun
 COPY --from=build --chown=65532:65532 /out/data /data
 COPY --chown=65532:65532 docker/bosun.toml /etc/bosun/bosun.toml

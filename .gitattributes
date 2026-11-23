@@ -1,0 +1,4 @@
+# Tests compare these files byte for byte (or read the Rust source), so a Windows checkout must not turn LF into CRLF.
+*.rs text eol=lf
+docs/openapi.json text eol=lf
+web/src/lib/api-types.ts text eol=lf

@@ -41,10 +41,15 @@ listen = "127.0.0.1:8090"
 hosts = []
 # Exact extra origins, e.g. when behind a reverse proxy: ["https://bosun.lab.example"]
 origins = []
-# Serve the UI over HTTPS with a certificate from this install's CA.
+# Serve the UI over HTTPS. Without tls_cert/tls_key a self-signed certificate made for the UI alone is used
+# (never the interception CA's). Putting a TLS reverse proxy in front instead is recommended: docs/ui-tls.md.
 tls = false
+# tls_cert = "/etc/bosun/ui.crt"   # PEM chain, leaf first; re-read on change or SIGHUP
+# tls_key  = "/etc/bosun/ui.key"
 # secure_cookies = true   # set when a TLS reverse proxy sits in front
-session_hours = 12
+# trusted_proxies = ["10.0.0.0/8"]   # the reverse proxy's network: trust its X-Forwarded-For/-Proto
+session_hours = 12          # idle timeout
+session_max_hours = 168     # absolute lifetime
 
 [browser]
 # Browser for "Open browser". Default: bundled, then a system Chromium/Chrome/Edge/Brave.

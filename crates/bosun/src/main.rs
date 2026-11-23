@@ -195,9 +195,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     };
                     let pw = read_password()?;
                     let hash = bosun_api::auth::hash_password(&pw).map_err(anyhow::Error::msg)?;
-                    app.set_password(u.id, &hash)?;
+                    app.set_password(u.id, &hash, true)?;
                     app.audit(None, "user.password", &format!("{} via CLI", u.username), None)?;
-                    println!("password changed; {} is signed out everywhere", u.username);
+                    println!(
+                        "password changed; {} is signed out everywhere and its API tokens are revoked",
+                        u.username
+                    );
                 }
                 UserCmd::List => {
                     for u in app.list_users()? {
@@ -227,6 +230,9 @@ async fn serve(cfg: Config) -> Result<()> {
     eprintln!("  proxy     http://{}", engine.proxy_addr);
     eprintln!("  web UI    {}", engine.ui_url());
     eprintln!("  project   {}", engine.project_path.display());
+    if let Some(f) = &engine.ui_fingerprint {
+        eprintln!("  UI cert   {f}");
+    }
     eprintln!("  CA        {}", engine.ca_fingerprint);
     if let Some(code) = &engine.setup_code {
         eprintln!();
@@ -255,7 +261,25 @@ async fn shutdown_signal() {
             _ = term.recv() => {}
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // Ctrl-C, Ctrl-Break, closing the console window, logging off and shutting down all mean "stop cleanly".
+        use tokio::signal::windows::{ctrl_break, ctrl_close, ctrl_shutdown};
+        match (ctrl_break(), ctrl_close(), ctrl_shutdown()) {
+            (Ok(mut brk), Ok(mut close), Ok(mut down)) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = brk.recv() => {}
+                    _ = close.recv() => {}
+                    _ = down.recv() => {}
+                }
+            }
+            _ => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = tokio::signal::ctrl_c().await;
     }

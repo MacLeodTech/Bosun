@@ -41,6 +41,7 @@ ipnet.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+rcgen.workspace = true
 reqwest = { workspace = true, features = ["json", "cookies"] }
 tokio-tungstenite.workspace = true
 rsa = { version = "0.9", features = ["sha2"] }

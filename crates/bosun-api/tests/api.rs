@@ -23,6 +23,18 @@ struct Stack {
 }
 
 async fn stack(proxy_knows_api: bool) -> Stack {
+    stack_with(proxy_knows_api, |_| {}).await
+}
+
+async fn stack_with(proxy_knows_api: bool, tweak: impl FnOnce(&mut ApiConfig)) -> Stack {
+    stack_full(proxy_knows_api, tweak, None).await
+}
+
+async fn stack_full(
+    proxy_knows_api: bool,
+    tweak: impl FnOnce(&mut ApiConfig),
+    ui_tls: Option<Arc<bosun_ca::UiTls>>,
+) -> Stack {
     let ca = Arc::new(CertificateAuthority::ephemeral().unwrap());
     let project = Arc::new(Project::open_in_memory().unwrap());
     let app = Arc::new(AppDb::open_in_memory().unwrap());
@@ -40,10 +52,11 @@ async fn stack(proxy_knows_api: bool) -> Stack {
     let proxy = Proxy::new(pcfg, ca.clone(), gate.clone(), project.clone(), events.clone()).unwrap();
     let p = proxy.clone();
     tokio::spawn(async move { p.serve(proxy_l, std::future::pending()).await });
-    let cfg = ApiConfig {
+    let mut cfg = ApiConfig {
         listen: api,
         ..Default::default()
     };
+    tweak(&mut cfg);
     let (st, code) = AppState::new(
         &cfg,
         Deps {
@@ -54,6 +67,7 @@ async fn stack(proxy_knows_api: bool) -> Stack {
             ca,
             events,
             browser: None,
+            ui_tls,
         },
     )
     .unwrap();
@@ -315,22 +329,122 @@ async fn api_tokens_and_roles() {
         .unwrap();
 }
 
+async fn try_login(c: &reqwest::Client, s: &Stack, xff: Option<&str>, password: &str) -> reqwest::Response {
+    let mut r = c
+        .post(s.url("/auth/login"))
+        .json(&json!({ "username": "admin", "password": password }));
+    if let Some(x) = xff {
+        r = r.header("x-forwarded-for", x);
+    }
+    r.send().await.unwrap()
+}
+
 #[tokio::test]
-async fn login_failures_are_rate_limited() {
+async fn repeated_wrong_passwords_back_off() {
     let s = stack(true).await;
     s.admin().await;
     let c = client();
-    let mut last = StatusCode::OK;
-    for _ in 0..11 {
-        last = c
-            .post(s.url("/auth/login"))
-            .json(&json!({ "username": "admin", "password": "wrong password!!" }))
-            .send()
-            .await
-            .unwrap()
-            .status();
+    // A few tries are free, then the pair is made to wait.
+    for _ in 0..3 {
+        let r = try_login(&c, &s, None, "wrong password!!").await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     }
-    assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+    let r = try_login(&c, &s, None, "wrong password!!").await;
+    assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(r.headers().contains_key("retry-after"));
+    // Even the right password waits its turn from the same address...
+    let r = try_login(&c, &s, None, "a long enough password").await;
+    assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+    // ...but only until the delay passes.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let r = try_login(&c, &s, None, "a long enough password").await;
+    assert_eq!(r.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_burst_of_guesses_is_throttled_before_hashing_and_others_can_still_sign_in() {
+    let s = stack_with(true, |c| c.trusted_proxies = vec!["127.0.0.0/8".parse().unwrap()]).await;
+    s.admin().await;
+    let attacker = "203.0.113.9";
+    let mut tasks = Vec::new();
+    for _ in 0..50 {
+        let url = s.url("/auth/login");
+        tasks.push(tokio::spawn(async move {
+            client()
+                .post(url)
+                .header("x-forwarded-for", attacker)
+                .json(&json!({ "username": "admin", "password": "wrong password!!" }))
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }));
+    }
+    let mut hashed = 0;
+    let mut refused = 0;
+    for t in tasks {
+        match t.await.unwrap() {
+            StatusCode::UNAUTHORIZED => hashed += 1,
+            StatusCode::TOO_MANY_REQUESTS => refused += 1,
+            other => panic!("unexpected {other}"),
+        }
+    }
+    assert!(hashed <= 3, "only the free attempts reach the hash: {hashed}");
+    assert_eq!(hashed + refused, 50);
+    // The admin is not locked out from anywhere else.
+    let r = try_login(&client(), &s, Some("198.51.100.7"), "a long enough password").await;
+    assert_eq!(r.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn forwarded_headers_are_ignored_from_untrusted_peers_and_honoured_from_trusted_ones() {
+    // Untrusted: the header is ignored, so rotating it doesn't dodge the throttle.
+    let s = stack(true).await;
+    s.admin().await;
+    let c = client();
+    for i in 0..3 {
+        try_login(&c, &s, Some(&format!("203.0.113.{i}")), "wrong password!!").await;
+    }
+    let r = try_login(&c, &s, Some("203.0.113.99"), "wrong password!!").await;
+    assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // Trusted: each forwarded client is throttled on its own, and the audit log names it.
+    let s = stack_with(true, |c| {
+        c.trusted_proxies = vec!["127.0.0.1/32".parse().unwrap()]
+    })
+    .await;
+    let (admin, _) = s.admin().await;
+    let c = client();
+    for _ in 0..3 {
+        try_login(&c, &s, Some("203.0.113.5"), "wrong password!!").await;
+    }
+    assert_eq!(
+        try_login(&c, &s, Some("203.0.113.5"), "wrong password!!")
+            .await
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        try_login(&c, &s, Some("203.0.113.6"), "wrong password!!")
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let audit: Value = admin
+        .get(s.url("/audit"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["action"] == "login.failed" && e["remote"] == "203.0.113.5")
+    );
 }
 
 #[tokio::test]
@@ -392,4 +506,496 @@ async fn the_proxy_cannot_reach_the_api() {
         assert_eq!(r.status(), want, "proxy_knows_api={knows}");
         assert!(!r.text().await.unwrap().contains("setup_required"));
     }
+}
+
+/// Send the start of a request one byte at a time; true if the server hung up before we finished.
+async fn dribble_gets_cut_off(addr: SocketAddr) -> bool {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let head =
+        b"GET /api/v1/status HTTP/1.1\r\nHost: localhost\r\nX-Slow: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let started = std::time::Instant::now();
+    for b in head {
+        if s.write_all(&[*b]).await.is_err() {
+            return started.elapsed() < Duration::from_secs(8);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut buf = [0u8; 64];
+        if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_millis(1), s.read(&mut buf)).await {
+            // EOF, or an error response: the server gave up on us.
+            let _ = n;
+            return true;
+        }
+    }
+    false
+}
+
+#[tokio::test]
+async fn slow_header_senders_are_disconnected() {
+    let s = stack_with(true, |c| c.header_timeout_secs = 1).await;
+    assert!(dribble_gets_cut_off(s.api).await);
+}
+
+#[tokio::test]
+async fn connections_over_the_cap_are_refused_while_existing_ones_keep_working() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let s = stack_with(true, |c| c.max_connections = 2).await;
+    let req = b"GET /api/v1/status HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    let mut a = tokio::net::TcpStream::connect(s.api).await.unwrap();
+    let mut b = tokio::net::TcpStream::connect(s.api).await.unwrap();
+    // Make sure both are accepted (and counted) before the third arrives.
+    for c in [&mut a, &mut b] {
+        c.write_all(req).await.unwrap();
+        let mut buf = [0u8; 12];
+        c.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"HTTP/1.1 200");
+    }
+    let mut third = tokio::net::TcpStream::connect(s.api).await.unwrap();
+    let _ = third.write_all(req).await;
+    let mut buf = [0u8; 12];
+    let got = tokio::time::timeout(Duration::from_secs(5), third.read(&mut buf))
+        .await
+        .unwrap();
+    assert!(
+        matches!(got, Ok(0) | Err(_)),
+        "the third connection gets nothing: {got:?}"
+    );
+    // The first two still work (after draining the rest of the first response).
+    let mut sink = vec![0u8; 16384];
+    let _ = tokio::time::timeout(Duration::from_millis(300), a.read(&mut sink)).await;
+    a.write_all(req).await.unwrap();
+    let mut buf = [0u8; 12];
+    a.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"HTTP/1.1 200");
+    // Freeing a slot lets a new connection in.
+    drop(b);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut buf = [0u8; 12];
+    let mut d = tokio::net::TcpStream::connect(s.api).await.unwrap();
+    d.write_all(req).await.unwrap();
+    d.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"HTTP/1.1 200");
+}
+
+async fn make_token(c: &reqwest::Client, s: &Stack, csrf: &str, body: Value) -> Value {
+    let r = c
+        .post(s.url("/tokens"))
+        .header("x-csrf-token", csrf)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn a_password_change_ends_sessions_and_tokens() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    let keep = make_token(&c, &s, &csrf, json!({ "name": "before" })).await;
+    let token = keep["token"].as_str().unwrap();
+    let bare = client();
+    let ok = |r: reqwest::Response| r.status() == StatusCode::OK;
+    assert!(ok(bare
+        .get(s.url("/scope"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()));
+
+    // Asking to keep tokens is honoured.
+    let r = c
+        .post(s.url("/auth/password"))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({ "current": "a long enough password", "new": "a second long password", "revoke_tokens": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    assert!(ok(bare
+        .get(s.url("/scope"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()));
+    assert_eq!(
+        c.get(s.url("/scope")).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED,
+        "the session ended"
+    );
+
+    // By default the tokens go too.
+    let c = client();
+    let v: Value = c
+        .post(s.url("/auth/login"))
+        .json(&json!({ "username": "admin", "password": "a second long password" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let csrf = v["csrf"].as_str().unwrap();
+    let r = c
+        .post(s.url("/auth/password"))
+        .header("x-csrf-token", csrf)
+        .json(&json!({ "current": "a second long password", "new": "a third long password" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        bare.get(s.url("/scope"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED,
+        "a token made before the reset no longer works"
+    );
+}
+
+#[tokio::test]
+async fn read_tokens_cannot_change_anything_and_expired_tokens_do_not_work() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    let t = make_token(
+        &c,
+        &s,
+        &csrf,
+        json!({ "name": "ro", "scope": "read", "expires_days": 1 }),
+    )
+    .await;
+    assert_eq!(t["info"]["scope"], "read");
+    assert!(t["info"]["expires_ms"].as_i64().unwrap() > 0);
+    let token = t["token"].as_str().unwrap();
+    let bare = client();
+    assert_eq!(
+        bare.get(s.url("/scope"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    for r in [
+        bare.put(s.url("/scope"))
+            .bearer_auth(token)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap(),
+        bare.post(s.url("/tokens"))
+            .bearer_auth(token)
+            .json(&json!({ "name": "x" }))
+            .send()
+            .await
+            .unwrap(),
+        bare.post(s.url("/intercept/forward-all"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap(),
+    ] {
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    }
+
+    let bad = c
+        .post(s.url("/tokens"))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({ "name": "x", "expires_days": 0 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+    let admin = s.app.user_for_login("admin").unwrap().unwrap().0;
+    s.app
+        .create_api_token(
+            "old",
+            "bosun_expired",
+            admin.id,
+            bosun_store::TokenScope::Full,
+            Some(1),
+        )
+        .unwrap();
+    assert_eq!(
+        bare.get(s.url("/scope"))
+            .bearer_auth("bosun_expired")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn admins_change_roles_and_manage_sessions_and_tokens() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    let me = s.app.user_for_login("admin").unwrap().unwrap().0;
+    let r = c
+        .post(s.url("/users"))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({ "username": "pat", "password": "another long password", "role": "viewer" }))
+        .send()
+        .await
+        .unwrap();
+    let pat: Value = r.json().await.unwrap();
+    let pat_id = pat["id"].as_i64().unwrap();
+
+    // Pat signs in twice and makes a token.
+    let mut pats = Vec::new();
+    for _ in 0..2 {
+        let pc = client();
+        let v: Value = pc
+            .post(s.url("/auth/login"))
+            .json(&json!({ "username": "pat", "password": "another long password" }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        pats.push((pc, v["csrf"].as_str().unwrap().to_string()));
+    }
+    make_token(&pats[0].0, &s, &pats[0].1, json!({ "name": "pat's" })).await;
+
+    // Pat sees only their own sessions.
+    let own: Value = pats[0]
+        .0
+        .get(s.url(&format!("/users/{pat_id}/sessions")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(own.as_array().unwrap().len(), 2);
+    assert_eq!(
+        pats[0]
+            .0
+            .get(s.url(&format!("/users/{}/sessions", me.id)))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        pats[0]
+            .0
+            .get(s.url(&format!("/users/{}/tokens", me.id)))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // An admin lists them, revokes one, then the other.
+    let list: Value = c
+        .get(s.url(&format!("/users/{pat_id}/sessions")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let first = list[0]["id"].as_str().unwrap();
+    let r = c
+        .delete(s.url(&format!("/users/{pat_id}/sessions/{first}")))
+        .header("x-csrf-token", &csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    let alive = [
+        pats[0].0.get(s.url("/scope")).send().await.unwrap().status() == StatusCode::OK,
+        pats[1].0.get(s.url("/scope")).send().await.unwrap().status() == StatusCode::OK,
+    ];
+    assert_eq!(
+        alive.iter().filter(|a| **a).count(),
+        1,
+        "exactly one session was revoked"
+    );
+
+    let toks: Value = c
+        .get(s.url(&format!("/users/{pat_id}/tokens")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tid = toks[0]["id"].as_i64().unwrap();
+    let r = c
+        .delete(s.url(&format!("/users/{pat_id}/tokens/{tid}")))
+        .header("x-csrf-token", &csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+
+    // Role changes: tester now, the last admin stays admin, and the change ends the user's sessions.
+    let r = c
+        .put(s.url(&format!("/users/{pat_id}/role")))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({ "role": "tester" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    for (pc, _) in &pats {
+        assert_eq!(
+            pc.get(s.url("/scope")).send().await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let r = c
+        .put(s.url(&format!("/users/{}/role", me.id)))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({ "role": "viewer" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT, "never demote the last admin");
+
+    let audit: Value = c.get(s.url("/audit")).send().await.unwrap().json().await.unwrap();
+    let actions: Vec<_> = audit
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["action"].as_str().unwrap().to_string())
+        .collect();
+    for a in ["session.revoke", "token.revoke", "user.role"] {
+        assert!(actions.iter().any(|x| x == a), "{a} missing from {actions:?}");
+    }
+}
+
+#[tokio::test]
+async fn intercept_changes_are_audited() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    let r = c
+        .put(s.url("/intercept"))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({ "requests": true, "responses": false, "in_scope_only": true, "timeout_secs": 30 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let r = c
+        .post(s.url("/intercept/forward-all"))
+        .header("x-csrf-token", &csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let audit: Value = c.get(s.url("/audit")).send().await.unwrap().json().await.unwrap();
+    let find = |a: &str| {
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["action"] == a)
+            .cloned()
+    };
+    assert!(
+        find("intercept.settings").unwrap()["detail"]
+            .as_str()
+            .unwrap()
+            .contains("timeout=30s")
+    );
+    assert!(find("intercept.forward_all").is_some());
+}
+
+/// Connect over TLS trusting only `root_der`; returns the certificate the server presented and the response to
+/// `GET /api/v1/status`.
+async fn tls_get(addr: SocketAddr, root_der: &[u8]) -> (Vec<u8>, String) {
+    use rustls::pki_types::{CertificateDer, ServerName};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(CertificateDer::from(root_der.to_vec())).unwrap();
+    let cfg = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut tls = tokio_rustls::TlsConnector::from(Arc::new(cfg))
+        .connect(ServerName::try_from("localhost").unwrap(), tcp)
+        .await
+        .expect("the certificate must verify against the expected root");
+    let presented = tls.get_ref().1.peer_certificates().unwrap()[0].as_ref().to_vec();
+    tls.write_all(
+        format!(
+            "GET /api/v1/status HTTP/1.1\r\nHost: localhost:{}\r\nConnection: close\r\n\r\n",
+            addr.port()
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut out = String::new();
+    let _ = tls.read_to_string(&mut out).await;
+    (presented, out)
+}
+
+#[tokio::test]
+async fn the_ui_serves_configured_certificate_files_and_otherwise_its_own_self_signed_one() {
+    use rustls::pki_types::pem::PemObject;
+    let dir = tempfile::tempdir().unwrap();
+
+    // Configured files: that exact certificate is served, and the UI answers over it.
+    let pair = rcgen::KeyPair::generate().unwrap();
+    let cert = rcgen::CertificateParams::new(vec!["localhost".into()])
+        .unwrap()
+        .self_signed(&pair)
+        .unwrap();
+    let (cp, kp) = (dir.path().join("c.pem"), dir.path().join("k.pem"));
+    std::fs::write(&cp, cert.pem()).unwrap();
+    std::fs::write(&kp, pair.serialize_pem()).unwrap();
+    let ui = Arc::new(bosun_ca::UiTls::from_files(&cp, &kp).unwrap());
+    let s = stack_full(true, |c| c.tls = true, Some(ui)).await;
+    let (presented, body) = tls_get(s.api, cert.der()).await;
+    assert_eq!(presented, cert.der().as_ref());
+    assert!(body.starts_with("HTTP/1.1 200"), "{body}");
+
+    // Without files: a certificate made for the UI, which is neither the interception CA nor issued by it.
+    let ui = Arc::new(
+        bosun_ca::UiTls::self_signed(
+            &dir.path().join("own"),
+            &bosun_ca::DataKey::generate(),
+            &["localhost".into()],
+        )
+        .unwrap(),
+    );
+    let s = stack_full(true, |c| c.tls = true, Some(ui)).await;
+    let own = std::fs::read_to_string(dir.path().join("own/ui.crt.pem")).unwrap();
+    let own_der = rustls::pki_types::CertificateDer::from_pem_slice(own.as_bytes()).unwrap();
+    let (presented, body) = tls_get(s.api, own_der.as_ref()).await;
+    assert_eq!(presented, own_der.as_ref());
+    assert!(body.starts_with("HTTP/1.1 200"), "{body}");
+
+    // It is not signed by the CA: a client that trusts only the CA refuses it.
+    let ca = bosun_ca::CertificateAuthority::ephemeral().unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(ca.cert_der().to_vec()))
+        .unwrap();
+    let cfg = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let tcp = tokio::net::TcpStream::connect(s.api).await.unwrap();
+    let r = tokio_rustls::TlsConnector::from(Arc::new(cfg))
+        .connect(rustls::pki_types::ServerName::try_from("localhost").unwrap(), tcp)
+        .await;
+    assert!(r.is_err());
 }

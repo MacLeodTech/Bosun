@@ -2,7 +2,7 @@
 # any code change). Results go to the Security tab (code scanning) as well as failing the job.
 #
 # What fails the build:
-#   - rustfmt / clippy -D warnings / cargo test failures
+#   - rustfmt / clippy -D warnings / cargo test failures (tests also on Windows and macOS)
 #   - the web UI type check (svelte-check, warnings are errors) or build
 #   - cargo-deny: a RustSec advisory, a disallowed licence, a banned crate (OpenSSL), an unknown source
 #   - npm audit: a high or critical advisory in the UI's dependencies
@@ -63,6 +63,25 @@ jobs:
       # Default members: everything except the desktop shell (built in its own job, it needs the webview).
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
+
+  # The engine must run on every desktop OS it ships for: this catches path handling, permission and signal code
+  # that only Linux exercises. Tests only; fmt and clippy are platform-independent and run above.
+  portable:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Toolchain
+        run: *toolchain
       - name: Test
         run: cargo test --locked
 

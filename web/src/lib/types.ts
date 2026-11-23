@@ -30,13 +30,14 @@ export interface ScopeSpec { include: ScopeRule[]; exclude: ScopeRule[] }
 export type RuleTarget = 'request_first_line' | 'request_header' | 'request_body'
   | 'response_first_line' | 'response_header' | 'response_body';
 export interface MatchRule { enabled: boolean; target: RuleTarget; match: string; replace: string; regex: boolean; comment?: string }
-export interface InterceptSettings { requests: boolean; responses: boolean; in_scope_only: boolean }
+export interface InterceptSettings { requests: boolean; responses: boolean; in_scope_only: boolean; timeout_secs?: number | null }
 export interface InterceptSummary {
   id: number; flow_id: number; phase: 'request' | 'response'; method: string; url: string;
   status: number | null; queued_ms: number;
 }
 export interface InterceptItem extends InterceptSummary { raw: string }
-export interface ApiToken { id: number; name: string; user_id: number; created_ms: number; last_used_ms: number | null }
+export interface ApiToken { id: number; name: string; user_id: number; created_ms: number; last_used_ms: number | null; expires_ms: number | null; scope: 'read' | 'full' }
+export interface SessionInfo { id: string; user_id: number; created_ms: number; expires_ms: number }
 export interface AuditEntry { id: number; time_ms: number; username: string | null; action: string; detail: string; remote: string | null }
 
 export type ProxyEvent =
@@ -45,4 +46,6 @@ export type ProxyEvent =
   | { type: 'intercept_queued'; item: InterceptSummary }
   | { type: 'intercept_resolved'; id: number }
   | { type: 'intercept_state'; requests: number; responses: number }
+  | { type: 'intercept_refused'; reason: string }
+  | { type: 'recorder_failed'; lost: number; error: string }
   | { type: 'lagged'; missed: number };

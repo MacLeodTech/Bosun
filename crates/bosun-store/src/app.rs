@@ -13,7 +13,13 @@ use sha2::{Digest, Sha256};
 
 use crate::StoreError;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+
+/// A session's expiry is only rewritten when it would move by more than this, so a busy client doesn't cause a
+/// database write on every request.
+const SLIDE_GRANULARITY_MS: i64 = 60_000;
+/// `last_used_ms` of a token is refreshed at most this often.
+const TOKEN_USED_GRANULARITY_MS: i64 = 60_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +66,29 @@ pub struct Session {
     pub expires_ms: i64,
 }
 
+/// What an API token may do. A `Read` token can only make requests that don't change anything (GET, HEAD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenScope {
+    Read,
+    #[default]
+    Full,
+}
+
+impl TokenScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Full => "full",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        // Anything unrecognised gets the narrower scope.
+        if s == "full" { Self::Full } else { Self::Read }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiToken {
     pub id: i64,
@@ -67,6 +96,18 @@ pub struct ApiToken {
     pub user_id: i64,
     pub created_ms: i64,
     pub last_used_ms: Option<i64>,
+    pub expires_ms: Option<i64>,
+    pub scope: TokenScope,
+}
+
+/// A signed-in browser session, as shown to its owner and to admins. The id is a prefix of the stored hash; it
+/// cannot be used to sign in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub id: String,
+    pub user_id: i64,
+    pub created_ms: i64,
+    pub expires_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +201,16 @@ impl AppDb {
                 ALTER TABLE users ADD COLUMN sso TEXT;
                 CREATE UNIQUE INDEX users_sso ON users(sso) WHERE sso IS NOT NULL;
                 PRAGMA user_version = 2;
+                "#,
+            )?;
+        }
+        if version < 3 {
+            // Token expiry and scope. Existing tokens keep working as they did: no expiry, full access.
+            conn.execute_batch(
+                r#"
+                ALTER TABLE api_tokens ADD COLUMN expires_ms INTEGER;
+                ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'full';
+                PRAGMA user_version = 3;
                 "#,
             )?;
         }
@@ -287,15 +338,52 @@ impl AppDb {
             .optional()?)
     }
 
-    pub fn set_password(&self, user_id: i64, password_hash: &str) -> Result<(), StoreError> {
-        let conn = self.conn();
-        conn.execute(
+    /// Change a password. Every session of the user ends; their API tokens too when `revoke_tokens` is set (a
+    /// stolen password must not leave behind a token that outlives the reset).
+    pub fn set_password(
+        &self,
+        user_id: i64,
+        password_hash: &str,
+        revoke_tokens: bool,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
             "UPDATE users SET password_hash = ?1 WHERE id = ?2",
             params![password_hash, user_id],
         )?;
-        // A password change ends every session of that user.
-        conn.execute("DELETE FROM sessions WHERE user_id = ?1", [user_id])?;
+        tx.execute("DELETE FROM sessions WHERE user_id = ?1", [user_id])?;
+        if revoke_tokens {
+            tx.execute("DELETE FROM api_tokens WHERE user_id = ?1", [user_id])?;
+        }
+        tx.commit()?;
         Ok(())
+    }
+
+    /// Change a user's role. The last admin cannot be demoted. Their sessions end so the new role applies at once.
+    pub fn set_role(&self, user_id: i64, role: Role) -> Result<bool, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let current: Option<String> = tx
+            .query_row("SELECT role FROM users WHERE id = ?1", [user_id], |r| r.get(0))
+            .optional()?;
+        let Some(current) = current else { return Ok(false) };
+        if current == "admin" && role != Role::Admin {
+            let others: i64 = tx.query_row(
+                "SELECT count(*) FROM users WHERE role = 'admin' AND id != ?1",
+                [user_id],
+                |r| r.get(0),
+            )?;
+            if others == 0 {
+                return Err(StoreError::Conflict("cannot demote the last admin".into()));
+            }
+        }
+        tx.execute(
+            "UPDATE users SET role = ?1 WHERE id = ?2",
+            params![role.as_str(), user_id],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     pub fn list_users(&self) -> Result<Vec<User>, StoreError> {
@@ -340,26 +428,70 @@ impl AppDb {
         Ok(())
     }
 
-    /// Look up a live session and slide its expiry forward.
-    pub fn session(&self, token: &str, ttl_ms: i64) -> Result<Option<Session>, StoreError> {
+    /// Look up a live session. It dies when idle for `idle_ms` or when it is `max_ms` old, whichever comes first.
+    /// The idle expiry slides forward, but is only rewritten when it has moved by more than a minute.
+    pub fn session(&self, token: &str, idle_ms: i64, max_ms: i64) -> Result<Option<Session>, StoreError> {
         let now = bosun_model::now_ms();
         let conn = self.conn();
         let h = token_hash(token);
-        let s = conn
+        let found = conn
             .query_row(
-                "SELECT u.id, u.username, u.role, u.created_ms, s.csrf, s.expires_ms
+                "SELECT u.id, u.username, u.role, u.created_ms, s.csrf, s.expires_ms, s.created_ms
                  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?1 AND s.expires_ms > ?2",
                 params![h, now],
-                |r| Ok(Session { user: user_from_row(r)?, csrf: r.get(4)?, expires_ms: r.get(5)? }),
+                |r| Ok((Session { user: user_from_row(r)?, csrf: r.get(4)?, expires_ms: r.get(5)? }, r.get::<_, i64>(6)?)),
             )
             .optional()?;
-        if s.is_some() {
+        let Some((mut s, created)) = found else {
+            return Ok(None);
+        };
+        let hard_end = created.saturating_add(max_ms);
+        if now >= hard_end {
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?1", [&h])?;
+            return Ok(None);
+        }
+        let want = (now + idle_ms).min(hard_end);
+        if want - s.expires_ms > SLIDE_GRANULARITY_MS {
             conn.execute(
                 "UPDATE sessions SET expires_ms = ?1 WHERE token_hash = ?2",
-                params![now + ttl_ms, h],
+                params![want, h],
             )?;
+            s.expires_ms = want;
         }
-        Ok(s)
+        Ok(Some(s))
+    }
+
+    pub fn list_sessions(&self, user_id: i64) -> Result<Vec<SessionInfo>, StoreError> {
+        let now = bosun_model::now_ms();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT hex(substr(token_hash, 1, 8)), user_id, created_ms, expires_ms FROM sessions
+             WHERE user_id = ?1 AND expires_ms > ?2 ORDER BY created_ms",
+        )?;
+        let rows = stmt.query_map(params![user_id, now], |r| {
+            Ok(SessionInfo {
+                id: r.get::<_, String>(0)?.to_ascii_lowercase(),
+                user_id: r.get(1)?,
+                created_ms: r.get(2)?,
+                expires_ms: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// End one session of a user (by the id from [`Self::list_sessions`]).
+    pub fn revoke_session(&self, user_id: i64, id: &str) -> Result<bool, StoreError> {
+        Ok(self.conn().execute(
+            "DELETE FROM sessions WHERE user_id = ?1 AND lower(hex(substr(token_hash, 1, 8))) = ?2",
+            params![user_id, id.to_ascii_lowercase()],
+        )? > 0)
+    }
+
+    /// End every session of a user. Returns how many there were.
+    pub fn revoke_sessions(&self, user_id: i64) -> Result<usize, StoreError> {
+        Ok(self
+            .conn()
+            .execute("DELETE FROM sessions WHERE user_id = ?1", [user_id])?)
     }
 
     pub fn delete_session(&self, token: &str) -> Result<(), StoreError> {
@@ -368,12 +500,20 @@ impl AppDb {
         Ok(())
     }
 
-    pub fn create_api_token(&self, name: &str, token: &str, user_id: i64) -> Result<ApiToken, StoreError> {
+    pub fn create_api_token(
+        &self,
+        name: &str,
+        token: &str,
+        user_id: i64,
+        scope: TokenScope,
+        expires_ms: Option<i64>,
+    ) -> Result<ApiToken, StoreError> {
         let now = bosun_model::now_ms();
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO api_tokens (name, token_hash, user_id, created_ms) VALUES (?1, ?2, ?3, ?4)",
-            params![name, token_hash(token), user_id, now],
+            "INSERT INTO api_tokens (name, token_hash, user_id, created_ms, expires_ms, scope)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![name, token_hash(token), user_id, now, expires_ms, scope.as_str()],
         )?;
         Ok(ApiToken {
             id: conn.last_insert_rowid(),
@@ -381,33 +521,48 @@ impl AppDb {
             user_id,
             created_ms: now,
             last_used_ms: None,
+            expires_ms,
+            scope,
         })
     }
 
-    pub fn user_for_api_token(&self, token: &str) -> Result<Option<User>, StoreError> {
+    /// The owner and scope of a live (not expired) token. `last_used_ms` is refreshed at most once a minute.
+    pub fn user_for_api_token(&self, token: &str) -> Result<Option<(User, TokenScope)>, StoreError> {
+        let now = bosun_model::now_ms();
         let conn = self.conn();
         let h = token_hash(token);
-        let u = conn
+        let found = conn
             .query_row(
-                "SELECT u.id, u.username, u.role, u.created_ms FROM api_tokens t JOIN users u ON u.id = t.user_id
-                 WHERE t.token_hash = ?1",
-                [&h],
-                user_from_row,
+                "SELECT u.id, u.username, u.role, u.created_ms, t.scope, t.last_used_ms
+                 FROM api_tokens t JOIN users u ON u.id = t.user_id
+                 WHERE t.token_hash = ?1 AND (t.expires_ms IS NULL OR t.expires_ms > ?2)",
+                params![h, now],
+                |r| {
+                    Ok((
+                        user_from_row(r)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, Option<i64>>(5)?,
+                    ))
+                },
             )
             .optional()?;
-        if u.is_some() {
+        let Some((user, scope, last)) = found else {
+            return Ok(None);
+        };
+        if last.is_none_or(|l| now - l > TOKEN_USED_GRANULARITY_MS) {
             conn.execute(
                 "UPDATE api_tokens SET last_used_ms = ?1 WHERE token_hash = ?2",
-                params![bosun_model::now_ms(), h],
+                params![now, h],
             )?;
         }
-        Ok(u)
+        Ok(Some((user, TokenScope::parse(&scope))))
     }
 
     pub fn list_api_tokens(&self, user_id: i64) -> Result<Vec<ApiToken>, StoreError> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, user_id, created_ms, last_used_ms FROM api_tokens WHERE user_id = ?1 ORDER BY id",
+            "SELECT id, name, user_id, created_ms, last_used_ms, expires_ms, scope FROM api_tokens
+             WHERE user_id = ?1 ORDER BY id",
         )?;
         let rows = stmt.query_map([user_id], |r| {
             Ok(ApiToken {
@@ -416,6 +571,8 @@ impl AppDb {
                 user_id: r.get(2)?,
                 created_ms: r.get(3)?,
                 last_used_ms: r.get(4)?,
+                expires_ms: r.get(5)?,
+                scope: TokenScope::parse(&r.get::<_, String>(6)?),
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -501,19 +658,19 @@ mod tests {
         ));
 
         db.create_session("tok", admin.id, "csrf1", 60_000).unwrap();
-        let s = db.session("tok", 60_000).unwrap().unwrap();
+        let s = db.session("tok", 60_000, 3_600_000).unwrap().unwrap();
         assert_eq!(s.user.username, "root");
         assert_eq!(s.csrf, "csrf1");
-        assert!(db.session("wrong", 60_000).unwrap().is_none());
+        assert!(db.session("wrong", 60_000, 3_600_000).unwrap().is_none());
 
-        db.set_password(admin.id, "$new").unwrap();
+        db.set_password(admin.id, "$new", true).unwrap();
         assert!(
-            db.session("tok", 60_000).unwrap().is_none(),
+            db.session("tok", 60_000, 3_600_000).unwrap().is_none(),
             "password change ends sessions"
         );
 
         db.create_session("expired", admin.id, "c", -1).unwrap();
-        assert!(db.session("expired", 60_000).unwrap().is_none());
+        assert!(db.session("expired", 60_000, 3_600_000).unwrap().is_none());
         assert!(db.delete_user(admin.id).is_err(), "last admin cannot be deleted");
     }
 
@@ -521,8 +678,10 @@ mod tests {
     fn api_tokens_and_append_only_audit() {
         let db = AppDb::open_in_memory().unwrap();
         let u = db.create_user("ci", "$h", Role::Tester).unwrap();
-        let t = db.create_api_token("pipeline", "secret-token", u.id).unwrap();
-        assert_eq!(db.user_for_api_token("secret-token").unwrap().unwrap().id, u.id);
+        let t = db
+            .create_api_token("pipeline", "secret-token", u.id, TokenScope::Full, None)
+            .unwrap();
+        assert_eq!(db.user_for_api_token("secret-token").unwrap().unwrap().0.id, u.id);
         assert!(db.user_for_api_token("nope").unwrap().is_none());
         assert!(db.delete_api_token(t.id, u.id).unwrap());
         assert!(db.user_for_api_token("secret-token").unwrap().is_none());
@@ -532,5 +691,87 @@ mod tests {
         let conn = db.conn();
         assert!(conn.execute("DELETE FROM audit", []).is_err());
         assert!(conn.execute("UPDATE audit SET action = 'x'", []).is_err());
+    }
+
+    #[test]
+    fn a_password_change_revokes_tokens_when_asked() {
+        let db = AppDb::open_in_memory().unwrap();
+        let u = db.create_user("a", "$h", Role::Tester).unwrap();
+        db.create_api_token("t", "tok-a", u.id, TokenScope::Full, None)
+            .unwrap();
+        db.set_password(u.id, "$n", false).unwrap();
+        assert!(db.user_for_api_token("tok-a").unwrap().is_some());
+        db.set_password(u.id, "$n", true).unwrap();
+        assert!(db.user_for_api_token("tok-a").unwrap().is_none());
+    }
+
+    #[test]
+    fn tokens_expire_and_carry_a_scope() {
+        let db = AppDb::open_in_memory().unwrap();
+        let u = db.create_user("a", "$h", Role::Tester).unwrap();
+        let now = bosun_model::now_ms();
+        db.create_api_token("old", "t-old", u.id, TokenScope::Full, Some(now - 1))
+            .unwrap();
+        db.create_api_token("ro", "t-ro", u.id, TokenScope::Read, Some(now + 60_000))
+            .unwrap();
+        assert!(db.user_for_api_token("t-old").unwrap().is_none());
+        assert_eq!(
+            db.user_for_api_token("t-ro").unwrap().unwrap().1,
+            TokenScope::Read
+        );
+        assert_eq!(db.list_api_tokens(u.id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn sessions_have_an_absolute_lifetime_and_slide_sparingly() {
+        let db = AppDb::open_in_memory().unwrap();
+        let u = db.create_user("a", "$h", Role::Tester).unwrap();
+        db.create_session("s1", u.id, "c", 10 * 60_000).unwrap();
+        let first = db.session("s1", 10 * 60_000, 3_600_000).unwrap().unwrap();
+        let again = db.session("s1", 10 * 60_000 + 5_000, 3_600_000).unwrap().unwrap();
+        assert_eq!(
+            first.expires_ms, again.expires_ms,
+            "a move of under a minute is not written"
+        );
+        // Created long ago relative to the maximum: dead no matter how recently it was used.
+        assert!(db.session("s1", 10 * 60_000, 0).unwrap().is_none());
+        assert!(
+            db.session("s1", 10 * 60_000, 3_600_000).unwrap().is_none(),
+            "and it was deleted"
+        );
+        // The idle extension never passes the absolute end.
+        db.create_session("s2", u.id, "c", 1000).unwrap();
+        let s = db.session("s2", 10 * 60_000, 120_000).unwrap().unwrap();
+        assert!(s.expires_ms <= bosun_model::now_ms() + 120_000);
+    }
+
+    #[test]
+    fn roles_change_but_the_last_admin_stays() {
+        let db = AppDb::open_in_memory().unwrap();
+        let a = db.create_first_admin("root", "$h").unwrap();
+        let b = db.create_user("b", "$h", Role::Tester).unwrap();
+        assert!(matches!(
+            db.set_role(a.id, Role::Viewer),
+            Err(StoreError::Conflict(_))
+        ));
+        assert!(db.set_role(b.id, Role::Admin).unwrap());
+        assert!(db.set_role(a.id, Role::Viewer).unwrap());
+        assert!(!db.set_role(999, Role::Viewer).unwrap());
+    }
+
+    #[test]
+    fn sessions_can_be_listed_and_revoked() {
+        let db = AppDb::open_in_memory().unwrap();
+        let u = db.create_user("a", "$h", Role::Tester).unwrap();
+        db.create_session("s1", u.id, "c", 60_000).unwrap();
+        db.create_session("s2", u.id, "c", 60_000).unwrap();
+        let list = db.list_sessions(u.id).unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(db.revoke_session(u.id, &list[0].id).unwrap());
+        assert!(
+            !db.revoke_session(u.id + 1, &list[1].id).unwrap(),
+            "only the owner's"
+        );
+        assert_eq!(db.revoke_sessions(u.id).unwrap(), 1);
     }
 }

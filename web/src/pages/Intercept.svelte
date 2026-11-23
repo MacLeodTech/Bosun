@@ -49,6 +49,8 @@
       if (e.type === 'intercept_queued') {
         queue = [...queue, e.item];
         if (!current) select(e.item.id);
+      } else if (e.type === 'intercept_refused') {
+        error = e.reason;
       } else if (e.type === 'intercept_resolved') {
         queue = queue.filter((q) => q.id !== e.id);
         if (current?.id === e.id) select(queue[0]?.id);
@@ -61,6 +63,7 @@
   <label><input type="checkbox" checked={settings.requests} disabled={!canEdit} onchange={(e) => save({ ...settings, requests: e.currentTarget.checked })} /> Intercept requests</label>
   <label><input type="checkbox" checked={settings.responses} disabled={!canEdit} onchange={(e) => save({ ...settings, responses: e.currentTarget.checked })} /> Intercept responses</label>
   <label><input type="checkbox" checked={settings.in_scope_only} disabled={!canEdit} onchange={(e) => save({ ...settings, in_scope_only: e.currentTarget.checked })} /> Only in-scope</label>
+  <label>Auto-forward after <input type="number" min="0" max="3600" class="num" value={settings.timeout_secs ?? 0} disabled={!canEdit} onchange={(e) => save({ ...settings, timeout_secs: Number(e.currentTarget.value) || null })} /> s (0 = hold)</label>
   <span class="spacer"></span>
   <button class="primary" disabled={!current || !canEdit} onclick={() => decide('forward')}>Forward</button>
   <button disabled={!current || !canEdit} onclick={() => decide('drop')}>Drop</button>

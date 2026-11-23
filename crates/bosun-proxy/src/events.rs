@@ -23,6 +23,15 @@ pub enum ProxyEvent {
     InterceptResolved {
         id: u64,
     },
+    /// A message could not be held (queue full) and was refused.
+    InterceptRefused {
+        reason: String,
+    },
+    /// A batch of history could not be written even after a retry, and is lost.
+    RecorderFailed {
+        lost: u64,
+        error: String,
+    },
     InterceptState {
         requests: bool,
         responses: bool,

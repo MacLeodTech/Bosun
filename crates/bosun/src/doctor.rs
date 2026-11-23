@@ -110,6 +110,31 @@ pub fn run(cfg: &Config) -> Vec<Finding> {
             );
         }
     }
+    if cfg.api.tls {
+        match (&cfg.api.tls_cert, &cfg.api.tls_key) {
+            (Some(c), Some(k)) => {
+                for p in [c, k] {
+                    if std::fs::metadata(p).is_err() {
+                        push(
+                            &mut out,
+                            Level::Fail,
+                            format!("UI certificate file {} cannot be read", p.display()),
+                        );
+                    }
+                }
+            }
+            (None, None) => push(
+                &mut out,
+                Level::Ok,
+                "the UI uses its own self-signed certificate (not the interception CA's); browsers will warn once",
+            ),
+            _ => push(
+                &mut out,
+                Level::Fail,
+                "api.tls_cert and api.tls_key must be set together",
+            ),
+        }
+    }
     if cfg.proxy.verify_upstream_tls {
         push(&mut out, Level::Ok, "upstream TLS certificates are verified");
     }

@@ -59,6 +59,19 @@ pub struct ProxyConfig {
     pub record_out_of_scope: bool,
     /// Seconds to wait for an upstream response head.
     pub upstream_timeout_secs: u64,
+    /// Most client connections at once (each tunnelled request also holds an upstream socket, so keep this
+    /// well under half the process's open-file limit). Further connections are closed immediately.
+    pub max_connections: usize,
+    /// Bytes all buffered traffic may use at once (bodies being read, responses held for editing, history
+    /// waiting to be written). Default: half the container's memory limit when there is one, else 1 GiB.
+    /// Past it, requests get 503 and recorded bodies are dropped.
+    pub memory_budget_mib: Option<usize>,
+    /// Most messages held in the intercept queue; further ones are refused with 503.
+    pub max_intercept_items: usize,
+    /// Most bytes held in the intercept queue.
+    pub max_intercept_bytes: usize,
+    /// Seconds a client may take to send a request's headers (also bounds idle keep-alive connections).
+    pub header_timeout_secs: u64,
     /// Our own API listener(s), refused as proxy targets.
     #[serde(skip)]
     pub self_addrs: Vec<SocketAddr>,
@@ -87,6 +100,11 @@ impl Default for ProxyConfig {
             invisible: false,
             record_out_of_scope: true,
             upstream_timeout_secs: 120,
+            max_connections: 1024,
+            header_timeout_secs: 30,
+            memory_budget_mib: None,
+            max_intercept_items: 256,
+            max_intercept_bytes: 128 * 1024 * 1024,
             self_addrs: Vec::new(),
         }
     }

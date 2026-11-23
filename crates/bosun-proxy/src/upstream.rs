@@ -62,7 +62,7 @@ pub struct Conn {
 }
 
 /// Keeps a local address registered with the loop guard for as long as it lives.
-struct Registration {
+pub struct Registration {
     local: Option<SocketAddr>,
     guard: LoopGuard,
 }
@@ -211,6 +211,35 @@ impl Connector {
         })
     }
 
+    /// Open a TCP connection to `host:port` the way every outbound connection is opened: the self-target check,
+    /// then the configured upstream (direct, HTTP CONNECT or SOCKS5), with the local address registered with the
+    /// loop guard for as long as the returned [`Registration`] lives. No TLS.
+    pub async fn connect_tcp(&self, host: &str, port: u16) -> Result<(TcpStream, Registration), BoxError> {
+        if self.targets_self(host, port) {
+            return Err(Box::new(SelfTarget(format!("{host}:{port}"))) as BoxError);
+        }
+        // The tunnel and SOCKS connectors expect the target scheme; HttpConnector needs http(s) only for the
+        // default port, which we have already resolved.
+        let tcp_uri: Uri = format!("http://{}:{port}", bracket(host)).parse()?;
+        let io = match self.route.clone() {
+            Route::Direct(mut c) => tower_service::Service::call(&mut c, tcp_uri).await?,
+            Route::Http(mut c) => tower_service::Service::call(&mut c, tcp_uri).await?,
+            Route::Socks(mut c) => tower_service::Service::call(&mut c, tcp_uri).await?,
+        };
+        let tcp = io.into_inner();
+        let local = tcp.local_addr().ok();
+        if let Some(a) = local {
+            self.guard.add(a);
+        }
+        Ok((
+            tcp,
+            Registration {
+                local,
+                guard: self.guard.clone(),
+            },
+        ))
+    }
+
     /// Cheap pre-check for obvious loops: a loopback/unspecified target on one of our own ports.
     fn targets_self(&self, host: &str, port: u16) -> bool {
         let host = host.trim_start_matches('[').trim_end_matches(']');
@@ -250,27 +279,7 @@ impl tower_service::Service<Uri> for Connector {
             let https = dst.scheme_str() == Some("https");
             let host = dst.host().ok_or("missing host")?.to_string();
             let port = dst.port_u16().unwrap_or(if https { 443 } else { 80 });
-            if this.targets_self(&host, port) {
-                return Err(Box::new(SelfTarget(format!("{host}:{port}"))) as BoxError);
-            }
-            // The tunnel and SOCKS connectors expect the target scheme; HttpConnector needs http(s) only for
-            // the default port, which we have already resolved.
-            let tcp_uri: Uri = format!("http://{}:{port}", bracket(&host)).parse()?;
-            let io = match this.route.clone() {
-                Route::Direct(mut c) => tower_service::Service::call(&mut c, tcp_uri).await?,
-                Route::Http(mut c) => tower_service::Service::call(&mut c, tcp_uri).await?,
-                Route::Socks(mut c) => tower_service::Service::call(&mut c, tcp_uri).await?,
-            };
-            let tcp = io.into_inner();
-            let local = tcp.local_addr().ok();
-            if let Some(a) = local {
-                this.guard.add(a);
-            }
-            // Registered before the TLS handshake; dropping `reg` on any error below unregisters it.
-            let reg = Registration {
-                local,
-                guard: this.guard.clone(),
-            };
+            let (tcp, reg) = this.connect_tcp(&host, port).await?;
             let conn = if https {
                 let name =
                     ServerName::try_from(host.trim_start_matches('[').trim_end_matches(']').to_string())?;

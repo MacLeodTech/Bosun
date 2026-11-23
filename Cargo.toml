@@ -54,6 +54,7 @@ hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "c
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "1"
+x509-parser = "0.18"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto", "x509-parser"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 zstd = { version = "0.13", default-features = false }

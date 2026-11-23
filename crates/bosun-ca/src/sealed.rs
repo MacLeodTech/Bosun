@@ -169,6 +169,12 @@ pub fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 /// Refuse a secret file that group or others can read.
+///
+/// On Windows there is no mode to check and this accepts every file. Access there is decided by ACLs, and the
+/// data directory lives under the user's profile (`%LOCALAPPDATA%`), which other standard users cannot read; a
+/// file created inside inherits that. Rewriting ACLs without `unsafe` code is not possible with the standard
+/// library, so Bosun relies on the profile's protection and `docs/threat-model.md` says so. Keep the data
+/// directory inside your profile (or another location only you can read) on Windows.
 pub fn check_private(path: &Path) -> Result<(), SealError> {
     #[cfg(unix)]
     {

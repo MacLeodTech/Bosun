@@ -3,7 +3,7 @@
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
   import { fmtTime } from '../lib/bytes';
-  import type { ApiToken, AuditEntry, Role, User } from '../lib/types';
+  import type { ApiToken, AuditEntry, Role, SessionInfo, User } from '../lib/types';
 
   interface ProxyInfo { listen: string; http2: boolean; invisible: boolean; verify_upstream_tls: boolean; auth_required: boolean; tools_stopped: boolean; tls_passthrough: string[] }
   interface CaInfo { fingerprint_sha256: string; spki_sha256: string }
@@ -13,7 +13,11 @@
   let tokens = $state<ApiToken[]>([]);
   let users = $state<User[]>([]);
   let audit = $state<AuditEntry[]>([]);
+  let sessions = $state<SessionInfo[]>([]);
   let newToken = $state('');
+  let tokenScope = $state<'read' | 'full'>('full');
+  let tokenDays = $state<number | null>(null);
+  let revokeTokens = $state(true);
   let shownToken = $state('');
   let note = $state('');
   let error = $state('');
@@ -32,7 +36,8 @@
   }
 
   async function load() {
-    [proxy, ca, tokens] = await Promise.all([api.get<ProxyInfo>('/proxy'), api.get<CaInfo>('/ca'), api.get<ApiToken[]>('/tokens')]);
+    const me = session.me?.user.id;
+    [proxy, ca, tokens, sessions] = await Promise.all([api.get<ProxyInfo>('/proxy'), api.get<CaInfo>('/ca'), api.get<ApiToken[]>('/tokens'), api.get<SessionInfo[]>(`/users/${me}/sessions`)]);
     if (session.can('admin')) [users, audit] = await Promise.all([api.get<User[]>('/users'), api.get<AuditEntry[]>('/audit')]);
   }
 
@@ -40,15 +45,16 @@
   const stop = (stopped: boolean) => run(async () => { await api.put('/tools/stop', { stopped }); await load(); });
   const createToken = () =>
     run(async () => {
-      const r = await api.post<{ token: string }>('/tokens', { name: newToken });
+      const r = await api.post<{ token: string }>('/tokens', { name: newToken, scope: tokenScope, expires_days: tokenDays || null });
       shownToken = r.token;
       newToken = '';
+      tokenDays = null;
       tokens = await api.get<ApiToken[]>('/tokens');
     });
   const deleteToken = (id: number) => run(async () => { await api.del(`/tokens/${id}`); tokens = await api.get<ApiToken[]>('/tokens'); });
   const changePw = () =>
     run(async () => {
-      await api.post('/auth/password', { current: pw.current, new: pw.next });
+      await api.post('/auth/password', { current: pw.current, new: pw.next, revoke_tokens: revokeTokens });
       pw = { current: '', next: '' };
     }, 'Password changed. Other sessions were signed out.');
   const addUser = () =>
@@ -57,6 +63,9 @@
       nu = { username: '', password: '', role: 'tester' };
       await load();
     }, 'User created.');
+  const setRole = (id: number, role: Role) => run(async () => { await api.put(`/users/${id}/role`, { role }); await load(); }, 'Role changed; that user was signed out.');
+  const revokeSession = (id: string) => run(async () => { await api.del(`/users/${session.me?.user.id}/sessions/${id}`); await load(); });
+  const revokeOthers = () => run(async () => { await api.del(`/users/${session.me?.user.id}/sessions`); await load(); }, 'All sessions ended, including this one.');
   const delUser = (id: number) => run(async () => { await api.del(`/users/${id}`); await load(); });
 
   onMount(load);
@@ -101,11 +110,14 @@
     {#if shownToken}<p class="ok">New token (shown once): <code class="sel">{shownToken}</code></p>{/if}
     <table class="grid"><tbody>
       {#each tokens as t (t.id)}
-        <tr><td>{t.name}</td><td class="small muted">created {new Date(t.created_ms).toLocaleString()}</td><td class="small muted">{t.last_used_ms ? 'used ' + new Date(t.last_used_ms).toLocaleString() : 'never used'}</td><td><button onclick={() => deleteToken(t.id)}>Revoke</button></td></tr>
+        <tr><td>{t.name}</td><td class="small muted">created {new Date(t.created_ms).toLocaleString()}</td><td class="small muted">{t.scope}{t.expires_ms ? ', expires ' + new Date(t.expires_ms).toLocaleDateString() : ''}</td><td class="small muted">{t.last_used_ms ? 'used ' + new Date(t.last_used_ms).toLocaleString() : 'never used'}</td><td><button onclick={() => deleteToken(t.id)}>Revoke</button></td></tr>
       {/each}
     </tbody></table>
     <form class="row" onsubmit={(e) => { e.preventDefault(); createToken(); }}>
-      <input placeholder="token name" bind:value={newToken} required maxlength="64" /><button>Create token</button>
+      <input placeholder="token name" bind:value={newToken} required maxlength="64" />
+      <select bind:value={tokenScope}><option value="full">full access</option><option value="read">read only</option></select>
+      <input type="number" min="1" max="3650" placeholder="expires in days (optional)" bind:value={tokenDays} />
+      <button>Create token</button>
     </form>
   </section>
 
@@ -114,8 +126,19 @@
     <form class="row" onsubmit={(e) => { e.preventDefault(); changePw(); }}>
       <input type="password" placeholder="current" bind:value={pw.current} autocomplete="current-password" required />
       <input type="password" placeholder="new (12+ characters)" bind:value={pw.next} autocomplete="new-password" minlength="12" required />
+      <label class="small"><input type="checkbox" bind:checked={revokeTokens} /> also revoke my API tokens</label>
       <button>Change</button>
     </form>
+  </section>
+
+  <section>
+    <h2>Your sessions</h2>
+    <table class="grid"><tbody>
+      {#each sessions as s (s.id)}
+        <tr><td class="small muted">signed in {new Date(s.created_ms).toLocaleString()}</td><td class="small muted">idle expiry {new Date(s.expires_ms).toLocaleString()}</td><td><button onclick={() => revokeSession(s.id)}>End</button></td></tr>
+      {/each}
+    </tbody></table>
+    <div class="row"><button class="danger" onclick={revokeOthers}>End all sessions</button></div>
   </section>
 
   {#if session.can('admin')}
@@ -123,7 +146,7 @@
       <h2>Users</h2>
       <table class="grid"><tbody>
         {#each users as u (u.id)}
-          <tr><td>{u.username}</td><td>{u.role}</td><td>{#if u.id !== session.me?.user.id}<button onclick={() => delUser(u.id)}>Delete</button>{/if}</td></tr>
+          <tr><td>{u.username}</td><td><select value={u.role} onchange={(e) => setRole(u.id, e.currentTarget.value as Role)}><option value="viewer">viewer</option><option value="tester">tester</option><option value="admin">admin</option></select></td><td>{#if u.id !== session.me?.user.id}<button onclick={() => delUser(u.id)}>Delete</button>{/if}</td></tr>
         {/each}
       </tbody></table>
       <form class="row" onsubmit={(e) => { e.preventDefault(); addUser(); }}>

@@ -115,6 +115,7 @@ async fn serve(sso: SsoConfig) -> (SocketAddr, Arc<AppDb>) {
             ca,
             events,
             browser: None,
+            ui_tls: None,
         },
     )
     .unwrap();

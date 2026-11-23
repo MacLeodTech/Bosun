@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bosun_ca::CertificateAuthority;
-use bosun_proxy::{Decision, InterceptSettings, Proxy, ProxyAuth, ProxyConfig, RuleSpec, RuleTarget};
+use bosun_proxy::{
+    Decision, InterceptSettings, Proxy, ProxyAuth, ProxyConfig, RuleSpec, RuleTarget, UpstreamProxy,
+};
 use bosun_scope::{Gate, RuleSpec as ScopeRule, Scope, ScopeSpec};
 use bosun_store::{FlowFilter, Project};
 use bytes::Bytes;
@@ -215,6 +217,7 @@ async fn intercept_queue_edits_the_request() {
         requests: true,
         responses: false,
         in_scope_only: true,
+        timeout_secs: None,
     });
     let c = client(&h);
     let url = format!("http://{up}/original");
@@ -251,6 +254,7 @@ async fn dropped_requests_never_reach_the_target() {
         requests: true,
         responses: false,
         in_scope_only: false,
+        timeout_secs: None,
     });
     let c = client(&h);
     let req = tokio::spawn(async move { c.get(format!("http://{up}/x")).send().await.unwrap() });
@@ -405,4 +409,309 @@ fn open_proxy_configurations_are_refused() {
         ..cfg
     };
     assert!(cfg.validate().is_ok());
+}
+
+/// A TCP echo server.
+async fn tcp_echo() -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            tokio::spawn(async move {
+                let (mut r, mut w) = s.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    addr
+}
+
+/// A minimal SOCKS5 server (no authentication) that records the target each client asked for.
+async fn socks5(seen: Arc<std::sync::Mutex<Vec<String>>>) -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut c, _) = l.accept().await.unwrap();
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let mut hello = [0u8; 2];
+                c.read_exact(&mut hello).await.unwrap();
+                let mut methods = vec![0u8; hello[1] as usize];
+                c.read_exact(&mut methods).await.unwrap();
+                c.write_all(&[5, 0]).await.unwrap();
+                let mut req = [0u8; 4];
+                c.read_exact(&mut req).await.unwrap();
+                let host = match req[3] {
+                    1 => {
+                        let mut a = [0u8; 4];
+                        c.read_exact(&mut a).await.unwrap();
+                        std::net::Ipv4Addr::from(a).to_string()
+                    }
+                    3 => {
+                        let mut n = [0u8; 1];
+                        c.read_exact(&mut n).await.unwrap();
+                        let mut name = vec![0u8; n[0] as usize];
+                        c.read_exact(&mut name).await.unwrap();
+                        String::from_utf8(name).unwrap()
+                    }
+                    _ => return,
+                };
+                let mut port = [0u8; 2];
+                c.read_exact(&mut port).await.unwrap();
+                let port = u16::from_be_bytes(port);
+                seen.lock().unwrap().push(format!("{host}:{port}"));
+                let Ok(mut t) = TcpStream::connect((host.as_str(), port)).await else {
+                    c.write_all(&[5, 5, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+                    return;
+                };
+                c.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut c, &mut t).await;
+            });
+        }
+    });
+    addr
+}
+
+/// Send `CONNECT host:port` to the proxy and return the stream once the proxy answers 200.
+async fn connect_via(proxy: SocketAddr, target: &str) -> TcpStream {
+    let mut s = TcpStream::connect(proxy).await.unwrap();
+    s.write_all(format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        let mut b = [0u8; 1];
+        s.read_exact(&mut b).await.unwrap();
+        head.push(b[0]);
+    }
+    assert!(String::from_utf8_lossy(&head).starts_with("HTTP/1.1 200"));
+    s
+}
+
+#[tokio::test]
+async fn passthrough_tunnels_go_through_the_upstream_socks_proxy() {
+    let echo = tcp_echo().await;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let socks = socks5(seen.clone()).await;
+    let h = start(
+        ProxyConfig {
+            tls_passthrough: vec!["localhost".into()],
+            upstream: Some(UpstreamProxy::Socks5 {
+                addr: socks.to_string(),
+                username: None,
+                password: None,
+                local_dns: false,
+            }),
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let mut s = connect_via(h.addr, &format!("localhost:{}", echo.port())).await;
+    s.write_all(b"ping").await.unwrap();
+    let mut got = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(5), s.read_exact(&mut got))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&got, b"ping");
+    assert_eq!(*seen.lock().unwrap(), [format!("localhost:{}", echo.port())]);
+}
+
+#[tokio::test]
+async fn passthrough_to_our_own_listener_is_refused() {
+    let h = start(
+        ProxyConfig {
+            tls_passthrough: vec!["127.0.0.1".into()],
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let mut s = connect_via(h.addr, &format!("127.0.0.1:{}", h.addr.port())).await;
+    // The proxy accepted the CONNECT, then refused to dial itself and closed the tunnel.
+    let _ = s.write_all(b"ping").await;
+    let mut rest = Vec::new();
+    let n = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut rest))
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!(n, 0, "no bytes may come back from our own listener");
+}
+
+#[tokio::test]
+async fn slow_header_senders_are_disconnected() {
+    let h = start(
+        ProxyConfig {
+            header_timeout_secs: 1,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    let head =
+        b"GET http://bosun/ HTTP/1.1\r\nHost: bosun\r\nX-Slow: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let mut cut = false;
+    for b in head {
+        if s.write_all(&[*b]).await.is_err() {
+            cut = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut buf = [0u8; 64];
+        if let Ok(Ok(_)) = tokio::time::timeout(Duration::from_millis(1), s.read(&mut buf)).await {
+            cut = true;
+            break;
+        }
+    }
+    assert!(cut, "a client dribbling its headers must be disconnected");
+}
+
+#[tokio::test]
+async fn connections_over_the_cap_are_refused_while_existing_ones_keep_working() {
+    let h = start(
+        ProxyConfig {
+            max_connections: 2,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let req = b"GET http://bosun/cert.pem HTTP/1.1\r\nHost: bosun\r\n\r\n";
+    let mut a = TcpStream::connect(h.addr).await.unwrap();
+    let mut b = TcpStream::connect(h.addr).await.unwrap();
+    for c in [&mut a, &mut b] {
+        c.write_all(req).await.unwrap();
+        let mut buf = [0u8; 12];
+        c.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"HTTP/1.1 200");
+    }
+    let mut third = TcpStream::connect(h.addr).await.unwrap();
+    let _ = third.write_all(req).await;
+    let mut buf = [0u8; 12];
+    let got = tokio::time::timeout(Duration::from_secs(5), third.read(&mut buf))
+        .await
+        .unwrap();
+    assert!(
+        matches!(got, Ok(0) | Err(_)),
+        "the third connection gets nothing: {got:?}"
+    );
+    // Existing connections are unaffected: read the rest of the first response off `a`, then reuse it.
+    drop(third);
+    let mut sink = vec![0u8; 8192];
+    let _ = tokio::time::timeout(Duration::from_millis(200), a.read(&mut sink)).await;
+    a.write_all(req).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(5), a.read(&mut sink))
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+/// An upstream that takes a while to answer, so concurrent requests overlap.
+async fn slow_upstream() -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (s, _) = l.accept().await.unwrap();
+            tokio::spawn(async move {
+                let svc = service_fn(|req: Request<Incoming>| async move {
+                    let _ = req.into_body().collect().await;
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
+                });
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(s), svc)
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn many_large_bodies_stay_under_the_memory_budget() {
+    let up = slow_upstream().await;
+    // 2 MiB budget; each 700 KB body reserves about 1.4 MB, so only one fits at a time.
+    let h = start(
+        ProxyConfig {
+            memory_budget_mib: Some(2),
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let c = client(&h);
+    let mut tasks = Vec::new();
+    for _ in 0..8 {
+        let (c, url) = (c.clone(), format!("http://{up}/"));
+        tasks.push(tokio::spawn(async move {
+            c.post(url)
+                .body(vec![b'x'; 700_000])
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }));
+    }
+    let (mut ok, mut busy) = (0, 0);
+    for t in tasks {
+        match t.await.unwrap().as_u16() {
+            200 => ok += 1,
+            503 => busy += 1,
+            other => panic!("unexpected status {other}"),
+        }
+    }
+    assert!(ok >= 1, "at least one request fits the budget");
+    assert!(
+        busy >= 1,
+        "the others are refused with 503, not queued without bound"
+    );
+    h.proxy.flush(); // history waiting to be written is counted too
+    let st = h.proxy.stats();
+    assert_eq!(st.memory_used, 0, "everything is released afterwards: {st:?}");
+    assert!(st.memory_refused >= busy);
+    // Too big for the per-message limit is still 413.
+    let r = c
+        .post(format!("http://{up}/"))
+        .body(vec![b'x'; 10])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test]
+async fn a_full_intercept_queue_refuses_with_503_and_never_forwards() {
+    let up = slow_upstream().await;
+    let h = start(
+        ProxyConfig {
+            max_intercept_items: 1,
+            ..Default::default()
+        },
+        &["127.0.0.1"],
+    )
+    .await;
+    h.proxy.intercept().set(InterceptSettings {
+        requests: true,
+        responses: false,
+        in_scope_only: true,
+        timeout_secs: None,
+    });
+    let c = client(&h);
+    let first = {
+        let (c, url) = (c.clone(), format!("http://{up}/a"));
+        tokio::spawn(async move { c.get(url).send().await.unwrap().status() })
+    };
+    while h.proxy.intercept().list().is_empty() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let second = c.get(format!("http://{up}/b")).send().await.unwrap();
+    assert_eq!(second.status(), 503);
+    assert_eq!(h.proxy.stats().intercept_refused, 1);
+    h.proxy.intercept().forward_all();
+    assert_eq!(first.await.unwrap(), 200);
 }

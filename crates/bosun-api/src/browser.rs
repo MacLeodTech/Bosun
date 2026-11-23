@@ -7,7 +7,9 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+use crate::child::clean_command;
 
 #[derive(Debug, Clone)]
 pub struct BrowserLauncher {
@@ -16,6 +18,35 @@ pub struct BrowserLauncher {
     /// Where the bundled browser lives (`<install>/browser`).
     pub bundled_dir: Option<PathBuf>,
     pub profile_dir: PathBuf,
+}
+
+/// Browsers installed for one user only (no administrator rights needed): Chrome's and Edge's default on Windows
+/// is `%LOCALAPPDATA%`, and on macOS `~/Applications`.
+fn per_user_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if cfg!(windows) {
+        if let Some(base) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            for rel in [
+                r"Google\Chrome\Application\chrome.exe",
+                r"Microsoft\Edge\Application\msedge.exe",
+                r"BraveSoftware\Brave-Browser\Application\brave.exe",
+                r"Chromium\Application\chrome.exe",
+            ] {
+                out.push(base.join(rel));
+            }
+        }
+    } else if cfg!(target_os = "macos")
+        && let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
+    {
+        for rel in [
+            "Applications/Chromium.app/Contents/MacOS/Chromium",
+            "Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        ] {
+            out.push(home.join(rel));
+        }
+    }
+    out
 }
 
 impl BrowserLauncher {
@@ -54,6 +85,7 @@ impl BrowserLauncher {
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Chromium\Application\chrome.exe",
+                r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
             ]
         } else {
             &[]
@@ -62,6 +94,9 @@ impl BrowserLauncher {
             if Path::new(f).exists() {
                 return Some(PathBuf::from(f));
             }
+        }
+        if let Some(p) = per_user_candidates().into_iter().find(|p| p.exists()) {
+            return Some(p);
         }
         let names = [
             "chromium",
@@ -77,6 +112,12 @@ impl BrowserLauncher {
                 let p = dir.join(n);
                 if p.is_file() {
                     return Some(p);
+                }
+                if cfg!(windows) {
+                    let p = dir.join(format!("{n}.exe"));
+                    if p.is_file() {
+                        return Some(p);
+                    }
                 }
             }
         }
@@ -120,7 +161,8 @@ impl BrowserLauncher {
         )?;
         std::fs::create_dir_all(&self.profile_dir)
             .map_err(|e| format!("cannot create the browser profile: {e}"))?;
-        Command::new(&bin)
+        // Clean environment: the browser loads hostile pages and must not hold BOSUN_DATA_KEY.
+        clean_command(&bin)
             .args(self.args(proxy, spki))
             .stdin(Stdio::null())
             .stdout(Stdio::null())

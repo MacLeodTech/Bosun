@@ -1,45 +1,149 @@
 //! Writes finished flows to the project on a dedicated thread, in batches, so recording never blocks traffic.
 
 use std::sync::Arc;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::time::Duration;
 
-use bosun_store::{NewFlow, NewWsMessage, Project};
+use bosun_store::{NewFlow, NewWsMessage, Project, StoreError};
 
+use crate::budget::{MemoryBudget, Reservation};
 use crate::events::{EventSender, ProxyEvent};
 
 const BATCH: usize = 256;
 const LINGER: Duration = Duration::from_millis(50);
+/// Records that may wait for the writer. Past this (or past the memory budget) bodies are not recorded.
+const QUEUE: usize = 4096;
+/// How long to wait before the one retry of a failed write.
+const RETRY_PAUSE: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum Record {
-    Flow(Box<NewFlow>),
-    Ws(NewWsMessage),
+    Flow(Box<NewFlow>, Option<Reservation>),
+    Ws(NewWsMessage, Option<Reservation>),
     /// Reply once everything sent before this has been written (tests, shutdown).
     Flush(mpsc::Sender<()>),
 }
 
+/// What the recorder had to give up, reported by `/proxy`.
+#[derive(Debug, Default)]
+pub struct RecorderStats {
+    /// Flows recorded without their bodies because the queue or the memory budget was full.
+    pub bodies_dropped: AtomicU64,
+    /// Records discarded entirely (the queue was full even for metadata).
+    pub records_dropped: AtomicU64,
+    /// Batches the database refused twice (disk full, read-only file, ...). Their flows and messages are lost.
+    pub write_failures: AtomicU64,
+    /// Flows and WebSocket messages in those batches.
+    pub records_lost: AtomicU64,
+}
+
+type Writer = Box<dyn FnMut(&[NewFlow], &[NewWsMessage]) -> Result<(), StoreError> + Send>;
+
 #[derive(Debug, Clone)]
 pub struct Recorder {
-    tx: mpsc::Sender<Record>,
+    tx: SyncSender<Record>,
+    budget: MemoryBudget,
+    stats: Arc<RecorderStats>,
+}
+
+/// Keep only the head (request line or status line and headers) of a raw message.
+fn head_only(raw: &mut Vec<u8>) {
+    if let Some(i) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+        raw.truncate(i + 4);
+    }
+}
+
+fn strip_bodies(f: &mut NewFlow) {
+    head_only(&mut f.request);
+    for r in [&mut f.original_request, &mut f.original_response, &mut f.response]
+        .into_iter()
+        .flatten()
+    {
+        head_only(r);
+    }
+    f.response_truncated = true;
+    if f.error.is_none() {
+        f.error = Some("bodies not recorded: the recorder was behind or memory was short".into());
+    }
+}
+
+fn flow_bytes(f: &NewFlow) -> usize {
+    f.request.len()
+        + f.original_request.as_ref().map_or(0, Vec::len)
+        + f.response.as_ref().map_or(0, Vec::len)
+        + f.original_response.as_ref().map_or(0, Vec::len)
 }
 
 impl Recorder {
-    pub fn start(project: Arc<Project>, events: EventSender) -> Self {
-        let (tx, rx) = mpsc::channel::<Record>();
+    pub fn start(project: Arc<Project>, events: EventSender, budget: MemoryBudget) -> Self {
+        let p = project.clone();
+        Self::spawn(
+            QUEUE,
+            budget,
+            events,
+            Some(project),
+            Box::new(move |f, w| p.write_batch(f, w)),
+        )
+    }
+
+    /// A recorder with its own writer and queue size (tests stall the writer on purpose).
+    pub fn spawn(
+        queue: usize,
+        budget: MemoryBudget,
+        events: EventSender,
+        project: Option<Arc<Project>>,
+        write: Writer,
+    ) -> Self {
+        let (tx, rx) = mpsc::sync_channel::<Record>(queue);
+        let stats = Arc::new(RecorderStats::default());
+        let s = stats.clone();
         std::thread::Builder::new()
             .name("bosun-recorder".into())
-            .spawn(move || run(project, events, rx))
+            .spawn(move || run(project, events, rx, write, s))
             .unwrap_or_else(|e| panic!("cannot start the recorder thread: {e}"));
-        Self { tx }
+        Self { tx, budget, stats }
     }
 
-    pub fn flow(&self, f: NewFlow) {
-        let _ = self.tx.send(Record::Flow(Box::new(f)));
+    pub fn stats(&self) -> &RecorderStats {
+        &self.stats
     }
 
-    pub fn ws(&self, m: NewWsMessage) {
-        let _ = self.tx.send(Record::Ws(m));
+    /// Queue a flow. Never blocks: when the queue or the budget is full the bodies are dropped and only the
+    /// metadata is recorded (the counters say how often).
+    pub fn flow(&self, mut f: NewFlow) {
+        let mut mem = self.budget.reserve(flow_bytes(&f));
+        if mem.is_none() {
+            strip_bodies(&mut f);
+            self.stats.bodies_dropped.fetch_add(1, Ordering::Relaxed);
+            mem = self.budget.reserve(flow_bytes(&f));
+        }
+        match self.tx.try_send(Record::Flow(Box::new(f), mem)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(Record::Flow(mut f, _))) => {
+                // Metadata only; if even that doesn't fit, the flow is lost (and counted).
+                if f.request.len() > 8192 || f.response.is_some() {
+                    strip_bodies(&mut f);
+                    self.stats.bodies_dropped.fetch_add(1, Ordering::Relaxed);
+                }
+                if self.tx.try_send(Record::Flow(f, None)).is_err() {
+                    self.stats.records_dropped.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    pub fn ws(&self, mut m: NewWsMessage) {
+        let mem = self.budget.reserve(m.payload.len());
+        if mem.is_none() {
+            m.payload.clear();
+            m.truncated = true;
+            self.stats.bodies_dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Err(TrySendError::Full(_)) = self.tx.try_send(Record::Ws(m, mem)) {
+            self.stats.records_dropped.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Wait until everything recorded so far is in the database.
@@ -51,9 +155,46 @@ impl Recorder {
     }
 }
 
-fn run(project: Arc<Project>, events: EventSender, rx: mpsc::Receiver<Record>) {
+/// Write a batch; on failure wait a moment and try once more (a busy or briefly unavailable file is common),
+/// then give up, count the loss and tell the front ends.
+fn write_with_retry(
+    write: &mut Writer,
+    flows: &[NewFlow],
+    ws: &[NewWsMessage],
+    events: &EventSender,
+    stats: &RecorderStats,
+    pause: Duration,
+) -> bool {
+    let first = write(flows, ws);
+    let Err(first) = first else { return true };
+    tracing::warn!(error = %first, "writing history failed; retrying once");
+    std::thread::sleep(pause);
+    match write(flows, ws) {
+        Ok(()) => true,
+        Err(e) => {
+            let lost = (flows.len() + ws.len()) as u64;
+            stats.write_failures.fetch_add(1, Ordering::Relaxed);
+            stats.records_lost.fetch_add(lost, Ordering::Relaxed);
+            tracing::error!(error = %e, lost, "failed to write history; the batch is lost");
+            let _ = events.send(ProxyEvent::RecorderFailed {
+                lost,
+                error: e.to_string(),
+            });
+            false
+        }
+    }
+}
+
+fn run(
+    project: Option<Arc<Project>>,
+    events: EventSender,
+    rx: mpsc::Receiver<Record>,
+    mut write: Writer,
+    stats: Arc<RecorderStats>,
+) {
     let mut flows = Vec::new();
     let mut ws = Vec::new();
+    let mut held: Vec<Option<Reservation>> = Vec::new();
     let mut flushes = Vec::new();
     loop {
         let first = match rx.recv() {
@@ -64,8 +205,14 @@ fn run(project: Arc<Project>, events: EventSender, rx: mpsc::Receiver<Record>) {
         let deadline = std::time::Instant::now() + LINGER;
         while let Some(r) = next.take() {
             match r {
-                Record::Flow(f) => flows.push(*f),
-                Record::Ws(m) => ws.push(m),
+                Record::Flow(f, m) => {
+                    flows.push(*f);
+                    held.push(m);
+                }
+                Record::Ws(m, r) => {
+                    ws.push(m);
+                    held.push(r);
+                }
                 Record::Flush(t) => flushes.push(t),
             }
             if flows.len() + ws.len() >= BATCH {
@@ -76,9 +223,11 @@ fn run(project: Arc<Project>, events: EventSender, rx: mpsc::Receiver<Record>) {
         }
         // WebSocket messages refer to their handshake flow, so make sure it's written first even if the
         // handshake record and the messages arrive in different batches (it is always sent first).
-        if let Err(e) = project.write_batch(&flows, &ws) {
-            tracing::error!(error = %e, flows = flows.len(), "failed to write history");
-        } else if events.receiver_count() > 0 {
+        let written = write_with_retry(&mut write, &flows, &ws, &events, &stats, RETRY_PAUSE);
+        if written
+            && events.receiver_count() > 0
+            && let Some(project) = &project
+        {
             let ids: Vec<_> = flows.iter().map(|f| f.id).collect();
             if let Ok(sums) = project.summaries(&ids) {
                 for s in sums {
@@ -96,8 +245,142 @@ fn run(project: Arc<Project>, events: EventSender, rx: mpsc::Receiver<Record>) {
         }
         flows.clear();
         ws.clear();
+        held.clear();
         for f in flushes.drain(..) {
             let _ = f.send(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    fn flow(id: i64, body: usize) -> NewFlow {
+        let mut req = b"POST /x HTTP/1.1\r\nHost: h\r\n\r\n".to_vec();
+        req.extend(std::iter::repeat_n(b'a', body));
+        NewFlow {
+            id,
+            source: bosun_model::FlowSource::Proxy,
+            started_ms: 0,
+            duration_ms: None,
+            scheme: bosun_model::Scheme::Http,
+            host: "h".into(),
+            port: 80,
+            method: "POST".into(),
+            path: "/x".into(),
+            http_version: "HTTP/1.1".into(),
+            status: None,
+            in_scope: true,
+            edited: false,
+            error: None,
+            request: req,
+            original_request: None,
+            response: None,
+            original_response: None,
+            response_truncated: false,
+        }
+    }
+
+    #[test]
+    fn a_stalled_writer_never_blocks_the_caller_and_bodies_are_dropped() {
+        let (events, _) = tokio::sync::broadcast::channel(4);
+        let gate = Arc::new(Mutex::new(()));
+        let held = gate.lock().unwrap();
+        let written = Arc::new(Mutex::new(Vec::<usize>::new()));
+        let (g, w) = (gate.clone(), written.clone());
+        let rec = Recorder::spawn(
+            4,
+            MemoryBudget::new(1 << 20),
+            events,
+            None,
+            Box::new(move |flows, _| {
+                let _wait = g.lock().unwrap(); // stalls until the test lets go
+                w.lock().unwrap().extend(flows.iter().map(|f| f.request.len()));
+                Ok(())
+            }),
+        );
+        let t = std::time::Instant::now();
+        for i in 0..200 {
+            rec.flow(flow(i, 20_000));
+        }
+        assert!(t.elapsed() < Duration::from_secs(2), "recording must not block");
+        let dropped = rec.stats().bodies_dropped.load(Ordering::Relaxed);
+        assert!(dropped > 0, "some bodies must have been dropped");
+        drop(held);
+        rec.flush();
+        let written = written.lock().unwrap();
+        assert!(
+            written.iter().any(|&n| n < 100),
+            "the dropped ones were written as heads only: {written:?}"
+        );
+    }
+
+    #[test]
+    fn the_memory_budget_turns_bodies_into_metadata() {
+        let (events, _) = tokio::sync::broadcast::channel(4);
+        let rec = Recorder::spawn(64, MemoryBudget::new(1000), events, None, Box::new(|_, _| Ok(())));
+        rec.flow(flow(1, 50_000));
+        assert_eq!(rec.stats().bodies_dropped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_failed_write_is_retried_once_then_counted_and_announced() {
+        let (events, mut rx) = tokio::sync::broadcast::channel(8);
+        let calls = Arc::new(AtomicU64::new(0));
+        let c = calls.clone();
+        let rec = Recorder::spawn(
+            8,
+            MemoryBudget::new(1 << 20),
+            events.clone(),
+            None,
+            Box::new(move |_, _| {
+                // The first batch fails both attempts; later ones succeed on the second try.
+                let n = c.fetch_add(1, Ordering::SeqCst);
+                if n < 3 && n != 2 {
+                    Err(StoreError::Conflict("disk full".into()))
+                } else {
+                    Ok(())
+                }
+            }),
+        );
+        rec.flow(flow(1, 10));
+        rec.flush();
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "one retry, no more");
+        assert_eq!(rec.stats().write_failures.load(Ordering::Relaxed), 1);
+        assert_eq!(rec.stats().records_lost.load(Ordering::Relaxed), 1);
+        match rx.try_recv() {
+            Ok(ProxyEvent::RecorderFailed { lost, error }) => {
+                assert_eq!(lost, 1);
+                assert!(error.contains("disk full"));
+            }
+            other => panic!("expected a failure event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_write_that_works_on_the_retry_loses_nothing() {
+        let (events, mut rx) = tokio::sync::broadcast::channel(8);
+        let calls = Arc::new(AtomicU64::new(0));
+        let c = calls.clone();
+        let rec = Recorder::spawn(
+            8,
+            MemoryBudget::new(1 << 20),
+            events,
+            None,
+            Box::new(move |_, _| {
+                if c.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err(StoreError::Conflict("busy".into()))
+                } else {
+                    Ok(())
+                }
+            }),
+        );
+        rec.flow(flow(1, 10));
+        rec.flush();
+        assert_eq!(rec.stats().write_failures.load(Ordering::Relaxed), 0);
+        assert!(rx.try_recv().is_err());
     }
 }

@@ -13,7 +13,7 @@ use bytes::Bytes;
 use http::header::{self, HeaderName, HeaderValue};
 use http::{HeaderMap, Method, Request, Response, StatusCode, Version};
 use http_body_util::combinators::UnsyncBoxBody;
-use http_body_util::{BodyExt, Empty, Full, Limited};
+use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::client::legacy::Client;
@@ -22,10 +22,12 @@ use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::body::TeeBody;
+use crate::body::{CollectError, TeeBody, collect_budgeted};
+use crate::budget::MemoryBudget;
 use crate::config::ProxyConfig;
 use crate::events::EventSender;
 use crate::intercept::{Decision, InterceptController, Phase};
+use crate::limits::ConnLimit;
 use crate::recorder::Recorder;
 use crate::rules::{RuleSet, RuleSpec, RuleTarget};
 use crate::upstream::{BoxError, Connector, LoopGuard};
@@ -54,7 +56,11 @@ pub(crate) struct Shared {
     pub rules: RwLock<Arc<RuleSet>>,
     pub client: UpClient,
     pub ws_client: UpClient,
+    /// Opens plain TCP for pass-through tunnels: same upstream proxy and loop guard as the HTTP clients.
+    pub tcp: Connector,
     pub guard: LoopGuard,
+    pub limit: ConnLimit,
+    pub budget: MemoryBudget,
     pub passthrough: Scope,
     pub expected_auth: Option<String>,
 }
@@ -70,6 +76,20 @@ struct Tunnel {
 struct ConnCtx {
     peer: SocketAddr,
     tunnel: Option<Tunnel>,
+}
+
+/// Resource counters (see [`Proxy::stats`]).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProxyStats {
+    pub memory_budget: usize,
+    pub memory_used: usize,
+    pub memory_refused: u64,
+    pub recorder_bodies_dropped: u64,
+    pub recorder_records_dropped: u64,
+    pub recorder_write_failures: u64,
+    pub recorder_records_lost: u64,
+    pub intercept_refused: u64,
+    pub intercept_queued_bytes: usize,
 }
 
 /// Handle to a configured proxy.
@@ -114,6 +134,15 @@ impl Proxy {
                 .set_host(false);
             Ok(b.build(conn))
         };
+        let tcp = Connector::new(
+            cfg.upstream.as_ref(),
+            cfg.verify_upstream_tls,
+            false,
+            guard.clone(),
+            self_addrs.clone(),
+        )
+        .map_err(ProxyError::Config)?;
+        let limit = ConnLimit::new("proxy", cfg.max_connections);
         let client = mk(true)?;
         let ws_client = mk(false)?;
         let passthrough = Scope::compile(ScopeSpec {
@@ -135,10 +164,18 @@ impl Proxy {
                 base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", a.username, a.password))
             )
         });
-        let recorder = Recorder::start(project.clone(), events.clone());
+        let budget = MemoryBudget::new(
+            cfg.memory_budget_mib
+                .map_or_else(MemoryBudget::default_cap, |m| m.saturating_mul(1 << 20)),
+        );
+        let recorder = Recorder::start(project.clone(), events.clone(), budget.clone());
         Ok(Self {
             shared: Arc::new(Shared {
-                intercept: Arc::new(InterceptController::new(events)),
+                intercept: Arc::new(InterceptController::with_limits(
+                    events,
+                    cfg.max_intercept_items,
+                    cfg.max_intercept_bytes,
+                )),
                 cfg,
                 ca,
                 gate,
@@ -147,11 +184,46 @@ impl Proxy {
                 rules: RwLock::new(Arc::new(RuleSet::default())),
                 client,
                 ws_client,
+                tcp,
                 guard,
+                limit,
+                budget,
                 passthrough,
                 expected_auth,
             }),
         })
+    }
+
+    /// Counters for `/proxy`: memory in use, and what had to be refused or dropped.
+    pub fn stats(&self) -> ProxyStats {
+        let sh = &self.shared;
+        ProxyStats {
+            memory_budget: sh.budget.cap(),
+            memory_used: sh.budget.used(),
+            memory_refused: sh.budget.refused(),
+            recorder_bodies_dropped: sh
+                .recorder
+                .stats()
+                .bodies_dropped
+                .load(std::sync::atomic::Ordering::Relaxed),
+            recorder_records_dropped: sh
+                .recorder
+                .stats()
+                .records_dropped
+                .load(std::sync::atomic::Ordering::Relaxed),
+            recorder_write_failures: sh
+                .recorder
+                .stats()
+                .write_failures
+                .load(std::sync::atomic::Ordering::Relaxed),
+            recorder_records_lost: sh
+                .recorder
+                .stats()
+                .records_lost
+                .load(std::sync::atomic::Ordering::Relaxed),
+            intercept_refused: sh.intercept.refused(),
+            intercept_queued_bytes: sh.intercept.queued_bytes(),
+        }
     }
 
     pub fn config(&self) -> &ProxyConfig {
@@ -195,8 +267,13 @@ impl Proxy {
                 _ = &mut shutdown => break,
                 accepted = listener.accept() => {
                     let Ok((stream, peer)) = accepted else { continue };
+                    // Over the limit: close at once; connections already open are unaffected.
+                    let Some(permit) = self.shared.limit.try_acquire() else { continue };
                     let shared = self.shared.clone();
-                    tokio::spawn(async move { shared.accept(stream, peer).await });
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        shared.accept(stream, peer).await
+                    });
                 }
             }
         }
@@ -240,7 +317,7 @@ impl Shared {
         });
         let res = hyper::server::conn::http1::Builder::new()
             .preserve_header_case(true)
-            .header_read_timeout(Duration::from_secs(30))
+            .header_read_timeout(Duration::from_secs(self.cfg.header_timeout_secs.max(1)))
             .timer(hyper_util::rt::TokioTimer::new())
             .serve_connection(io, svc)
             .with_upgrades()
@@ -372,9 +449,9 @@ impl Shared {
         host: &str,
         port: u16,
     ) {
-        // Pass-through hosts connect directly (not through an upstream proxy) in this version.
-        match TcpStream::connect((host, port)).await {
-            Ok(mut server) => {
+        // Through the connector, so the upstream proxy (SOCKS5/Tor) and the loop guard apply to pass-through hosts too.
+        match self.tcp.connect_tcp(host, port).await {
+            Ok((mut server, _registration)) => {
                 let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
             }
             Err(e) => tracing::debug!(error = %e, host, port, "pass-through connect failed"),
@@ -429,7 +506,16 @@ impl Shared {
                 async move { Ok::<_, Infallible>(shared.entry(ctx, req).await) }
             });
             let mut b = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
-            b.http1().preserve_header_case(true);
+            b.http1()
+                .preserve_header_case(true)
+                .timer(hyper_util::rt::TokioTimer::new())
+                .header_read_timeout(Duration::from_secs(self.cfg.header_timeout_secs.max(1)));
+            b.http2()
+                .timer(hyper_util::rt::TokioTimer::new())
+                .max_concurrent_streams(100)
+                .max_header_list_size(64 * 1024)
+                .keep_alive_interval(Duration::from_secs(30))
+                .keep_alive_timeout(Duration::from_secs(20));
             if let Err(e) = b.serve_connection_with_upgrades(TokioIo::new(tls), svc).await {
                 tracing::debug!(error = %e, "TLS client connection ended with an error");
             }
@@ -496,18 +582,18 @@ impl Shared {
         let wants_upgrade = is_upgrade(req.headers());
         let client_upgrade = wants_upgrade.then(|| hyper::upgrade::on(&mut req));
         let (parts, body) = req.into_parts();
-        let body = match Limited::new(body, self.cfg.max_request_body).collect().await {
-            Ok(b) => b.to_bytes(),
-            Err(e) => {
-                let too_big = e.downcast_ref::<http_body_util::LengthLimitError>().is_some();
-                return if too_big {
-                    text(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "request body is larger than proxy.max_request_body",
-                    )
-                } else {
-                    text(StatusCode::BAD_REQUEST, "failed to read the request body")
-                };
+        // `_mem` keeps the body's bytes counted against the memory budget while this request is in flight.
+        let (body, _mem) = match collect_budgeted(body, self.cfg.max_request_body, &self.budget).await {
+            Ok(b) => b,
+            Err(CollectError::TooBig) => {
+                return text(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "request body is larger than proxy.max_request_body",
+                );
+            }
+            Err(CollectError::OutOfMemory) => return busy(),
+            Err(CollectError::Other(_)) => {
+                return text(StatusCode::BAD_REQUEST, "failed to read the request body");
             }
         };
         let path = parts
@@ -538,7 +624,7 @@ impl Shared {
         }
         let url = format!("{}{}", origin(&target), path);
         if self.intercept.should_hold(Phase::Request, in_scope) {
-            match self
+            let held = self
                 .intercept
                 .hold(
                     flow_id,
@@ -548,8 +634,11 @@ impl Shared {
                     None,
                     raw.clone(),
                 )
-                .await
-            {
+                .await;
+            let Ok(held) = held else {
+                return queue_full();
+            };
+            match held {
                 Decision::Drop => {
                     if record {
                         self.recorder.flow(self.new_flow(
@@ -624,7 +713,7 @@ impl Shared {
                 parts.method.clone(),
                 path.clone(),
                 parts.headers.clone(),
-                body.clone(),
+                Bytes::from(body),
             )
         };
         strip_hop_by_hop(&mut headers, wants_upgrade);
@@ -756,38 +845,37 @@ impl Shared {
         let need_buffer = self.intercept.should_hold(Phase::Response, in_scope)
             || rules.has(|t| t == RuleTarget::ResponseBody);
         if need_buffer {
-            let rbody = match Limited::new(rbody, self.cfg.max_buffered_response)
-                .collect()
-                .await
-            {
-                Ok(b) => b.to_bytes(),
-                Err(e) => {
-                    let msg = format!("failed to read the response body: {e}");
-                    if record {
-                        self.recorder.flow(self.new_flow(
-                            flow_id,
-                            &target,
-                            started,
-                            t0,
-                            &raw,
-                            original_request,
-                            Some(head),
-                            None,
-                            false,
-                            Some(msg.clone()),
-                            in_scope,
-                        ));
+            let (rbody, _resp_mem) =
+                match collect_budgeted(rbody, self.cfg.max_buffered_response, &self.budget).await {
+                    Ok(b) => b,
+                    Err(CollectError::OutOfMemory) => return busy(),
+                    Err(e) => {
+                        let msg = format!("failed to read the response body: {e:?}");
+                        if record {
+                            self.recorder.flow(self.new_flow(
+                                flow_id,
+                                &target,
+                                started,
+                                t0,
+                                &raw,
+                                original_request,
+                                Some(head),
+                                None,
+                                false,
+                                Some(msg.clone()),
+                                in_scope,
+                            ));
+                        }
+                        return text(StatusCode::BAD_GATEWAY, &msg);
                     }
-                    return text(StatusCode::BAD_GATEWAY, &msg);
-                }
-            };
+                };
             let mut resp_raw = serialize_response(rversion, rparts.status, &rparts.headers, &rbody);
             let mut original_response = None;
             if let Some(new) = rules.apply_response(&resp_raw, true) {
                 original_response = Some(std::mem::replace(&mut resp_raw, new));
             }
             if self.intercept.should_hold(Phase::Response, in_scope) {
-                match self
+                let held = self
                     .intercept
                     .hold(
                         flow_id,
@@ -797,8 +885,11 @@ impl Shared {
                         Some(rparts.status.as_u16()),
                         resp_raw.clone(),
                     )
-                    .await
-                {
+                    .await;
+                let Ok(held) = held else {
+                    return queue_full();
+                };
+                match held {
                     Decision::Drop => {
                         if record {
                             self.recorder.flow(self.new_flow(
@@ -839,7 +930,7 @@ impl Shared {
                 }
             } else {
                 strip_hop_by_hop(&mut rparts.headers, false);
-                Response::from_parts(rparts, full(rbody.to_vec()))
+                Response::from_parts(rparts, full(rbody))
             };
             if record {
                 self.recorder.flow(self.new_flow(
@@ -913,7 +1004,7 @@ impl Shared {
                 ));
             }),
         );
-        Response::from_parts(rparts, UnsyncBoxBody::new(tee))
+        Response::from_parts(rparts, UnsyncBoxBody::new(tee.with_budget(&self.budget)))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1128,6 +1219,25 @@ fn full(b: Vec<u8>) -> RespBody {
 
 fn empty() -> RespBody {
     UnsyncBoxBody::new(Empty::<Bytes>::new().map_err(|never: Infallible| match never {}))
+}
+
+/// 503: the memory budget is spent. The client may retry.
+fn busy() -> Response<RespBody> {
+    let mut r = text(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Bosun is out of memory budget for buffering; try again shortly (proxy.memory_budget_mib).",
+    );
+    r.headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("2"));
+    r
+}
+
+/// 503: the intercept queue is full, so the message was not held. It is not forwarded.
+fn queue_full() -> Response<RespBody> {
+    text(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Bosun's intercept queue is full; the message was refused, not forwarded.",
+    )
 }
 
 fn text(status: StatusCode, msg: &str) -> Response<RespBody> {

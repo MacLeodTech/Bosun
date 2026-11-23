@@ -23,13 +23,13 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
-use bosun_store::{Role, User};
+use bosun_store::{Role, TokenScope, User};
 use rand::RngCore;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
 use crate::security::{is_unsafe, reject};
-use crate::{AppState, Peer};
+use crate::{AppState, ClientInfo};
 
 pub const COOKIE: &str = "bosun_session";
 pub const CSRF_HEADER: &str = "x-csrf-token";
@@ -79,6 +79,23 @@ pub fn check_username(u: &str) -> Result<(), String> {
 #[derive(Debug, Default)]
 pub struct Limiter {
     failures: Mutex<HashMap<String, (u32, Instant)>>,
+    attempts: Mutex<HashMap<String, (u32, Instant)>>,
+}
+
+/// Attempts allowed per (address, username) pair before delays start.
+const FREE_ATTEMPTS: u32 = 3;
+/// Longest delay between attempts on one pair.
+const MAX_DELAY: Duration = Duration::from_secs(60);
+/// Attempts allowed from one address per window, across all usernames.
+const MAX_ATTEMPTS_PER_ADDRESS: u32 = 30;
+
+/// The wait required before the next attempt, after `n` attempts: free for the first few, then 1 s, 2 s, 4 s ...
+fn delay_after(n: u32) -> Duration {
+    if n < FREE_ATTEMPTS {
+        return Duration::ZERO;
+    }
+    let secs = 1u64 << (n - FREE_ATTEMPTS).min(6);
+    Duration::from_secs(secs).min(MAX_DELAY)
 }
 
 impl Limiter {
@@ -104,11 +121,45 @@ impl Limiter {
         e.1 = Instant::now();
     }
 
-    fn clear(&self, key: &str) {
-        self.failures
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(key);
+    /// Count an attempt *before* the password is checked. Returns the seconds to wait when the attempt is refused.
+    ///
+    /// `pair` is one (address, username) pair: attempts on it back off exponentially, so a guesser slows down
+    /// but nobody else can lock the real user out from another address. `ip` caps one address overall.
+    pub(crate) fn begin(&self, ip: &str, pair: &str) -> Result<(), u64> {
+        let mut m = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        if m.len() > 100_000 {
+            m.retain(|_, (_, t)| t.elapsed() <= FAILURE_WINDOW);
+        }
+        let now = Instant::now();
+        let live = |m: &HashMap<String, (u32, Instant)>, k: &str| match m.get(k) {
+            Some((n, t)) if t.elapsed() <= FAILURE_WINDOW => (*n, *t),
+            _ => (0, now),
+        };
+        let (ip_n, _) = live(&m, ip);
+        if ip_n >= MAX_ATTEMPTS_PER_ADDRESS {
+            let left = FAILURE_WINDOW.saturating_sub(m[ip].1.elapsed());
+            return Err(left.as_secs().max(1));
+        }
+        let (pair_n, pair_t) = live(&m, pair);
+        let wait = delay_after(pair_n);
+        if pair_n > 0 && pair_t.elapsed() < wait {
+            return Err((wait - pair_t.elapsed()).as_secs().max(1));
+        }
+        m.insert(ip.to_string(), (ip_n + 1, now));
+        m.insert(pair.to_string(), (pair_n + 1, now));
+        Ok(())
+    }
+
+    /// A successful attempt: forget the pair and give the address its attempt back.
+    pub(crate) fn succeeded(&self, ip: &str, pair: &str) {
+        let mut m = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        m.remove(pair);
+        if let Some(e) = m.get_mut(ip) {
+            e.0 = e.0.saturating_sub(1);
+            if e.0 == 0 {
+                m.remove(ip);
+            }
+        }
     }
 }
 
@@ -117,6 +168,8 @@ impl Limiter {
 pub struct Caller {
     pub user: User,
     pub via_token: bool,
+    /// The scope of the API token the request used (always `Full` for browser sessions).
+    pub scope: TokenScope,
     pub csrf: Option<String>,
     pub remote: IpAddr,
 }
@@ -160,8 +213,8 @@ impl FromRequestParts<AppState> for Caller {
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, Response> {
         let remote = parts
             .extensions
-            .get::<Peer>()
-            .map(|p| p.0.ip())
+            .get::<ClientInfo>()
+            .map(|c| c.ip)
             .unwrap_or(IpAddr::from([0, 0, 0, 0]));
         let unauth = || reject(StatusCode::UNAUTHORIZED, "sign in first");
         if let Some(auth) = parts
@@ -174,14 +227,19 @@ impl FromRequestParts<AppState> for Caller {
             };
             let app = st.inner.app.clone();
             let token = token.trim().to_string();
-            let user = tokio::task::spawn_blocking(move || app.user_for_api_token(&token))
+            let (user, scope) = tokio::task::spawn_blocking(move || app.user_for_api_token(&token))
                 .await
                 .map_err(|_| unauth())?
                 .map_err(|_| unauth())?
                 .ok_or_else(unauth)?;
+            // A read-only token may not change anything, whatever role its owner has.
+            if scope == TokenScope::Read && is_unsafe(&parts.method) {
+                return Err(reject(StatusCode::FORBIDDEN, "this API token is read-only"));
+            }
             return Ok(Caller {
                 user,
                 via_token: true,
+                scope,
                 csrf: None,
                 remote,
             });
@@ -190,8 +248,8 @@ impl FromRequestParts<AppState> for Caller {
             return Err(unauth());
         };
         let app = st.inner.app.clone();
-        let ttl = st.inner.session_ttl_ms;
-        let session = tokio::task::spawn_blocking(move || app.session(&token, ttl))
+        let (ttl, max) = (st.inner.session_ttl_ms, st.inner.session_max_ms);
+        let session = tokio::task::spawn_blocking(move || app.session(&token, ttl, max))
             .await
             .map_err(|_| unauth())?
             .map_err(|_| unauth())?
@@ -209,6 +267,7 @@ impl FromRequestParts<AppState> for Caller {
         Ok(Caller {
             user: session.user,
             via_token: false,
+            scope: TokenScope::Full,
             csrf: Some(session.csrf),
             remote,
         })
@@ -228,13 +287,44 @@ pub struct LoginBody {
     pub password: String,
 }
 
-fn set_cookie(st: &AppState, token: &str, max_age_secs: i64) -> HeaderValue {
+/// 429 with a `Retry-After`.
+fn too_many(wait_secs: u64) -> Response {
+    let mut r = reject(
+        StatusCode::TOO_MANY_REQUESTS,
+        &format!("too many attempts; wait {wait_secs} seconds and try again"),
+    );
+    if let Ok(v) = HeaderValue::from_str(&wait_secs.to_string()) {
+        r.headers_mut().insert(header::RETRY_AFTER, v);
+    }
+    r
+}
+
+/// A slot for one password hash. Hashing takes about 19 MiB and tens of milliseconds, so the number running at
+/// once is capped; a request that can't get a slot quickly is turned away rather than queued.
+pub(crate) async fn hash_slot(st: &AppState) -> Result<tokio::sync::OwnedSemaphorePermit, Response> {
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        st.inner.hash_slots.clone().acquire_owned(),
+    )
+    .await
+    {
+        Ok(Ok(p)) => Ok(p),
+        _ => Err(too_many(2)),
+    }
+}
+
+fn pair_key(ip: &str, username: &str) -> String {
+    let u: String = username.chars().take(64).collect();
+    format!("pair:{ip}|{}", u.to_ascii_lowercase())
+}
+
+fn set_cookie(st: &AppState, token: &str, max_age_secs: i64, https: bool) -> HeaderValue {
     let mut c = cookie::Cookie::build((COOKIE, token.to_string()))
         .http_only(true)
         .same_site(cookie::SameSite::Strict)
         .path("/")
         .max_age(cookie::time::Duration::seconds(max_age_secs));
-    if st.inner.secure_cookies {
+    if st.inner.secure_cookies || https {
         c = c.secure(true);
     }
     HeaderValue::from_str(&c.build().to_string()).unwrap_or_else(|_| HeaderValue::from_static(""))
@@ -246,10 +336,11 @@ fn me_json(user: &User, csrf: Option<&str>) -> serde_json::Value {
 
 pub async fn setup(
     State(st): State<AppState>,
-    peer: Option<axum::Extension<Peer>>,
+    info: Option<axum::Extension<ClientInfo>>,
     Json(b): Json<SetupBody>,
 ) -> Response {
-    let remote = peer.map(|p| p.0.0.ip().to_string());
+    let https = info.as_ref().is_some_and(|i| i.https);
+    let remote = info.map(|i| i.ip.to_string());
     let expected = st
         .inner
         .setup_code
@@ -259,14 +350,11 @@ pub async fn setup(
     let Some(expected) = expected else {
         return reject(StatusCode::CONFLICT, "setup has already been completed");
     };
-    if st.inner.limiter.blocked("setup") {
-        return reject(
-            StatusCode::TOO_MANY_REQUESTS,
-            "too many attempts; wait and try again",
-        );
+    let ip_key = format!("ip:{}", remote.as_deref().unwrap_or_default());
+    if let Err(w) = st.inner.limiter.begin(&ip_key, "setup") {
+        return too_many(w);
     }
     if !bool::from(b.code.trim().as_bytes().ct_eq(expected.as_bytes())) {
-        st.inner.limiter.fail("setup");
         let _ = st
             .inner
             .app
@@ -280,13 +368,23 @@ pub async fn setup(
         return reject(StatusCode::BAD_REQUEST, &e);
     }
     let pw = b.password.clone();
-    let Ok(Ok(hash)) = tokio::task::spawn_blocking(move || hash_password(&pw)).await else {
+    let permit = match hash_slot(&st).await {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let Ok(Ok(hash)) = tokio::task::spawn_blocking(move || {
+        let _slot = permit;
+        hash_password(&pw)
+    })
+    .await
+    else {
         return reject(StatusCode::INTERNAL_SERVER_ERROR, "hashing failed");
     };
     let user = match st.inner.app.create_first_admin(&b.username, &hash) {
         Ok(u) => u,
         Err(e) => return reject(StatusCode::CONFLICT, &e.to_string()),
     };
+    st.inner.limiter.succeeded(&ip_key, "setup");
     *st.inner.setup_code.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let _ = st.inner.app.audit(
         Some(&user.username),
@@ -294,10 +392,10 @@ pub async fn setup(
         "created the first admin",
         remote.as_deref(),
     );
-    start_session(&st, user).await
+    start_session(&st, user, https).await
 }
 
-async fn start_session(st: &AppState, user: User) -> Response {
+async fn start_session(st: &AppState, user: User, https: bool) -> Response {
     let token = random_token();
     let csrf = random_token();
     if st
@@ -311,7 +409,7 @@ async fn start_session(st: &AppState, user: User) -> Response {
     let mut r = Json(me_json(&user, Some(&csrf))).into_response();
     r.headers_mut().insert(
         header::SET_COOKIE,
-        set_cookie(st, &token, st.inner.session_ttl_ms / 1000),
+        set_cookie(st, &token, st.inner.session_ttl_ms / 1000, https),
     );
     r
 }
@@ -324,26 +422,30 @@ pub(crate) fn new_session_cookie(st: &AppState, user: &User) -> Result<HeaderVal
         .app
         .create_session(&token, user.id, &csrf, st.inner.session_ttl_ms)
         .map_err(|_| ())?;
-    Ok(set_cookie(st, &token, st.inner.session_ttl_ms / 1000))
+    Ok(set_cookie(st, &token, st.inner.session_ttl_ms / 1000, false))
 }
 
 pub async fn login(
     State(st): State<AppState>,
-    peer: Option<axum::Extension<Peer>>,
+    info: Option<axum::Extension<ClientInfo>>,
     Json(b): Json<LoginBody>,
 ) -> Response {
-    let remote = peer.map(|p| p.0.0.ip().to_string()).unwrap_or_default();
+    let https = info.as_ref().is_some_and(|i| i.https);
+    let remote = info.map(|i| i.ip.to_string()).unwrap_or_default();
     let ip_key = format!("ip:{remote}");
-    let user_key = format!("user:{}", b.username.to_ascii_lowercase());
-    if st.inner.limiter.blocked(&ip_key) || st.inner.limiter.blocked(&user_key) {
-        return reject(
-            StatusCode::TOO_MANY_REQUESTS,
-            "too many failed sign-ins; wait 15 minutes",
-        );
+    let pair = pair_key(&remote, &b.username);
+    // Counted before any hashing, so a burst of parallel guesses is throttled as it arrives.
+    if let Err(w) = st.inner.limiter.begin(&ip_key, &pair) {
+        return too_many(w);
     }
+    let permit = match hash_slot(&st).await {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
     let app = st.inner.app.clone();
     let (username, password) = (b.username.clone(), b.password.clone());
     let found = tokio::task::spawn_blocking(move || {
+        let _slot = permit;
         let row = app.user_for_login(&username).ok().flatten();
         // Spend the same time whether or not the user exists.
         let phc = row
@@ -358,16 +460,14 @@ pub async fn login(
     .flatten();
     match found {
         Some(user) => {
-            st.inner.limiter.clear(&user_key);
+            st.inner.limiter.succeeded(&ip_key, &pair);
             let _ = st
                 .inner
                 .app
                 .audit(Some(&user.username), "login", "signed in", Some(&remote));
-            start_session(&st, user).await
+            start_session(&st, user, https).await
         }
         None => {
-            st.inner.limiter.fail(&ip_key);
-            st.inner.limiter.fail(&user_key);
             let _ = st.inner.app.audit(
                 Some(&b.username),
                 "login.failed",
@@ -382,13 +482,20 @@ pub async fn login(
 static DUMMY_HASH: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| hash_password("dummy password for timing").unwrap_or_default());
 
-pub async fn logout(State(st): State<AppState>, headers: HeaderMap, caller: Caller) -> Response {
+pub async fn logout(
+    State(st): State<AppState>,
+    info: Option<axum::Extension<ClientInfo>>,
+    headers: HeaderMap,
+    caller: Caller,
+) -> Response {
+    let https = info.is_some_and(|i| i.https);
     if let Some(t) = session_cookie_value(&headers) {
         let _ = st.inner.app.delete_session(&t);
     }
     caller.audit(&st, "logout", "");
     let mut r = crate::security::empty(StatusCode::NO_CONTENT);
-    r.headers_mut().insert(header::SET_COOKIE, set_cookie(&st, "", 0));
+    r.headers_mut()
+        .insert(header::SET_COOKIE, set_cookie(&st, "", 0, https));
     r
 }
 
@@ -400,25 +507,45 @@ pub async fn me(caller: Caller) -> Response {
 pub struct PasswordBody {
     pub current: String,
     pub new: String,
+    /// End the user's API tokens too (the default): a token made with a stolen password must not survive the reset.
+    #[serde(default = "yes")]
+    pub revoke_tokens: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 pub async fn change_password(
     State(st): State<AppState>,
+    info: Option<axum::Extension<ClientInfo>>,
     caller: Caller,
     Json(b): Json<PasswordBody>,
 ) -> Response {
+    let https = info.is_some_and(|i| i.https);
     if let Err(e) = check_password_policy(&b.new) {
         return reject(StatusCode::BAD_REQUEST, &e);
     }
+    // Same throttle as sign-in: a stolen session must not become an offline-speed password guesser.
+    let ip_key = format!("ip:{}", caller.remote);
+    let pair = format!("pw:{}", caller.user.id);
+    if let Err(w) = st.inner.limiter.begin(&ip_key, &pair) {
+        return too_many(w);
+    }
+    let permit = match hash_slot(&st).await {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
     let app = st.inner.app.clone();
     let username = caller.user.username.clone();
     let res = tokio::task::spawn_blocking(move || {
+        let _slot = permit;
         let (u, phc) = app.user_for_login(&username).ok().flatten()?;
         if !verify_password(&b.current, &phc) {
             return Some(Err("the current password is wrong"));
         }
         let h = hash_password(&b.new).ok()?;
-        app.set_password(u.id, &h).ok()?;
+        app.set_password(u.id, &h, b.revoke_tokens).ok()?;
         Some(Ok(()))
     })
     .await
@@ -426,9 +553,11 @@ pub async fn change_password(
     .flatten();
     match res {
         Some(Ok(())) => {
+            st.inner.limiter.succeeded(&ip_key, &pair);
             caller.audit(&st, "password.change", "");
             let mut r = crate::security::empty(StatusCode::NO_CONTENT);
-            r.headers_mut().insert(header::SET_COOKIE, set_cookie(&st, "", 0));
+            r.headers_mut()
+                .insert(header::SET_COOKIE, set_cookie(&st, "", 0, https));
             r
         }
         Some(Err(e)) => reject(StatusCode::FORBIDDEN, e),

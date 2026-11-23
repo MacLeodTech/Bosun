@@ -8,6 +8,7 @@
 
 pub mod auth;
 pub mod browser;
+pub mod child;
 pub mod events;
 pub mod handlers;
 pub mod security;
@@ -22,7 +23,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::routing::{get, post, put};
 use bosun_ca::CertificateAuthority;
-use bosun_proxy::{EventSender, LoopGuard, Proxy};
+use bosun_proxy::{ConnLimit, EventSender, LoopGuard, Proxy};
 use bosun_scope::Gate;
 use bosun_store::{AppDb, Project};
 use hyper::body::Incoming;
@@ -47,12 +48,30 @@ pub struct ApiConfig {
     pub hosts: Vec<String>,
     /// Extra exact origins allowed in the Origin header, e.g. `https://bosun.lab.example` behind a reverse proxy.
     pub origins: Vec<String>,
-    /// Serve the UI over HTTPS with a certificate from the install's CA.
+    /// Serve the UI over HTTPS. With `tls_cert` and `tls_key` that certificate is used (re-read when the files
+    /// change or on SIGHUP); without them a self-signed certificate made for the UI alone is used. It never comes
+    /// from the interception CA. A TLS-terminating reverse proxy in front is the recommended setup.
     pub tls: bool,
+    /// PEM certificate chain (leaf first) for the UI.
+    pub tls_cert: Option<std::path::PathBuf>,
+    /// PEM private key for `tls_cert`.
+    pub tls_key: Option<std::path::PathBuf>,
     /// Mark the session cookie `Secure`. Defaults to on when `tls` is on; set it when TLS is terminated by a
     /// reverse proxy in front.
     pub secure_cookies: Option<bool>,
+    /// A session ends after this many hours without activity.
     pub session_hours: u64,
+    /// ... and no later than this many hours after sign-in, however active it is.
+    pub session_max_hours: u64,
+    /// Networks of reverse proxies in front of the API. Only when the connection comes from one of these are
+    /// `X-Forwarded-For` (client address) and `X-Forwarded-Proto` (scheme) believed. Empty by default.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// Password hashes allowed to run at once (each uses about 19 MiB). Extra sign-ins wait briefly, then get 429.
+    pub max_password_hashes: usize,
+    /// Most connections at once; further ones are closed immediately.
+    pub max_connections: usize,
+    /// Seconds a client may take to send a request's headers (also bounds idle keep-alive connections).
+    pub header_timeout_secs: u64,
     /// Sign-in with an OpenID Connect provider and Edge SSO; off unless this table is present.
     pub sso: Option<sso::SsoConfig>,
 }
@@ -64,8 +83,15 @@ impl Default for ApiConfig {
             hosts: Vec::new(),
             origins: Vec::new(),
             tls: false,
+            tls_cert: None,
+            tls_key: None,
             secure_cookies: None,
             session_hours: 12,
+            session_max_hours: 24 * 7,
+            trusted_proxies: Vec::new(),
+            max_password_hashes: 2,
+            max_connections: 256,
+            header_timeout_secs: 30,
             sso: None,
         }
     }
@@ -74,6 +100,48 @@ impl Default for ApiConfig {
 /// Peer address of the connection a request arrived on.
 #[derive(Debug, Clone, Copy)]
 pub struct Peer(pub SocketAddr);
+
+/// The client behind the connection: the peer itself, or (from a trusted proxy) the address and scheme it
+/// forwarded. Used for rate limits, audit entries and `Caller::remote`.
+#[derive(Debug, Clone, Copy)]
+pub struct ClientInfo {
+    pub ip: std::net::IpAddr,
+    pub https: bool,
+}
+
+/// Work out the client of a request. Forwarded headers are believed only when `peer` is in `trusted`.
+pub fn client_info(peer: SocketAddr, headers: &http::HeaderMap, trusted: &[ipnet::IpNet]) -> ClientInfo {
+    let peer_ip = peer.ip().to_canonical();
+    let is_trusted = |ip: &std::net::IpAddr| trusted.iter().any(|n| n.contains(ip));
+    if !is_trusted(&peer_ip) {
+        return ClientInfo {
+            ip: peer_ip,
+            https: false,
+        };
+    }
+    // Rightmost entry that is not one of our own proxies: entries further left are client-supplied.
+    let chain: Vec<std::net::IpAddr> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .filter_map(|e| e.trim().parse::<std::net::IpAddr>().ok())
+        .map(|ip| ip.to_canonical())
+        .collect();
+    let ip = chain
+        .iter()
+        .rev()
+        .find(|ip| !is_trusted(ip))
+        .or(chain.first())
+        .copied()
+        .unwrap_or(peer_ip);
+    let https = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"));
+    ClientInfo { ip, https }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -94,6 +162,10 @@ pub struct Inner {
     pub ca: Arc<CertificateAuthority>,
     pub events: EventSender,
     pub limiter: auth::Limiter,
+    pub conn_limit: ConnLimit,
+    pub header_timeout: Duration,
+    pub hash_slots: Arc<tokio::sync::Semaphore>,
+    pub trusted_proxies: Vec<ipnet::IpNet>,
     /// The one-time setup code, while no user exists.
     pub setup_code: Mutex<Option<String>>,
     pub allowed_hosts: Vec<String>,
@@ -101,7 +173,9 @@ pub struct Inner {
     pub port: u16,
     pub tls: bool,
     pub secure_cookies: bool,
+    pub ui_tls: Option<Arc<bosun_ca::UiTls>>,
     pub session_ttl_ms: i64,
+    pub session_max_ms: i64,
     /// Present only when launching a browser is allowed (the API listens on loopback).
     pub browser: Option<BrowserLauncher>,
     pub loop_guard: LoopGuard,
@@ -116,12 +190,33 @@ pub struct Deps {
     pub ca: Arc<CertificateAuthority>,
     pub events: EventSender,
     pub browser: Option<BrowserLauncher>,
+    /// The UI's certificate; required when `api.tls` is on.
+    pub ui_tls: Option<Arc<bosun_ca::UiTls>>,
 }
 
 impl std::fmt::Debug for Deps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Deps").finish_non_exhaustive()
     }
+}
+
+/// The names and addresses the UI is reached by (what its certificate must cover, and the Host allowlist).
+pub fn ui_hosts(cfg: &ApiConfig) -> Vec<String> {
+    let mut hosts: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "[::1]".into()];
+    for h in &cfg.hosts {
+        hosts.push(security::host_only(h));
+    }
+    let ip = cfg.listen.ip();
+    if !ip.is_unspecified() {
+        hosts.push(if ip.is_ipv6() {
+            format!("[{ip}]")
+        } else {
+            ip.to_string()
+        });
+    }
+    hosts.sort();
+    hosts.dedup();
+    hosts
 }
 
 impl AppState {
@@ -132,22 +227,16 @@ impl AppState {
         } else {
             None
         };
-        let mut hosts: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "[::1]".into()];
-        for h in &cfg.hosts {
-            hosts.push(security::host_only(h));
-        }
-        let ip = cfg.listen.ip();
-        if !ip.is_unspecified() {
-            hosts.push(if ip.is_ipv6() {
-                format!("[{ip}]")
-            } else {
-                ip.to_string()
-            });
-        }
-        hosts.sort();
-        hosts.dedup();
+        let hosts = ui_hosts(cfg);
         let browser = if cfg.listen.ip().is_loopback() {
             d.browser
+        } else {
+            None
+        };
+        let ui_tls = if cfg.tls {
+            Some(d.ui_tls.ok_or_else(|| {
+                bosun_store::StoreError::Conflict("api.tls is on but there is no UI certificate".into())
+            })?)
         } else {
             None
         };
@@ -164,6 +253,10 @@ impl AppState {
             ca: d.ca,
             events: d.events,
             limiter: auth::Limiter::default(),
+            conn_limit: ConnLimit::new("api", cfg.max_connections),
+            header_timeout: Duration::from_secs(cfg.header_timeout_secs.max(1)),
+            hash_slots: Arc::new(tokio::sync::Semaphore::new(cfg.max_password_hashes.clamp(1, 64))),
+            trusted_proxies: cfg.trusted_proxies.clone(),
             setup_code: Mutex::new(setup_code.clone()),
             allowed_hosts: hosts,
             extra_origins: cfg
@@ -173,8 +266,10 @@ impl AppState {
                 .collect(),
             port: cfg.listen.port(),
             tls: cfg.tls,
+            ui_tls,
             secure_cookies: cfg.secure_cookies.unwrap_or(cfg.tls),
             session_ttl_ms: (cfg.session_hours.clamp(1, 24 * 30) * 3600 * 1000) as i64,
+            session_max_ms: (cfg.session_max_hours.clamp(1, 24 * 90) * 3600 * 1000) as i64,
             browser,
             loop_guard,
             sso,
@@ -218,6 +313,20 @@ pub fn router(st: AppState) -> Router {
         .route("/browser/launch", post(h::launch_browser))
         .route("/tokens", get(h::list_tokens).post(h::create_token))
         .route("/tokens/{id}", axum::routing::delete(h::delete_token))
+        .route("/users/{id}/role", put(h::set_user_role))
+        .route(
+            "/users/{id}/sessions",
+            get(h::list_user_sessions).delete(h::revoke_user_sessions),
+        )
+        .route(
+            "/users/{id}/sessions/{sid}",
+            axum::routing::delete(h::revoke_user_session),
+        )
+        .route("/users/{id}/tokens", get(h::list_user_tokens))
+        .route(
+            "/users/{id}/tokens/{tid}",
+            axum::routing::delete(h::revoke_user_token),
+        )
         .route("/users", get(h::list_users).post(h::create_user))
         .route("/users/{id}", axum::routing::delete(h::delete_user))
         .route("/audit", get(h::audit_log))
@@ -237,7 +346,17 @@ pub fn router(st: AppState) -> Router {
 /// Serve the API until `shutdown` resolves.
 pub async fn serve(st: AppState, listener: TcpListener, shutdown: impl std::future::Future<Output = ()>) {
     let app = router(st.clone());
-    let tls = st.inner.tls;
+    let ui_tls = st.inner.ui_tls.clone();
+    // SIGHUP re-reads configured certificate files.
+    #[cfg(unix)]
+    let _hup = ui_tls.clone().and_then(|u| {
+        let mut hup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).ok()?;
+        Some(AbortOnDrop(tokio::spawn(async move {
+            while hup.recv().await.is_some() {
+                u.reload();
+            }
+        })))
+    });
     tokio::pin!(shutdown);
     loop {
         let (stream, peer) = tokio::select! {
@@ -253,12 +372,20 @@ pub async fn serve(st: AppState, listener: TcpListener, shutdown: impl std::futu
             tracing::warn!(%peer, "refused an API connection that came from the proxy itself");
             continue;
         }
+        let Some(permit) = st.inner.conn_limit.try_acquire() else {
+            continue;
+        };
         let app = app.clone();
         let st = st.clone();
+        let ui_tls = ui_tls.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             let guard = st.inner.loop_guard.clone();
+            let trusted = st.inner.trusted_proxies.clone();
             let svc = hyper::service::service_fn(move |mut req: hyper::Request<Incoming>| {
                 req.extensions_mut().insert(Peer(peer));
+                let info = client_info(peer, req.headers(), &trusted);
+                req.extensions_mut().insert(info);
                 let app = app.clone();
                 // Checked again per request: the proxy registers an outbound connection just after the TCP
                 // handshake, which can be after we accepted it, but always before it sends a request.
@@ -278,20 +405,25 @@ pub async fn serve(st: AppState, listener: TcpListener, shutdown: impl std::futu
                     )
                 }
             });
-            let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
-            if tls {
+            let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+            builder
+                .http1()
+                .timer(hyper_util::rt::TokioTimer::new())
+                .header_read_timeout(st.inner.header_timeout);
+            builder
+                .http2()
+                .timer(hyper_util::rt::TokioTimer::new())
+                .max_concurrent_streams(100)
+                .max_header_list_size(64 * 1024)
+                .keep_alive_interval(Duration::from_secs(30))
+                .keep_alive_timeout(Duration::from_secs(20));
+            if let Some(ui_tls) = ui_tls {
                 let acceptor =
                     tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream);
                 let Ok(Ok(start)) = tokio::time::timeout(Duration::from_secs(20), acceptor).await else {
                     return;
                 };
-                let sni = start.client_hello().server_name().map(str::to_ascii_lowercase);
-                let name = sni
-                    .filter(|s| st.inner.allowed_hosts.contains(s))
-                    .unwrap_or_else(|| "localhost".into());
-                let Ok(cfg) = st.inner.ca.server_config(&name, true) else {
-                    return;
-                };
+                let cfg = ui_tls.config();
                 let Ok(tls) = start.into_stream(cfg).await else {
                     return;
                 };
@@ -304,5 +436,57 @@ pub async fn serve(st: AppState, listener: TcpListener, shutdown: impl std::futu
                     .await;
             }
         });
+    }
+}
+
+#[cfg(unix)]
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+#[cfg(unix)]
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(xff: &str, proto: Option<&str>) -> http::HeaderMap {
+        let mut h = http::HeaderMap::new();
+        h.insert("x-forwarded-for", xff.parse().unwrap());
+        if let Some(p) = proto {
+            h.insert("x-forwarded-proto", p.parse().unwrap());
+        }
+        h
+    }
+
+    fn nets(v: &[&str]) -> Vec<ipnet::IpNet> {
+        v.iter().map(|n| n.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn untrusted_peers_cannot_choose_their_address() {
+        let c = client_info(
+            "198.51.100.1:5000".parse().unwrap(),
+            &headers("1.2.3.4", Some("https")),
+            &[],
+        );
+        assert_eq!(c.ip.to_string(), "198.51.100.1");
+        assert!(!c.https);
+    }
+
+    #[test]
+    fn the_rightmost_untrusted_entry_is_the_client() {
+        let t = nets(&["10.0.0.0/8"]);
+        // client-supplied "9.9.9.9", then the real client, then our own proxies.
+        let h = headers("9.9.9.9, 203.0.113.4, 10.0.0.2", Some("https"));
+        let c = client_info("10.0.0.1:1".parse().unwrap(), &h, &t);
+        assert_eq!(c.ip.to_string(), "203.0.113.4");
+        assert!(c.https);
+        // Nothing forwarded: the peer is the client.
+        let c = client_info("10.0.0.1:1".parse().unwrap(), &http::HeaderMap::new(), &t);
+        assert_eq!(c.ip.to_string(), "10.0.0.1");
     }
 }

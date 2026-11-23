@@ -161,15 +161,15 @@ These rules apply to every package:
 |---|---|---|---|---|---|
 | [ ] | WP-34 | Repository and CI ready | 0 | M | |
 | [ ] | WP-36 | Test harness: Playwright, property tests, first fuzz targets | 1 | M | WP-34 |
-| [ ] | WP-01 | Clean environment for child processes | 1 | S | |
-| [ ] | WP-02 | Pass-through tunnels through the connector | 1 | S | |
-| [ ] | WP-03 | Sign-in hardening and trusted proxies | 1 | M | |
-| [ ] | WP-04 | Connection limits and timeouts | 1 | M | |
-| [ ] | WP-05 | A global memory budget | 1 | M | |
-| [ ] | WP-06 | Untrusted project files and the project lock | 1 | M | |
-| [ ] | WP-07 | Session and token lifecycle | 1 | M | |
-| [ ] | WP-08 | UI TLS without the interception CA | 1 | S | |
-| [ ] | WP-09 | CI on Windows and macOS | 1 | S | WP-34 |
+| [x] | WP-01 | Clean environment for child processes | 1 | S | |
+| [x] | WP-02 | Pass-through tunnels through the connector | 1 | S | |
+| [x] | WP-03 | Sign-in hardening and trusted proxies | 1 | M | |
+| [x] | WP-04 | Connection limits and timeouts | 1 | M | |
+| [x] | WP-05 | A global memory budget | 1 | M | |
+| [x] | WP-06 | Untrusted project files and the project lock | 1 | M | |
+| [x] | WP-07 | Session and token lifecycle | 1 | M | |
+| [x] | WP-08 | UI TLS without the interception CA | 1 | S | |
+| [~] | WP-09 | CI on Windows and macOS (code done, waiting for a CI run) | 1 | S | WP-34 |
 | [ ] | WP-10 | Scope gate with address pinning (blocks M2) | 2 | M | |
 | [ ] | WP-35 | Schema migrations framework (blocks M2) | 2 | S | WP-06 |
 | [ ] | WP-11 | Storage concurrency | 2 | M | WP-06 |

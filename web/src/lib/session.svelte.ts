@@ -11,6 +11,9 @@ class Session {
   private ws: WebSocket | null = null;
   private listeners = new Set<(e: ProxyEvent) => void>();
   private retry = 0;
+  /** Where the event stream stood when we last heard from it, so a reconnect can ask for what it missed. */
+  private epoch: string | null = null;
+  private seq = 0;
 
   async init() {
     onUnauthorizedDo(() => this.clear());
@@ -62,7 +65,8 @@ class Session {
   private connect() {
     if (this.ws || !this.me) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/api/v1/events`);
+    const resume = this.epoch ? `?since=${this.seq}&epoch=${this.epoch}` : '';
+    const ws = new WebSocket(`${proto}//${location.host}/api/v1/events${resume}`);
     this.ws = ws;
     ws.onopen = () => {
       this.connected = true;
@@ -75,7 +79,18 @@ class Session {
       } catch {
         return;
       }
+      const seq = (e as { seq?: unknown }).seq;
+      if (typeof seq === 'number') this.seq = seq;
+      if (e.type === 'hello') {
+        // Another run of the engine: what we hold may be stale.
+        const stale = this.epoch !== null && this.epoch !== e.epoch;
+        this.epoch = e.epoch;
+        this.seq = e.seq;
+        if (stale) for (const l of this.listeners) l({ type: 'reload' });
+      }
       for (const l of this.listeners) l(e);
+      // Another project is open: what pages hold is from the old one, so they fetch it all again.
+      if (e.type === 'project_switched') for (const l of this.listeners) l({ type: 'reload' });
     };
     ws.onclose = () => {
       this.connected = false;

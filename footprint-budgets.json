@@ -1,0 +1,15 @@
+{
+  "regression_pct": 15,
+  "metrics": {
+    "idle_rss_mb": {
+      "budget": 50,
+      "baseline": 17.0,
+      "unit": "MB"
+    },
+    "image_mb": {
+      "budget": 60,
+      "baseline": 40.0,
+      "unit": "MB"
+    }
+  }
+}

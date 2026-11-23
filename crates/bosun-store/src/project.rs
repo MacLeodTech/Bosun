@@ -3,7 +3,6 @@
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use bosun_model::{
@@ -13,9 +12,9 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{StoreError, codec};
+use crate::pool::Db;
+use crate::{StoreError, codec, migrate};
 
-const SCHEMA_VERSION: i64 = 1;
 /// The most a stored body may claim to be once decompressed. The proxy never records more than its buffer caps
 /// (64 MiB), so a larger claim means a corrupt or hostile file.
 const MAX_BLOB: u64 = 128 * 1024 * 1024;
@@ -80,7 +79,7 @@ pub struct FlowFilter {
 }
 
 /// A host and the paths seen on it, for the site map.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SiteMapEntry {
     pub scheme: Scheme,
     pub host: String,
@@ -94,14 +93,19 @@ pub struct SiteMapEntry {
 
 #[derive(Debug)]
 pub struct Project {
-    conn: Mutex<Connection>,
+    db: Db,
     next_id: AtomicI64,
     /// Held for as long as the project is open; the OS releases it if we die.
     _lock: Option<std::fs::File>,
 }
 
-/// Every statement that creates this version's schema.
-const SCHEMA_V1: &str = r#"
+/// The project file's history. Never edit an entry that has shipped; add a new one at the end.
+const MIGRATIONS: &[migrate::Migration] = &[
+    migrate::Migration {
+        version: 1,
+        rebuild: false,
+        what: "flows, blobs, WebSocket messages, settings",
+        sql: r#"
     CREATE TABLE blobs (
         hash BLOB PRIMARY KEY,
         size INTEGER NOT NULL,
@@ -151,7 +155,27 @@ const SCHEMA_V1: &str = r#"
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
-"#;
+"#,
+    },
+    migrate::Migration {
+        version: 2,
+        rebuild: true,
+        what: "blobs get a rowid so large bodies can be read in pieces",
+        // SQLite reads a blob incrementally only from a table with a rowid. The hash stays unique and is still
+        // what the flows refer to. The runner switches reference checks off for the rebuild and checks them after.
+        sql: r#"
+            CREATE TABLE blobs_v2 (
+                id INTEGER PRIMARY KEY,
+                hash BLOB NOT NULL UNIQUE,
+                size INTEGER NOT NULL,
+                data BLOB NOT NULL
+            );
+            INSERT INTO blobs_v2 (hash, size, data) SELECT hash, size, data FROM blobs;
+            DROP TABLE blobs;
+            ALTER TABLE blobs_v2 RENAME TO blobs;
+        "#,
+    },
+];
 
 /// The schema objects in a database as (type, name, sql), ignoring SQLite's own bookkeeping tables.
 fn schema_objects(conn: &Connection) -> Result<BTreeSet<(String, String, String)>, StoreError> {
@@ -162,11 +186,11 @@ fn schema_objects(conn: &Connection) -> Result<BTreeSet<(String, String, String)
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// A project file may come from someone else: refuse anything that is not exactly the schema this version
-/// creates. Triggers and views in particular run SQL of the file author's choosing on our connection.
-fn verify_schema(conn: &Connection) -> Result<(), StoreError> {
-    let expected = Connection::open_in_memory()?;
-    expected.execute_batch(SCHEMA_V1)?;
+/// A project file may come from someone else: refuse anything that is not exactly the schema its own version
+/// has (the migrations up to that version, run on an empty database). Triggers and views in particular run SQL of the file author's choosing on our connection.
+fn verify_schema(conn: &Connection, version: i64) -> Result<(), StoreError> {
+    let mut expected = Connection::open_in_memory()?;
+    migrate::run(&mut expected, &MIGRATIONS[..version as usize])?;
     let want = schema_objects(&expected)?;
     let have = schema_objects(conn)?;
     if let Some(extra) = have.difference(&want).next() {
@@ -253,6 +277,102 @@ fn take_lock(path: &Path) -> Result<std::fs::File, StoreError> {
     }
 }
 
+/// Settings for every connection to a project file, read or write.
+fn harden(conn: &Connection) -> rusqlite::Result<()> {
+    conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+    conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
+    conn.pragma_update(None, "trusted_schema", "OFF")?;
+    conn.pragma_update(None, "cell_size_check", "ON")?;
+    Ok(())
+}
+
+/// An exclusive hold on a project file that is not open, for deleting or renaming it. Released on drop.
+#[derive(Debug)]
+pub struct ProjectLock {
+    _file: std::fs::File,
+    path: PathBuf,
+}
+
+impl ProjectLock {
+    /// Take the project's lock, or say who has it.
+    pub fn take(path: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            _file: take_lock(path)?,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Remove the project file and what SQLite keeps beside it. The lock file goes when the lock is dropped
+    /// (a held file cannot be deleted on Windows).
+    pub fn delete_files(&self) -> Result<(), StoreError> {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let mut p = self.path.as_os_str().to_owned();
+            p.push(suffix);
+            match std::fs::remove_file(PathBuf::from(&p)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(StoreError::Io(PathBuf::from(p).display().to_string(), e)),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ProjectLock {
+    fn drop(&mut self) {
+        // Best effort: a stale lock file is harmless (the lock is on the file handle, not its existence).
+        let _ = std::fs::remove_file(lock_path(&self.path));
+    }
+}
+
+/// Make a stale write-ahead log part of the database and remove it, so the file can be moved or copied on its own.
+/// The caller holds the project's lock.
+pub fn settle(path: &Path) -> Result<(), StoreError> {
+    let conn = Connection::open(path)?;
+    harden(&conn)?;
+    conn.pragma_update(None, "wal_checkpoint", "TRUNCATE").ok();
+    drop(conn);
+    for suffix in ["-wal", "-shm"] {
+        let mut p = path.as_os_str().to_owned();
+        p.push(suffix);
+        let _ = std::fs::remove_file(PathBuf::from(p));
+    }
+    Ok(())
+}
+
+/// Check a file that came from outside and copy what it holds into a new file of ours at `dest` (which must not
+/// exist). The source is opened read-only with the same hardening as any project, must have exactly this
+/// version's schema (no triggers, views or other objects), and pass SQLite's own consistency check. The copy is
+/// made by SQLite (`VACUUM INTO`), so only live content is carried over, rebuilt into a fresh file: free pages,
+/// stale data and anything else hiding in the source do not come along. Open `dest` with [`Project::open`]
+/// afterwards, which migrates it to the current schema.
+pub fn import_foreign(src: &Path, dest: &Path) -> Result<(), StoreError> {
+    let conn = Connection::open_with_flags(
+        src,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| StoreError::Untrusted("not a Bosun project (cannot be opened as a database)".into()))?;
+    harden(&conn)?;
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .map_err(|_| StoreError::Untrusted("not a Bosun project (not a database file)".into()))?;
+    if version > migrate::latest(MIGRATIONS) {
+        return Err(StoreError::NewerSchema(version));
+    }
+    if version < 1 {
+        return Err(StoreError::Untrusted("not a Bosun project".into()));
+    }
+    verify_schema(&conn, version)?;
+    let check: String = conn
+        .query_row("PRAGMA quick_check(1)", [], |r| r.get(0))
+        .map_err(|e| StoreError::Untrusted(format!("the file is damaged: {e}")))?;
+    if check != "ok" {
+        return Err(StoreError::Untrusted(format!("the file is damaged: {check}")));
+    }
+    conn.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()])?;
+    Ok(())
+}
+
 impl Project {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let lock = take_lock(path)?;
@@ -263,27 +383,65 @@ impl Project {
             // Projects hold credentials and session tokens captured from targets.
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
-        Self::init(conn, Some(lock))
+        Self::init(conn, Some(lock), Some(path.to_path_buf()))
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
-        Self::init(Connection::open_in_memory()?, None)
+        Self::init(Connection::open_in_memory()?, None, None)
     }
 
-    fn init(conn: Connection, lock: Option<std::fs::File>) -> Result<Self, StoreError> {
+    /// Write a consistent copy of the project to `dest`, which must not exist. The project can be in use: the copy
+    /// is a snapshot, made by SQLite (`VACUUM INTO`), and comes out compacted. Anything the recorder still holds
+    /// in memory is not in it (flush the recorder first if that matters).
+    pub fn backup_to(&self, dest: &Path) -> Result<(), StoreError> {
+        let conn = self.db.read()?;
+        // Readers are read-only connections (the file is opened read-only, and `query_only` is on as a second
+        // fence); VACUUM INTO only writes the copy, which `query_only` would refuse, so lift it for this statement.
+        // (An in-memory project reads through its one writer connection, which never had it on.)
+        let pooled = matches!(conn, crate::pool::Reader::Pooled { .. });
+        if pooled {
+            conn.pragma_update(None, "query_only", "OFF")?;
+        }
+        let r = conn.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()]);
+        if pooled {
+            conn.pragma_update(None, "query_only", "ON")?;
+        }
+        r?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+
+    fn init(
+        mut conn: Connection,
+        lock: Option<std::fs::File>,
+        path: Option<PathBuf>,
+    ) -> Result<Self, StoreError> {
         // The file may be hostile: no SQL stored in it (triggers, views, generated columns) may call
         // functions that have side effects, corrupt pages must not be followed, and the connection must not
         // allow the schema to be rewritten from under us.
-        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
-        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
-        conn.pragma_update(None, "trusted_schema", "OFF")?;
-        conn.pragma_update(None, "cell_size_check", "ON")?;
-        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > SCHEMA_VERSION {
+        harden(&conn)?;
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(f, _)
+                    if matches!(
+                        f.code,
+                        rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt
+                    ) =>
+                {
+                    StoreError::Untrusted("not a Bosun project (not a database file, or damaged)".into())
+                }
+                e => StoreError::Sqlite(e),
+            })?;
+        if version > migrate::latest(MIGRATIONS) {
             return Err(StoreError::NewerSchema(version));
         }
-        if version == 1 {
-            verify_schema(&conn)?;
+        if version >= 1 {
+            verify_schema(&conn, version)?;
         } else if !schema_objects(&conn)?.is_empty() {
             return Err(StoreError::Untrusted("not a Bosun project".into()));
         }
@@ -291,20 +449,13 @@ impl Project {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "secure_delete", "ON")?;
-        if version < 1 {
-            conn.execute_batch(SCHEMA_V1)?;
-            conn.pragma_update(None, "user_version", 1)?;
-        }
+        migrate::run(&mut conn, MIGRATIONS)?;
         let max: Option<i64> = conn.query_row("SELECT max(id) FROM flows", [], |r| r.get(0))?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            db: Db::new(conn, path, harden),
             next_id: AtomicI64::new(max.unwrap_or(0) + 1),
             _lock: lock,
         })
-    }
-
-    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Reserve an id for a flow that will be written later (so WebSocket messages and events can refer to it).
@@ -314,32 +465,34 @@ impl Project {
 
     /// Write a batch of flows and WebSocket messages in one transaction.
     pub fn write_batch(&self, flows: &[NewFlow], ws: &[NewWsMessage]) -> Result<(), StoreError> {
-        let mut conn = self.conn();
+        // Hash, compress and index before taking the writer, so a batch of large bodies does not hold up
+        // anything else for the time that takes. Only the inserts run under the write lock.
+        let prepared = flows.iter().map(prepare_flow).collect::<Result<Vec<_>, _>>()?;
+        let ws_payloads = ws
+            .iter()
+            .map(|m| zstd::encode_all(&m.payload[..], 1).map_err(StoreError::Compress))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut conn = self.db.write();
         let tx = conn.transaction()?;
-        for f in flows {
-            let req = put_blob(&tx, &f.request)?;
-            let orig_req = f
-                .original_request
-                .as_deref()
-                .map(|b| put_blob(&tx, b))
-                .transpose()?;
-            let resp = f.response.as_deref().map(|b| put_blob(&tx, b)).transpose()?;
-            let orig_resp = f
-                .original_response
-                .as_deref()
-                .map(|b| put_blob(&tx, b))
-                .transpose()?;
-            let parsed_resp = f.response.as_deref().and_then(|r| RawResponse::parse(r).ok());
-            let mime = parsed_resp.as_ref().and_then(|r| {
-                r.header("content-type").map(|v| {
-                    String::from_utf8_lossy(v)
-                        .split(';')
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_ascii_lowercase()
-                })
-            });
+        for (f, p) in flows.iter().zip(&prepared) {
+            for b in [
+                Some(&p.req),
+                p.orig_req.as_ref(),
+                p.resp.as_ref(),
+                p.orig_resp.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                insert_blob(&tx, b)?;
+            }
+            let (req, orig_req, resp, orig_resp) = (
+                &p.req.hash,
+                p.orig_req.as_ref().map(|b| &b.hash),
+                p.resp.as_ref().map(|b| &b.hash),
+                p.orig_resp.as_ref().map(|b| &b.hash),
+            );
+            let mime = &p.mime;
             tx.execute(
                 "INSERT INTO flows (id, source, started_ms, duration_ms, scheme, host, port, method, path,
                     base_path, http_version, status, request_len, response_len, mime, in_scope, edited, error,
@@ -372,13 +525,12 @@ impl Project {
                     f.response_truncated,
                 ],
             )?;
-            let text = index_text(f, parsed_resp.as_ref());
             tx.execute(
                 "INSERT INTO flow_text (rowid, body) VALUES (?1, ?2)",
-                params![f.id, text],
+                params![f.id, p.text],
             )?;
         }
-        for m in ws {
+        for (m, payload) in ws.iter().zip(&ws_payloads) {
             tx.execute(
                 "INSERT INTO ws_messages (flow_id, time_ms, direction, opcode, payload, truncated)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -387,7 +539,7 @@ impl Project {
                     m.time_ms,
                     matches!(m.direction, Direction::ServerToClient) as i64,
                     m.opcode,
-                    zstd::encode_all(&m.payload[..], 1).map_err(StoreError::Compress)?,
+                    payload,
                     m.truncated
                 ],
             )?;
@@ -456,7 +608,7 @@ impl Project {
         }
         sql.push_str(" ORDER BY id DESC LIMIT ?");
         args.push(V::Integer(f.limit.unwrap_or(200).clamp(1, 5000).into()));
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(args), summary_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -467,7 +619,7 @@ impl Project {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let mut out = Vec::with_capacity(ids.len());
         for chunk in ids.chunks(500) {
             let sql = format!(
@@ -484,7 +636,7 @@ impl Project {
     }
 
     pub fn get_flow(&self, id: FlowId) -> Result<Option<FlowDetail>, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let sql = format!(
             "SELECT {SUMMARY_COLS}, req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated
              FROM flows WHERE id = ?1"
@@ -521,7 +673,7 @@ impl Project {
         tags: Option<&[String]>,
         note: Option<&str>,
     ) -> Result<bool, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.write();
         let mut n = 0;
         if let Some(t) = tags {
             n = conn.execute(
@@ -538,7 +690,7 @@ impl Project {
 
     /// Delete flows (and blobs nothing refers to any more).
     pub fn delete_flows(&self, ids: &[FlowId]) -> Result<usize, StoreError> {
-        let mut conn = self.conn();
+        let mut conn = self.db.write();
         let tx = conn.transaction()?;
         let mut n = 0;
         for id in ids {
@@ -562,7 +714,7 @@ impl Project {
         after: Option<i64>,
         limit: u32,
     ) -> Result<Vec<WsMessage>, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let mut stmt = conn.prepare(
             "SELECT id, flow_id, time_ms, direction, opcode, payload, truncated FROM ws_messages
              WHERE flow_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3",
@@ -600,7 +752,7 @@ impl Project {
 
     /// The site map: one entry per distinct (origin, path without query).
     pub fn site_map(&self, host: Option<&str>) -> Result<Vec<SiteMapEntry>, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.read()?;
         // The bare `status` column in an aggregate with max(id) takes its value from the newest row (SQLite's
         // documented min/max bare-column behaviour).
         let mut stmt = conn.prepare(
@@ -632,7 +784,7 @@ impl Project {
     }
 
     pub fn setting<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<Option<T>, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let v: Option<String> = conn
             .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
             .optional()?;
@@ -642,7 +794,7 @@ impl Project {
 
     pub fn set_setting<T: Serialize>(&self, key: &str, value: &T) -> Result<(), StoreError> {
         let v = serde_json::to_string(value).map_err(StoreError::Json)?;
-        self.conn().execute(
+        self.db.write().execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, v],
         )?;
@@ -651,7 +803,8 @@ impl Project {
 
     pub fn flow_count(&self) -> Result<i64, StoreError> {
         Ok(self
-            .conn()
+            .db
+            .read()?
             .query_row("SELECT count(*) FROM flows", [], |r| r.get(0))?)
     }
 }
@@ -697,20 +850,59 @@ fn like_escape(s: &str) -> String {
 
 /// Content-addressed, zstd-compressed body storage. Identical bodies (the same script on every page) are kept
 /// once.
-fn put_blob(tx: &rusqlite::Transaction<'_>, data: &[u8]) -> Result<Vec<u8>, StoreError> {
-    let hash = Sha256::digest(data).to_vec();
-    let exists: bool = tx
-        .query_row("SELECT 1 FROM blobs WHERE hash = ?1", [&hash], |_| Ok(true))
-        .optional()?
-        .unwrap_or(false);
-    if !exists {
-        let compressed = zstd::encode_all(data, 3).map_err(StoreError::Compress)?;
-        tx.execute(
-            "INSERT INTO blobs (hash, size, data) VALUES (?1, ?2, ?3)",
-            params![hash, data.len() as i64, compressed],
-        )?;
-    }
-    Ok(hash)
+/// A body ready to store: its hash and compressed bytes, made without holding the writer.
+struct PreparedBlob {
+    hash: Vec<u8>,
+    size: i64,
+    data: Vec<u8>,
+}
+
+fn prepare_blob(data: &[u8]) -> Result<PreparedBlob, StoreError> {
+    Ok(PreparedBlob {
+        hash: Sha256::digest(data).to_vec(),
+        size: data.len() as i64,
+        data: zstd::encode_all(data, 3).map_err(StoreError::Compress)?,
+    })
+}
+
+fn insert_blob(tx: &rusqlite::Transaction<'_>, b: &PreparedBlob) -> Result<(), StoreError> {
+    tx.execute(
+        "INSERT OR IGNORE INTO blobs (hash, size, data) VALUES (?1, ?2, ?3)",
+        params![b.hash, b.size, b.data],
+    )?;
+    Ok(())
+}
+
+/// Everything about a flow that does not need the database to work out.
+struct PreparedFlow {
+    req: PreparedBlob,
+    orig_req: Option<PreparedBlob>,
+    resp: Option<PreparedBlob>,
+    orig_resp: Option<PreparedBlob>,
+    mime: Option<String>,
+    text: String,
+}
+
+fn prepare_flow(f: &NewFlow) -> Result<PreparedFlow, StoreError> {
+    let parsed_resp = f.response.as_deref().and_then(|r| RawResponse::parse(r).ok());
+    let mime = parsed_resp.as_ref().and_then(|r| {
+        r.header("content-type").map(|v| {
+            String::from_utf8_lossy(v)
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        })
+    });
+    Ok(PreparedFlow {
+        req: prepare_blob(&f.request)?,
+        orig_req: f.original_request.as_deref().map(prepare_blob).transpose()?,
+        resp: f.response.as_deref().map(prepare_blob).transpose()?,
+        orig_resp: f.original_response.as_deref().map(prepare_blob).transpose()?,
+        mime,
+        text: index_text(f, parsed_resp.as_ref()),
+    })
 }
 
 fn get_blob(conn: &Connection, hash: &[u8]) -> Result<Vec<u8>, StoreError> {
@@ -720,6 +912,213 @@ fn get_blob(conn: &Connection, hash: &[u8]) -> Result<Vec<u8>, StoreError> {
         })?;
     let size = u64::try_from(size).map_err(|_| StoreError::Untrusted("negative blob size".into()))?;
     bounded_decode(&data, MAX_BLOB, Some(size))
+}
+
+// ---- Reading messages in pieces -----------------------------------------------------------------------------
+
+/// The most of a message that is searched for the blank line that ends its head.
+const MAX_HEAD: usize = 256 * 1024;
+
+/// Which of a flow's stored messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Which {
+    Request,
+    OriginalRequest,
+    Response,
+    OriginalResponse,
+}
+
+/// One stored message, opened for reading. Nothing is loaded until it is read, and reading goes through SQLite's
+/// incremental blob interface and a streaming decompressor, so memory use does not depend on the message's size.
+pub struct Message<'a> {
+    conn: &'a Connection,
+    rowid: i64,
+    /// Bytes in the whole message (head and body), as recorded.
+    pub size: u64,
+}
+
+impl Message<'_> {
+    /// A reader over the whole decompressed message. It fails rather than yield more or fewer bytes than the
+    /// recorded size, so a corrupt or hostile file cannot make it run on.
+    pub fn reader(&self) -> Result<impl Read + '_, StoreError> {
+        let blob = self
+            .conn
+            .blob_open(rusqlite::MAIN_DB, "blobs", "data", self.rowid, true)?;
+        let dec = zstd::stream::read::Decoder::new(blob).map_err(StoreError::Compress)?;
+        Ok(SizeChecked {
+            inner: dec,
+            seen: 0,
+            size: self.size,
+        })
+    }
+
+    /// The head (through its blank line) and the number of bytes it takes. Without a blank line in the first
+    /// [`MAX_HEAD`] bytes, that much (or the whole message, if shorter) counts as the head.
+    pub fn head(&self) -> Result<Vec<u8>, StoreError> {
+        let mut buf = Vec::new();
+        self.reader()?
+            .take(MAX_HEAD as u64)
+            .read_to_end(&mut buf)
+            .map_err(StoreError::Compress)?;
+        if let Some(end) = head_end(&buf) {
+            buf.truncate(end);
+        }
+        Ok(buf)
+    }
+
+    /// A reader over `len` bytes of the body starting `start` bytes into it (`None` for the rest).
+    pub fn body(&self, head_len: u64, start: u64, len: Option<u64>) -> Result<impl Read + '_, StoreError> {
+        let mut r = self.reader()?;
+        std::io::copy(&mut (&mut r).take(head_len + start), &mut std::io::sink())
+            .map_err(StoreError::Compress)?;
+        Ok(r.take(len.unwrap_or(u64::MAX)))
+    }
+}
+
+/// Where the head ends: just past the first blank line.
+fn head_end(buf: &[u8]) -> Option<usize> {
+    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4);
+    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|i| i + 2);
+    match (crlf, lf) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+struct SizeChecked<R> {
+    inner: R,
+    seen: u64,
+    size: u64,
+}
+
+impl<R: Read> Read for SizeChecked<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let bad = |why: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, why.to_string());
+        let room = self.size.saturating_sub(self.seen);
+        if room == 0 {
+            // Anything left in the stream means the recorded size is wrong.
+            let mut probe = [0u8; 1];
+            return match self.inner.read(&mut probe)? {
+                0 => Ok(0),
+                _ => Err(bad("decompressed data is larger than recorded")),
+            };
+        }
+        let cap = out.len().min(usize::try_from(room).unwrap_or(usize::MAX));
+        let n = self.inner.read(&mut out[..cap])?;
+        if n == 0 {
+            return Err(bad("decompressed data is shorter than recorded"));
+        }
+        self.seen += n as u64;
+        Ok(n)
+    }
+}
+
+/// The head of one stored message and how big it is, which is all the flow overview needs.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct PartInfo {
+    #[serde(with = "bosun_model::b64")]
+    #[schema(value_type = String, format = Byte)]
+    pub head: Vec<u8>,
+    /// The whole message in bytes.
+    pub total_len: u64,
+    /// The body alone: `total_len` less the head.
+    pub body_len: u64,
+}
+
+/// A flow without its bodies: its summary, and each stored message's head and size.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct FlowMeta {
+    #[serde(flatten)]
+    pub summary: FlowSummary,
+    pub request: PartInfo,
+    pub original_request: Option<PartInfo>,
+    pub response: Option<PartInfo>,
+    pub original_response: Option<PartInfo>,
+    /// The body was larger than the recording limit, so only the start of it is stored.
+    pub response_truncated: bool,
+}
+
+impl Project {
+    /// Run `f` on one of a flow's messages. `None` when the flow has no such message.
+    pub fn with_message<T>(
+        &self,
+        id: FlowId,
+        which: Which,
+        f: impl FnOnce(Option<&Message<'_>>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let conn = self.db.read()?;
+        let col = match which {
+            Which::Request => "req_blob",
+            Which::OriginalRequest => "orig_req_blob",
+            Which::Response => "resp_blob",
+            Which::OriginalResponse => "orig_resp_blob",
+        };
+        let hash: Option<Vec<u8>> = conn
+            .query_row(&format!("SELECT {col} FROM flows WHERE id = ?1"), [id], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .flatten();
+        let Some(hash) = hash else {
+            return f(None);
+        };
+        let msg = open_message(&conn, &hash)?;
+        f(Some(&msg))
+    }
+
+    /// Summary, header blocks and sizes of one flow, without reading any body.
+    pub fn flow_meta(&self, id: FlowId) -> Result<Option<FlowMeta>, StoreError> {
+        let conn = self.db.read()?;
+        let sql = format!(
+            "SELECT {SUMMARY_COLS}, req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated
+             FROM flows WHERE id = ?1"
+        );
+        let row = conn
+            .query_row(&sql, [id], |r| {
+                Ok((
+                    summary_from_row(r)?,
+                    r.get::<_, Vec<u8>>(20)?,
+                    r.get::<_, Option<Vec<u8>>>(21)?,
+                    r.get::<_, Option<Vec<u8>>>(22)?,
+                    r.get::<_, Option<Vec<u8>>>(23)?,
+                    r.get::<_, bool>(24)?,
+                ))
+            })
+            .optional()?;
+        let Some((summary, req, orig_req, resp, orig_resp, truncated)) = row else {
+            return Ok(None);
+        };
+        let part = |h: &[u8]| -> Result<PartInfo, StoreError> {
+            let m = open_message(&conn, h)?;
+            let head = m.head()?;
+            Ok(PartInfo {
+                total_len: m.size,
+                body_len: m.size - head.len() as u64,
+                head,
+            })
+        };
+        let opt = |h: Option<Vec<u8>>| h.map(|h| part(&h)).transpose();
+        Ok(Some(FlowMeta {
+            request: part(&req)?,
+            original_request: opt(orig_req)?,
+            response: opt(resp)?,
+            original_response: opt(orig_resp)?,
+            response_truncated: truncated,
+            summary,
+        }))
+    }
+}
+
+fn open_message<'a>(conn: &'a Connection, hash: &[u8]) -> Result<Message<'a>, StoreError> {
+    let (rowid, size): (i64, i64) =
+        conn.query_row("SELECT id, size FROM blobs WHERE hash = ?1", [hash], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+    let size = u64::try_from(size)
+        .ok()
+        .filter(|n| *n <= MAX_BLOB)
+        .ok_or_else(|| StoreError::Untrusted("a stored size is out of range".into()))?;
+    Ok(Message { conn, rowid, size })
 }
 
 /// What gets indexed for search: the request (head and text body) and the response (head and decoded text
@@ -817,6 +1216,182 @@ mod tests {
             original_response: None,
             response_truncated: false,
         }
+    }
+
+    #[test]
+    fn reads_go_on_while_the_writer_is_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = std::sync::Arc::new(Project::open(&dir.path().join("p.db")).unwrap());
+        let a = flow(&p, "a.in.test", "/one", 200, "first");
+        p.write_batch(std::slice::from_ref(&a), &[]).unwrap();
+
+        // Hold the write connection inside an open transaction, as a long recorder batch does.
+        let writer = p.db.write();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = p.clone();
+        let id = a.id;
+        std::thread::spawn(move || {
+            let list = reader.list_flows(&FlowFilter::default()).unwrap();
+            let one = reader.get_flow(id).unwrap();
+            let n = reader.flow_count().unwrap();
+            let _ = tx.send((list.len(), one.is_some(), n));
+        });
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("reads must not wait for the writer");
+        assert_eq!(got, (1, true, 1));
+        writer.execute_batch("ROLLBACK").unwrap();
+        drop(writer);
+
+        // And the writer is not held up by an open reader either.
+        let r = p.db.read().unwrap();
+        let mut stmt = r.prepare("SELECT id FROM flows").unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        assert!(rows.next().unwrap().is_some());
+        let b = flow(&p, "b.in.test", "/two", 200, "second");
+        p.write_batch(&[b], &[]).unwrap();
+    }
+
+    #[test]
+    fn a_batch_with_repeated_bodies_stores_each_body_once() {
+        let p = Project::open_in_memory().unwrap();
+        let a = flow(&p, "a.in.test", "/x", 200, "same body");
+        let mut b = a.clone();
+        b.id = p.next_flow_id();
+        p.write_batch(&[a, b], &[]).unwrap();
+        let n: i64 =
+            p.db.read()
+                .unwrap()
+                .query_row("SELECT count(*) FROM blobs", [], |r| r.get(0))
+                .unwrap();
+        assert_eq!(n, 2, "one request body and one response body");
+    }
+
+    fn big_flow(p: &Project, body: &[u8]) -> NewFlow {
+        let mut f = flow(p, "a.in.test", "/big", 200, "");
+        let mut resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        resp.extend_from_slice(body);
+        f.response = Some(resp);
+        f
+    }
+
+    #[test]
+    fn a_large_body_is_read_in_pieces_without_loading_it() {
+        let p = Project::open_in_memory().unwrap();
+        let body: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        let f = big_flow(&p, &body);
+        p.write_batch(std::slice::from_ref(&f), &[]).unwrap();
+
+        let meta = p.flow_meta(f.id).unwrap().unwrap();
+        let resp = meta.response.unwrap();
+        assert!(resp.head.starts_with(b"HTTP/1.1 200 OK\r\n") && resp.head.ends_with(b"\r\n\r\n"));
+        assert_eq!(resp.body_len, body.len() as u64);
+        assert!(meta.original_response.is_none());
+
+        let head_len = resp.head.len() as u64;
+        p.with_message(f.id, Which::Response, |m| {
+            let m = m.unwrap();
+            let mut got = Vec::new();
+            m.body(head_len, 1_000_000, Some(10))
+                .unwrap()
+                .read_to_end(&mut got)
+                .unwrap();
+            assert_eq!(got, &body[1_000_000..1_000_010]);
+            let mut tail = Vec::new();
+            m.body(head_len, 2_999_990, None)
+                .unwrap()
+                .read_to_end(&mut tail)
+                .unwrap();
+            assert_eq!(tail, &body[2_999_990..]);
+            Ok(())
+        })
+        .unwrap();
+        // A message the flow does not have.
+        p.with_message(f.id, Which::OriginalResponse, |m| {
+            assert!(m.is_none());
+            Ok(())
+        })
+        .unwrap();
+        assert!(p.flow_meta(9999).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_streaming_reader_refuses_a_wrong_size_or_a_bomb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        let id = {
+            let p = Project::open(&path).unwrap();
+            let f = flow(&p, "a.test", "/", 200, "hello");
+            p.write_batch(std::slice::from_ref(&f), &[]).unwrap();
+            f.id
+        };
+        let bomb = zstd::encode_all(std::io::repeat(0).take(50 * 1024 * 1024), 3).unwrap();
+        raw(&path)
+            .execute("UPDATE blobs SET data = ?1, size = 10", [bomb])
+            .unwrap();
+        let p = Project::open(&path).unwrap();
+        let err = p
+            .with_message(id, Which::Response, |m| {
+                let mut sink = Vec::new();
+                m.unwrap()
+                    .reader()?
+                    .read_to_end(&mut sink)
+                    .map_err(StoreError::Compress)?;
+                Ok(sink.len())
+            })
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Compress(_)), "{err:?}");
+        // Too short for the claim is corruption too.
+        let short = zstd::encode_all(&b"hi"[..], 3).unwrap();
+        raw(&path)
+            .execute("UPDATE blobs SET data = ?1, size = 50", [short])
+            .unwrap();
+        assert!(p.flow_meta(id).is_err());
+    }
+
+    #[test]
+    fn a_v1_project_with_flows_moves_to_the_rowid_blob_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        {
+            let mut c = Connection::open(&path).unwrap();
+            c.pragma_update(None, "foreign_keys", "ON").unwrap();
+            migrate::run(&mut c, &MIGRATIONS[..1]).unwrap();
+            let blob = zstd::encode_all(&b"GET / HTTP/1.1\r\nHost: a.test\r\n\r\n"[..], 3).unwrap();
+            c.execute(
+                "INSERT INTO blobs (hash, size, data) VALUES (x'aa', 32, ?1)",
+                [blob],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO flows (id, source, started_ms, scheme, host, port, method, path, base_path,
+                    http_version, request_len, in_scope, edited, req_blob)
+                 VALUES (1, 'proxy', 1, 'http', 'a.test', 80, 'GET', '/', '/', 'HTTP/1.1', 32, 1, 0, x'aa')",
+                [],
+            )
+            .unwrap();
+        }
+        let p = Project::open(&path).unwrap();
+        let d = p.get_flow(1).unwrap().unwrap();
+        assert_eq!(d.request, b"GET / HTTP/1.1\r\nHost: a.test\r\n\r\n");
+        assert_eq!(p.flow_meta(1).unwrap().unwrap().request.body_len, 0);
+        // References still hold: a flow cannot point at a missing blob.
+        assert!(
+            p.db.write()
+                .execute("UPDATE flows SET req_blob = x'bb' WHERE id = 1", [])
+                .is_err()
+        );
+        // And the file as it was before is kept.
+        let old = Connection::open(migrate::backup_path(path.to_str().unwrap(), 1)).unwrap();
+        let v: i64 = old
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 1);
     }
 
     #[test]

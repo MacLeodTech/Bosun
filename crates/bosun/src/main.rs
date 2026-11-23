@@ -39,6 +39,11 @@ enum Cmd {
         /// UI/API listen address.
         #[arg(long)]
         listen: Option<std::net::SocketAddr>,
+        /// Run as the child process of a desktop app: listen on loopback (random ports unless --proxy and --listen
+        /// are given), print one JSON line on stdout with `api_url`, `proxy_addr`, `ca_spki` and `login_ticket`,
+        /// log to stderr only, and exit when stdin closes.
+        #[arg(long)]
+        embedded: bool,
     },
     /// Check the install for common problems.
     Doctor,
@@ -114,6 +119,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             project,
             proxy,
             listen,
+            embedded,
         } => {
             if let Some(p) = project {
                 cfg.project = p;
@@ -124,9 +130,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
             if let Some(l) = listen {
                 cfg.api.listen = l;
             }
+            if embedded {
+                // The parent talks to the engine over loopback only, whatever the config file says.
+                cfg.proxy.listen = proxy.unwrap_or_else(|| ([127, 0, 0, 1], 0).into());
+                cfg.api.listen = listen.unwrap_or_else(|| ([127, 0, 0, 1], 0).into());
+                cfg.api.tls = false;
+                if !cfg.proxy.listen.ip().is_loopback() || !cfg.api.listen.ip().is_loopback() {
+                    bail!("--embedded only listens on loopback addresses");
+                }
+            }
             cfg.proxy.validate().map_err(anyhow::Error::msg)?;
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-            rt.block_on(serve(cfg))?;
+            let r = if embedded {
+                rt.block_on(serve_embedded(cfg))
+            } else {
+                rt.block_on(serve(cfg))
+            };
+            // A read of stdin may still be waiting on its thread; do not wait for it.
+            rt.shutdown_timeout(std::time::Duration::from_secs(2));
+            r?;
         }
         Cmd::Doctor => {
             let mut worst = doctor::Level::Ok;
@@ -241,6 +263,41 @@ async fn serve(cfg: Config) -> Result<()> {
     eprintln!();
     shutdown_signal().await;
     eprintln!("shutting down");
+    engine.shutdown().await;
+    Ok(())
+}
+
+/// The embedded mode of `bosun serve`: the parent app reads one JSON line, and ending its end of our stdin (or
+/// dying, which closes it) stops the engine.
+async fn serve_embedded(cfg: Config) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+    let engine = Engine::start_with(&cfg, true).await?;
+    let handshake = serde_json::json!({
+        "api_url": engine.api_url(),
+        "proxy_addr": engine.proxy_addr.to_string(),
+        "ca_spki": engine.ca_spki,
+        "login_ticket": engine.login_ticket,
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    {
+        let mut out = std::io::stdout().lock();
+        writeln!(out, "{handshake}")?;
+        out.flush()?;
+    }
+    let parent_gone = async {
+        let mut stdin = tokio::io::stdin();
+        let mut buf = [0u8; 256];
+        loop {
+            match stdin.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    };
+    tokio::select! {
+        () = parent_gone => tracing::info!("the parent process closed stdin; shutting down"),
+        () = shutdown_signal() => {}
+    }
     engine.shutdown().await;
     Ok(())
 }

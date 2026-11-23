@@ -21,6 +21,10 @@ export function startTarget(port: number): Promise<http.Server> {
       res.writeHead(204).end();
     } else if (url.pathname === '/evil') {
       res.writeHead(200, { 'content-type': 'text/html' }).end(EVIL_PAGE);
+    } else if (url.pathname === '/big') {
+      // 700 KiB of text with a marker at each end: more than one page of the history view.
+      const body = 'START-MARK ' + 'x'.repeat(700 * 1024) + ' END-MARK';
+      res.writeHead(200, { 'content-type': 'text/plain' }).end(body);
     } else if (url.pathname === '/hits') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(hits));
     } else if (url.pathname === '/echo') {

@@ -1,0 +1,23 @@
+[package]
+name = "bosun-client"
+description = "A typed Rust client for the Bosun engine's HTTP and WebSocket API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+reqwest = { workspace = true, features = ["json", "cookies"] }
+tokio.workspace = true
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+futures-util.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+bytes.workspace = true
+
+[lints]
+workspace = true

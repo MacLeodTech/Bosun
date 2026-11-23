@@ -169,17 +169,17 @@ These rules apply to every package:
 | [x] | WP-06 | Untrusted project files and the project lock | 1 | M | |
 | [x] | WP-07 | Session and token lifecycle | 1 | M | |
 | [x] | WP-08 | UI TLS without the interception CA | 1 | S | |
-| [~] | WP-09 | CI on Windows and macOS (code done, waiting for a CI run) | 1 | S | WP-34 |
-| [ ] | WP-10 | Scope gate with address pinning (blocks M2) | 2 | M | |
-| [ ] | WP-35 | Schema migrations framework (blocks M2) | 2 | S | WP-06 |
-| [ ] | WP-11 | Storage concurrency | 2 | M | WP-06 |
-| [ ] | WP-12 | Flow API v2 and non-blocking handlers (blocks M2) | 2 | M | |
-| [ ] | WP-17 | Event stream resume | 2 | S | |
-| [ ] | WP-13 | OpenAPI contract and generated clients | 2 | M | WP-12 |
-| [ ] | WP-14 | The `bosun-client` crate | 2 | M | WP-13 |
-| [ ] | WP-15 | Embedded engine mode and login tickets | 2 | M | |
-| [ ] | WP-16 | Projects API and UI | 2 | L | WP-06, WP-11, WP-35 |
-| [ ] | WP-37 | Footprint budgets in CI | 2 | S | WP-09 |
+| [x] | WP-09 | CI on Windows and macOS | 1 | S | WP-34 |
+| [x] | WP-10 | Scope gate with address pinning (blocks M2) | 2 | M | |
+| [x] | WP-35 | Schema migrations framework (blocks M2) | 2 | S | WP-06 |
+| [x] | WP-11 | Storage concurrency | 2 | M | WP-06 |
+| [x] | WP-12 | Flow API v2 and non-blocking handlers (blocks M2) | 2 | M | |
+| [x] | WP-17 | Event stream resume | 2 | S | |
+| [x] | WP-13 | OpenAPI contract and generated clients | 2 | M | WP-12 |
+| [x] | WP-14 | The `bosun-client` crate | 2 | M | WP-13 |
+| [x] | WP-15 | Embedded engine mode and login tickets | 2 | M | |
+| [x] | WP-16 | Projects API and UI | 2 | L | WP-06, WP-11, WP-35 |
+| [x] | WP-37 | Footprint budgets in CI | 2 | S | WP-09 |
 | [ ] | WP-40 | `bosun-http`: the raw request engine | 3 | L | WP-05, WP-10 |
 | [ ] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-42 | Decoder and Comparer | 3 | M | WP-13 |
@@ -411,6 +411,13 @@ These rules apply to every package:
   - Document it in the threat model.
 - **Done when:** tests show that a name resolving to `127.0.0.1` or `169.254.169.254` is refused, an explicit IP
   rule allows it, and the pinned address is what the connector uses.
+- **Done (Phase 2).** `Gate::check` resolves the name (blocking: call from `spawn_blocking`) and returns `Pinned`
+  with the addresses to connect to. Refused: loopback, link-local (includes the metadata addresses), unspecified and
+  multicast, IPv4-mapped forms, the host's own networks (`set_protected_networks`), and any name with one such answer
+  among several. An include rule opens them with `allow_private` (an "Allow local" column in the scope editor) or by
+  naming the IP literally. The Repeater's out-of-scope policy does not lift this. The per-host rate limit is
+  `set_rate_limit`. Still to do: WP-23 fills `set_protected_networks` from the server's interfaces and exposes
+  the rate limit in the config; WP-40 connects to `Pinned::addrs`.
 
 #### WP-11 Storage concurrency · Phase 2 · M
 
@@ -422,6 +429,10 @@ These rules apply to every package:
   - Hash and compress bodies on the recorder thread before taking the writer.
   - The same split for `AppDb`.
 - **Done when:** a benchmark or test shows `list_flows` latency stays flat while the recorder writes large batches.
+- **Done (Phase 2).** `Project` and `AppDb` have one writer and read-only connections opened on demand (up to four
+  kept idle); hashing, compression and indexing happen before the writer is taken, and blobs are inserted with
+  `INSERT OR IGNORE`. A test holds the writer inside an open transaction and shows reads still answer. Not done: a
+  timing benchmark (WP-27 owns the benchmarks), and in-memory databases (tests) still share one connection.
 
 #### WP-12 Flow API v2 and non-blocking handlers · Phase 2 · M
 
@@ -436,6 +447,14 @@ These rules apply to every package:
   - Move every SQLite call in handlers, `Caller::audit`, `setup` and `login` into `spawn_blocking`.
 - **Done when:** a 50 MB response can be viewed without the API allocating more than the requested range; there is
   no direct SQLite call left in async code.
+- **Done (Phase 2).** `GET /flows/{id}` is the summary, each message's header block and the sizes.
+  `/flows/{id}/{request|response|original-request|original-response}/body` streams raw bytes with a single `Range`
+  (`bytes=a-b`, `a-`, `-n`), as an attachment; `?decoded=1` undoes the content-encoding as a stream, capped at
+  32 MiB (a decoded range is buffered, at most 8 MiB). Reads use SQLite's incremental blob interface and a streaming
+  zstd decoder, so memory use is a few 64 KiB chunks. The UI loads 256 KiB pages with "Load more" and a download
+  link. Every SQLite call in handlers, `Caller::audit`, setup, login and SSO runs on a blocking thread
+  (`AppState::with_app`, `AppState::audit`); only start-up code still calls the stores directly. There is no
+  automated peak-memory check: `unsafe` is forbidden, so a counting allocator is not an option.
 
 #### WP-13 OpenAPI contract and generated clients · Phase 2 · M
 
@@ -448,6 +467,15 @@ These rules apply to every package:
     is generated (NSwag or Kiota).
   - Version rules: additive changes only within `/api/v1`.
 - **Done when:** the UI builds against generated types, and the drift check fails on an undocumented change.
+- **Done (Phase 2).** The description lives in `crates/bosun-api/src/openapi.rs` (operations and response shapes
+  in one place; the schemas derive from the real types) and is committed as `docs/openapi.json`. A test fails when
+  they differ (`BLESS=1 cargo test -p bosun-api --test api openapi` rewrites it) and another calls every documented
+  route on the real router; a third reads the router's source and fails when a served route is missing from the
+  description. `npm run gen:api` writes `web/src/lib/api-types.ts`; CI fails if it is stale. Gap: `types.ts` is
+  still partly hand-written: the event type and the project types come from (or are checked against) the generated
+  ones, and checks fail the build when the shared shapes disagree, but the other interfaces are still written out
+  (the generated ones use `i64` aliases and optional fields that would touch most pages). The description now says
+  base64 string (not `number[]`) for the byte fields (`raw`, `head`, `payload`), as they are on the wire.
 - **Replaces:** the `utoipa` part of "A docs site" under Release.
 
 #### WP-14 The `bosun-client` crate · Phase 2 · M
@@ -459,6 +487,11 @@ These rules apply to every package:
   - Errors that map API messages and status codes.
   - Port `crates/bosun-api/tests/api.rs` to it where it makes the tests clearer.
 - **Done when:** the crate covers the whole OpenAPI surface and is used by at least the API tests.
+- **Done (Phase 2).** `crates/bosun-client`: typed methods for every operation, cookie or bearer auth (CSRF header
+  sent for cookie sessions), range reads of bodies, and `EventStream` with resume (`?since&epoch`), `reload`
+  handling and `reconnect()`; extra CA certificates for a TLS engine. Tests in `crates/bosun-api/tests/client.rs`
+  run it against a real engine, and one fails when an operation exists without a client method. Not done: retries
+  with backoff for plain requests (callers decide), and a blocking wrapper.
 
 #### WP-15 Embedded engine mode and login tickets · Phase 2 · M
 
@@ -479,6 +512,12 @@ These rules apply to every package:
 - **Replaces:** M1 "One-time login ticket for the desktop app".
 - **Decision for the owner:** whether the desktop app has its own local admin account created silently, or asks
   for a password once and then uses tickets.
+- **Done (Phase 2).** `bosun serve --embedded`: loopback only, random ports unless given, one JSON line on stdout
+  (`api_url`, `proxy_addr`, `ca_spki`, `login_ticket`, `version`), logs on stderr, exits when stdin closes.
+  `POST /auth/ticket` (single use, 60 s, constant-time compare, loopback peers only, rate limited, audited) makes
+  the first local admin (`desktop`) if there are no users and returns a session. Tests: `crates/bosun/tests/embedded.rs`
+  starts the real binary (handshake, ticket, parent-exit shutdown). Not done: the desktop shells themselves
+  (WP-18, WP-19), which start it this way.
 
 #### WP-16 Projects API and UI · Phase 2 · L
 
@@ -496,6 +535,17 @@ These rules apply to every package:
 - **Done when:** API tests cover the switch, an import of a hostile file (refused cleanly) and an export/import
   round trip.
 - **Replaces:** M1 "Projects in the UI".
+- **Done (Phase 2).** `/projects` (list, create, open, close, rename, delete, export, backup, import), all admin
+  except listing, all audited; names map to files in the projects folder and nowhere else. Switching opens the new
+  project first, then swaps recorder, scope, rules and intercept settings together under a lock that setting saves
+  also take, drops held intercept messages, starts interception off, starts a new event epoch and sends
+  `project_switched`. Import never opens the upload as a project: it is checked, rebuilt with `VACUUM INTO` into a
+  new file and only then named (fuzz target `import_project`). The UI has a Projects page (create, open, close,
+  rename, delete, export, back up, import) and shows the open project in the header; pages remount on a switch.
+  Tests: `crates/bosun-api/tests/projects.rs`, `crates/bosun-store/tests/transfer.rs`, the e2e test. Gaps: the
+  "recent" list is names only and only shown in the API; a project opened by path (`--project /x.bosun`) is shown but
+  cannot be managed; imports are limited to 2 GiB and take a copy in the projects folder first (disk twice
+  over until it finishes).
 
 #### WP-17 Event stream resume · Phase 2 · S
 
@@ -505,6 +555,12 @@ These rules apply to every package:
   - `/events?since=N` replays from the buffer, or says "reload" when N is too old.
   - The UI reconnects with `since`.
 - **Done when:** a test disconnects, generates events and reconnects without losing any.
+- **Done (Phase 2).** `EventBus` (in `bosun-proxy`) numbers every event from 1 and keeps the last N (4096 in the
+  engine) in a ring. A new connection gets `{"type":"hello","epoch","seq"}`; reconnecting with
+  `?since=N&epoch=E` replays what was missed, or sends `{"type":"reload"}` when N is too old, comes from another
+  engine run, or the client lagged past the ring. The recorder now announces flows even when nobody is
+  listening, so a client that was away finds them in the ring. The UI keeps the last number and reloads its data
+  on `reload`. A project switch starts a new epoch, so positions from before it are answered with `reload` too.
 
 ### WP-18 to WP-26: the front ends
 
@@ -785,6 +841,11 @@ These rules apply to every package:
   - A test helper that builds a database at any version, for migration tests.
 - **Done when:** a test migrates a v1 file through a dummy v2 migration, and a failing migration leaves the file
   untouched.
+- **Done (Phase 2).** `bosun_store::migrate` runs an ordered list per database, each step in a transaction that
+  records `user_version`, copies the file to `<file>.pre-v<N>.bak` first, and refuses newer files. A step marked
+  `rebuild` runs with reference checks off and `foreign_key_check` before the commit. The project's schema check
+  compares against the migrations up to the file's own version. Tests build a database at any earlier version
+  (`MIGRATIONS[..n]`). Project v2 (blobs get a rowid) is the first real migration.
 
 #### WP-36 Test harness: Playwright, property tests, first fuzz targets · Phase 1 · M
 
@@ -807,6 +868,13 @@ These rules apply to every package:
   - Fail on regressions over a threshold; record the numbers in a CI summary.
   - Leave hooks for the throughput and latency benchmarks that WP-27 and WP-28 add.
 - **Done when:** CI fails when idle RSS goes over budget.
+- **Done (Phase 2).** `footprint-budgets.json` holds a budget and a baseline per metric; `scripts/footprint.py`
+  measures idle RSS of a release `bosun serve` (`idle`) and image size (`image`), or takes any `name=value`
+  (`check`), fails when over budget or more than `regression_pct` (15) over the baseline, and writes a table to the
+  run summary. CI has a `footprint` job and an image-size step. Measured: 16 MB idle (budget 50), 40 MB image
+  (budget 60). The benchmarks of WP-27 and WP-28 report through `check` once they have a budget entry. Raise a
+  baseline in the pull request that justifies it. The first CI numbers on GitHub's runners may differ a little
+  from these local ones; adjust the baselines from the first run if so.
 
 #### WP-38 Proxy follow-ups from M1 · Phase 3 · M
 

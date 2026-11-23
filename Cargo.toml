@@ -7,6 +7,7 @@ members = [
   "crates/bosun-scope",
   "crates/bosun-proxy",
   "crates/bosun-api",
+  "crates/bosun-client",
   "crates/bosun",
   "crates/bosun-desktop",
 ]
@@ -19,6 +20,7 @@ default-members = [
   "crates/bosun-scope",
   "crates/bosun-proxy",
   "crates/bosun-api",
+  "crates/bosun-client",
   "crates/bosun",
 ]
 
@@ -36,6 +38,7 @@ bosun-store = { path = "crates/bosun-store" }
 bosun-scope = { path = "crates/bosun-scope" }
 bosun-proxy = { path = "crates/bosun-proxy" }
 bosun-api = { path = "crates/bosun-api" }
+bosun-client = { path = "crates/bosun-client" }
 bosun = { path = "crates/bosun" }
 
 anyhow = "1"
@@ -56,7 +59,8 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 webpki-roots = "1"
 x509-parser = "0.18"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto", "x509-parser"] }
-rusqlite = { version = "0.43", features = ["bundled"] }
+utoipa = { version = "6", default-features = false, features = ["macros"] }
+rusqlite = { version = "0.43", features = ["bundled", "blob"] }
 zstd = { version = "0.14", default-features = false }
 proptest = { version = "1.12", default-features = false, features = ["std"] }
 flate2 = "1"

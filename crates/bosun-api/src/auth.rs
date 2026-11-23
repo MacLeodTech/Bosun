@@ -185,13 +185,16 @@ impl Caller {
         }
     }
 
-    pub fn audit(&self, st: &AppState, action: &str, detail: &str) {
-        let _ = st.inner.app.audit(
-            Some(&self.user.username),
+    /// Write an audit entry. Waits for the write (on a blocking thread), so the entry is there when the
+    /// response goes out.
+    pub async fn audit(&self, st: &AppState, action: &str, detail: &str) {
+        st.audit(
+            Some(self.user.username.clone()),
             action,
             detail,
-            Some(&self.remote.to_string()),
-        );
+            Some(self.remote.to_string()),
+        )
+        .await;
     }
 }
 
@@ -354,10 +357,8 @@ pub async fn setup(
         return too_many(w);
     }
     if !bool::from(b.code.trim().as_bytes().ct_eq(expected.as_bytes())) {
-        let _ = st
-            .inner
-            .app
-            .audit(None, "setup.failed", "wrong setup code", remote.as_deref());
+        st.audit(None, "setup.failed", "wrong setup code", remote.clone())
+            .await;
         return reject(
             StatusCode::FORBIDDEN,
             "wrong setup code (it is printed in the server's log at start-up)",
@@ -379,30 +380,40 @@ pub async fn setup(
     else {
         return reject(StatusCode::INTERNAL_SERVER_ERROR, "hashing failed");
     };
-    let user = match st.inner.app.create_first_admin(&b.username, &hash) {
+    let name = b.username.clone();
+    let created = match st.with_app(move |a| a.create_first_admin(&name, &hash)).await {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
+    let user = match created {
         Ok(u) => u,
         Err(e) => return reject(StatusCode::CONFLICT, &e.to_string()),
     };
     st.inner.limiter.succeeded(&ip_key, "setup");
     *st.inner.setup_code.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    let _ = st.inner.app.audit(
-        Some(&user.username),
+    st.audit(
+        Some(user.username.clone()),
         "setup",
         "created the first admin",
-        remote.as_deref(),
-    );
+        remote.clone(),
+    )
+    .await;
     start_session(&st, user, https).await
+}
+
+async fn session_created(st: &AppState, token: &str, user_id: i64, csrf: &str) -> bool {
+    let (token, csrf, ttl) = (token.to_string(), csrf.to_string(), st.inner.session_ttl_ms);
+    matches!(
+        st.with_app(move |a| a.create_session(&token, user_id, &csrf, ttl))
+            .await,
+        Ok(Ok(_))
+    )
 }
 
 async fn start_session(st: &AppState, user: User, https: bool) -> Response {
     let token = random_token();
     let csrf = random_token();
-    if st
-        .inner
-        .app
-        .create_session(&token, user.id, &csrf, st.inner.session_ttl_ms)
-        .is_err()
-    {
+    if !session_created(st, &token, user.id, &csrf).await {
         return reject(StatusCode::INTERNAL_SERVER_ERROR, "could not create a session");
     }
     let mut r = Json(me_json(&user, Some(&csrf))).into_response();
@@ -414,13 +425,12 @@ async fn start_session(st: &AppState, user: User, https: bool) -> Response {
 }
 
 /// A session for `user` and the `Set-Cookie` that carries it (single sign-on redirects instead of returning JSON).
-pub(crate) fn new_session_cookie(st: &AppState, user: &User) -> Result<HeaderValue, ()> {
+pub(crate) async fn new_session_cookie(st: &AppState, user: &User) -> Result<HeaderValue, ()> {
     let token = random_token();
     let csrf = random_token();
-    st.inner
-        .app
-        .create_session(&token, user.id, &csrf, st.inner.session_ttl_ms)
-        .map_err(|_| ())?;
+    if !session_created(st, &token, user.id, &csrf).await {
+        return Err(());
+    }
     Ok(set_cookie(st, &token, st.inner.session_ttl_ms / 1000, false))
 }
 
@@ -460,19 +470,23 @@ pub async fn login(
     match found {
         Some(user) => {
             st.inner.limiter.succeeded(&ip_key, &pair);
-            let _ = st
-                .inner
-                .app
-                .audit(Some(&user.username), "login", "signed in", Some(&remote));
+            st.audit(
+                Some(user.username.clone()),
+                "login",
+                "signed in",
+                Some(remote.clone()),
+            )
+            .await;
             start_session(&st, user, https).await
         }
         None => {
-            let _ = st.inner.app.audit(
-                Some(&b.username),
+            st.audit(
+                Some(b.username.clone()),
                 "login.failed",
                 "wrong username or password",
-                Some(&remote),
-            );
+                Some(remote.clone()),
+            )
+            .await;
             reject(StatusCode::UNAUTHORIZED, "wrong username or password")
         }
     }
@@ -489,9 +503,9 @@ pub async fn logout(
 ) -> Response {
     let https = info.is_some_and(|i| i.https);
     if let Some(t) = session_cookie_value(&headers) {
-        let _ = st.inner.app.delete_session(&t);
+        let _ = st.with_app(move |a| a.delete_session(&t)).await;
     }
-    caller.audit(&st, "logout", "");
+    caller.audit(&st, "logout", "").await;
     let mut r = crate::security::empty(StatusCode::NO_CONTENT);
     r.headers_mut()
         .insert(header::SET_COOKIE, set_cookie(&st, "", 0, https));
@@ -507,12 +521,8 @@ pub struct PasswordBody {
     pub current: String,
     pub new: String,
     /// End the user's API tokens too (the default): a token made with a stolen password must not survive the reset.
-    #[serde(default = "yes")]
-    pub revoke_tokens: bool,
-}
-
-fn yes() -> bool {
-    true
+    #[serde(default)]
+    pub revoke_tokens: Option<bool>,
 }
 
 pub async fn change_password(
@@ -544,7 +554,7 @@ pub async fn change_password(
             return Some(Err("the current password is wrong"));
         }
         let h = hash_password(&b.new).ok()?;
-        app.set_password(u.id, &h, b.revoke_tokens).ok()?;
+        app.set_password(u.id, &h, b.revoke_tokens.unwrap_or(true)).ok()?;
         Some(Ok(()))
     })
     .await
@@ -553,7 +563,7 @@ pub async fn change_password(
     match res {
         Some(Ok(())) => {
             st.inner.limiter.succeeded(&ip_key, &pair);
-            caller.audit(&st, "password.change", "");
+            caller.audit(&st, "password.change", "").await;
             let mut r = crate::security::empty(StatusCode::NO_CONTENT);
             r.headers_mut()
                 .insert(header::SET_COOKIE, set_cookie(&st, "", 0, https));
@@ -562,6 +572,115 @@ pub async fn change_password(
         Some(Err(e)) => reject(StatusCode::FORBIDDEN, e),
         None => reject(StatusCode::INTERNAL_SERVER_ERROR, "could not change the password"),
     }
+}
+
+// ---- Desktop login tickets ------------------------------------------------------------------------------------
+
+/// How long a login ticket can be exchanged.
+const TICKET_TTL: Duration = Duration::from_secs(60);
+
+/// The one outstanding login ticket, if any. Only an embedded engine issues one (`bosun serve --embedded` hands it
+/// to its parent on stdout), so a normal server has none and `POST /auth/ticket` always refuses.
+#[derive(Default)]
+pub struct Tickets {
+    slot: Mutex<Option<(String, Instant)>>,
+}
+
+impl Tickets {
+    pub fn issue(&self) -> String {
+        let t = format!("bosun_ticket_{}", random_token());
+        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some((t.clone(), Instant::now()));
+        t
+    }
+
+    /// Exchange: true once for the right, unexpired ticket. A wrong guess does not use the ticket up (it is 256
+    /// bits, and the caller is rate limited); a right one does, and so does an expired one.
+    fn redeem(&self, presented: &str) -> bool {
+        self.redeem_within(presented, TICKET_TTL)
+    }
+
+    fn redeem_within(&self, presented: &str, ttl: Duration) -> bool {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((t, issued)) = slot.as_ref() else {
+            return false;
+        };
+        if issued.elapsed() > ttl {
+            *slot = None;
+            return false;
+        }
+        if bool::from(t.as_bytes().ct_eq(presented.as_bytes())) {
+            *slot = None;
+            return true;
+        }
+        false
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TicketBody {
+    pub ticket: String,
+}
+
+/// The name of the account made for a desktop app when the engine has no users yet.
+const LOCAL_ADMIN: &str = "desktop";
+
+/// Exchange the login ticket an embedded engine gave its parent for a session cookie. Loopback only.
+pub async fn ticket(
+    State(st): State<AppState>,
+    info: Option<axum::Extension<ClientInfo>>,
+    Json(b): Json<TicketBody>,
+) -> Response {
+    let https = info.as_ref().is_some_and(|i| i.https);
+    let ip = info.as_ref().map(|i| i.ip);
+    let remote = ip.map(|i| i.to_string()).unwrap_or_default();
+    let ip_key = format!("ip:{remote}");
+    if let Err(w) = st.inner.limiter.begin(&ip_key, "ticket") {
+        return too_many(w);
+    }
+    if !ip.is_some_and(|i| i.is_loopback()) || !st.inner.tickets.redeem(b.ticket.trim()) {
+        st.audit(
+            None,
+            "login.ticket.failed",
+            "a login ticket was refused",
+            Some(remote),
+        )
+        .await;
+        return reject(
+            StatusCode::UNAUTHORIZED,
+            "that login ticket is not valid (it is single-use and lasts 60 seconds)",
+        );
+    }
+    let made = match st.with_app(|a| a.ticket_user(LOCAL_ADMIN)).await {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
+    let (user, created) = match made {
+        Ok(x) => x,
+        Err(e) => {
+            tracing::error!(error = %e, "could not find the account for a login ticket");
+            return reject(StatusCode::INTERNAL_SERVER_ERROR, "could not sign in");
+        }
+    };
+    if created {
+        // The first account exists now, so first-run setup is over.
+        *st.inner.setup_code.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        st.audit(
+            Some(user.username.clone()),
+            "setup",
+            "created the local admin for the desktop app",
+            Some(remote.clone()),
+        )
+        .await;
+    }
+    st.inner.limiter.succeeded(&ip_key, "ticket");
+    st.audit(
+        Some(user.username.clone()),
+        "login.ticket",
+        "signed in with a login ticket",
+        Some(remote),
+    )
+    .await;
+    start_session(&st, user, https).await
 }
 
 #[cfg(test)]
@@ -588,5 +707,23 @@ mod password_tests {
             hash_password("another long password").unwrap(),
             "each hash has its own salt"
         );
+    }
+
+    #[test]
+    fn a_ticket_works_once_and_only_while_fresh() {
+        let t = Tickets::default();
+        assert!(!t.redeem("anything"), "none issued");
+        let a = t.issue();
+        assert!(!t.redeem("wrong"), "a wrong guess");
+        assert!(t.redeem(&a), "a wrong guess does not use it up");
+        assert!(!t.redeem(&a), "single use");
+        let b = t.issue();
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!t.redeem_within(&b, Duration::from_millis(10)), "expired");
+        assert!(!t.redeem(&b), "an expired ticket is gone, not merely refused");
+        let c = t.issue();
+        let d = t.issue();
+        assert!(!t.redeem(&c), "a newer ticket replaces the older one");
+        assert!(t.redeem(&d));
     }
 }

@@ -8,6 +8,8 @@ use std::time::Duration;
 use bosun_store::{NewFlow, NewWsMessage, Project, StoreError};
 
 use crate::budget::{MemoryBudget, Reservation};
+#[cfg(test)]
+use crate::events::Sequenced;
 use crate::events::{EventSender, ProxyEvent};
 
 const BATCH: usize = 256;
@@ -224,10 +226,8 @@ fn run(
         // WebSocket messages refer to their handshake flow, so make sure it's written first even if the
         // handshake record and the messages arrive in different batches (it is always sent first).
         let written = write_with_retry(&mut write, &flows, &ws, &events, &stats, RETRY_PAUSE);
-        if written
-            && events.receiver_count() > 0
-            && let Some(project) = &project
-        {
+        // Always announced, even with nobody listening: the bus keeps recent events for clients that reconnect.
+        if written && let Some(project) = &project {
             let ids: Vec<_> = flows.iter().map(|f| f.id).collect();
             if let Ok(sums) = project.summaries(&ids) {
                 for s in sums {
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn a_stalled_writer_never_blocks_the_caller_and_bodies_are_dropped() {
-        let (events, _) = tokio::sync::broadcast::channel(4);
+        let (events, _) = crate::events::EventBus::channel(4);
         let gate = Arc::new(Mutex::new(()));
         let held = gate.lock().unwrap();
         let written = Arc::new(Mutex::new(Vec::<usize>::new()));
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn the_memory_budget_turns_bodies_into_metadata() {
-        let (events, _) = tokio::sync::broadcast::channel(4);
+        let (events, _) = crate::events::EventBus::channel(4);
         let rec = Recorder::spawn(64, MemoryBudget::new(1000), events, None, Box::new(|_, _| Ok(())));
         rec.flow(flow(1, 50_000));
         assert_eq!(rec.stats().bodies_dropped.load(Ordering::Relaxed), 1);
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn a_failed_write_is_retried_once_then_counted_and_announced() {
-        let (events, mut rx) = tokio::sync::broadcast::channel(8);
+        let (events, mut rx) = crate::events::EventBus::channel(8);
         let calls = Arc::new(AtomicU64::new(0));
         let c = calls.clone();
         let rec = Recorder::spawn(
@@ -352,7 +352,10 @@ mod tests {
         assert_eq!(rec.stats().write_failures.load(Ordering::Relaxed), 1);
         assert_eq!(rec.stats().records_lost.load(Ordering::Relaxed), 1);
         match rx.try_recv() {
-            Ok(ProxyEvent::RecorderFailed { lost, error }) => {
+            Ok(Sequenced {
+                event: ProxyEvent::RecorderFailed { lost, error },
+                ..
+            }) => {
                 assert_eq!(lost, 1);
                 assert!(error.contains("disk full"));
             }
@@ -362,7 +365,7 @@ mod tests {
 
     #[test]
     fn a_write_that_works_on_the_retry_loses_nothing() {
-        let (events, mut rx) = tokio::sync::broadcast::channel(8);
+        let (events, mut rx) = crate::events::EventBus::channel(8);
         let calls = Arc::new(AtomicU64::new(0));
         let c = calls.clone();
         let rec = Recorder::spawn(

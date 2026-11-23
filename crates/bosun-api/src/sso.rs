@@ -433,8 +433,14 @@ pub async fn edge(
     let ip = peer.map(|p| p.0.0.ip());
     let remote = ip.map(|i| i.to_string()).unwrap_or_default();
     let ip_key = format!("ip:{remote}");
-    let audit = |what: &str, who: Option<&str>| {
-        let _ = st.inner.app.audit(who, "login.failed", what, Some(&remote));
+    let audit = async |what: &str, who: Option<&str>| {
+        st.audit(
+            who.map(str::to_string),
+            "login.failed",
+            what,
+            Some(remote.clone()),
+        )
+        .await;
     };
     let raw = headers
         .get(header::AUTHORIZATION)
@@ -443,11 +449,11 @@ pub async fn edge(
         .map(str::trim)
         .filter(|t| !t.is_empty() && t.len() <= 8192);
     let (Some(raw), Some(ip)) = (raw, ip) else {
-        audit("Edge SSO: no token", None);
+        audit("Edge SSO: no token", None).await;
         return fail("this sign-in only works through the sign-in proxy");
     };
     if !s.edge_peer_trusted(ip) {
-        audit("Edge SSO: not from a trusted proxy", None);
+        audit("Edge SSO: not from a trusted proxy", None).await;
         return fail("this sign-in only works through the sign-in proxy");
     }
     if st.inner.limiter.blocked(&ip_key) {
@@ -458,7 +464,7 @@ pub async fn edge(
         Err(e) => {
             tracing::warn!("edge sso: {e}");
             st.inner.limiter.fail(&ip_key);
-            audit("Edge SSO: token refused", None);
+            audit("Edge SSO: token refused", None).await;
             fail("the identity token from the sign-in proxy was not valid")
         }
     }
@@ -471,14 +477,17 @@ fn with(mut r: Response, cookie: HeaderValue) -> Response {
 
 /// Any sign-in, once the token is verified: a verified, listed email gets a role, an account and a session.
 async fn finish(st: &AppState, s: &Sso, id: Identity, how: &str, fail_key: Option<&str>) -> Response {
-    let refuse = |why: &str, who: Option<&str>, msg: &str| {
+    let refuse = async |why: &str, who: Option<&str>, msg: &str| {
         if let Some(k) = fail_key {
             st.inner.limiter.fail(k);
         }
-        let _ = st
-            .inner
-            .app
-            .audit(who, "login.refused", &format!("{how}: {why}"), None);
+        st.audit(
+            who.map(str::to_string),
+            "login.refused",
+            &format!("{how}: {why}"),
+            None,
+        )
+        .await;
         fail(msg)
     };
     let Some(email) = id.email else {
@@ -486,14 +495,16 @@ async fn finish(st: &AppState, s: &Sso, id: Identity, how: &str, fail_key: Optio
             "email missing or not verified",
             None,
             "your email address is not verified with the provider",
-        );
+        )
+        .await;
     };
     let Some(role) = s.cfg.email_roles.get(&email).and_then(|r| Role::parse(r)) else {
         return refuse(
             "not on the allow-list",
             Some(&email),
             "your account has no access here; ask an admin",
-        );
+        )
+        .await;
     };
     let app = st.inner.app.clone();
     let key = format!("{}|{}", id.issuer, id.subject);
@@ -502,13 +513,16 @@ async fn finish(st: &AppState, s: &Sso, id: Identity, how: &str, fail_key: Optio
         Ok(Ok(u)) => u,
         _ => return fail("could not set up your account"),
     };
-    let cookie = match crate::auth::new_session_cookie(st, &user) {
+    let cookie = match crate::auth::new_session_cookie(st, &user).await {
         Ok(c) => c,
         Err(_) => return fail("could not create a session"),
     };
-    let _ = st
-        .inner
-        .app
-        .audit(Some(&user.username), "login", &format!("signed in ({how})"), None);
+    st.audit(
+        Some(user.username.clone()),
+        "login",
+        &format!("signed in ({how})"),
+        None,
+    )
+    .await;
     redirect("/", Some(cookie))
 }

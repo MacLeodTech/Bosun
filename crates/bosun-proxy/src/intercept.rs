@@ -10,14 +10,14 @@ use tokio::sync::oneshot;
 
 use crate::events::{EventSender, ProxyEvent};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     Request,
     Response,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct InterceptSummary {
     pub id: u64,
     pub flow_id: FlowId,
@@ -28,27 +28,29 @@ pub struct InterceptSummary {
     pub queued_ms: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct InterceptItem {
     #[serde(flatten)]
     pub summary: InterceptSummary,
     /// The message as HTTP/1.1-style text (base64 so binary bodies survive).
     #[serde(with = "bosun_model::b64")]
+    #[schema(value_type = String, format = Byte)]
     pub raw: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Decision {
     /// Forward, optionally with an edited message.
     Forward {
         #[serde(default, with = "bosun_model::b64_opt")]
+        #[schema(value_type = Option<String>, format = Byte)]
         raw: Option<Vec<u8>>,
     },
     Drop,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct InterceptSettings {
     pub requests: bool,
     pub responses: bool,
@@ -240,6 +242,15 @@ impl InterceptController {
         }
     }
 
+    /// Drop everything held (a project switch: those messages belong to the old project's session and nobody
+    /// approved forwarding them).
+    pub fn drop_all(&self) -> usize {
+        let ids: Vec<u64> = self.lock().keys().copied().collect();
+        ids.into_iter()
+            .filter(|id| self.resolve(*id, Decision::Drop))
+            .count()
+    }
+
     pub fn forward_all(&self) -> usize {
         let ids: Vec<u64> = self.lock().keys().copied().collect();
         ids.into_iter()
@@ -273,8 +284,37 @@ mod tests {
     use std::sync::Arc;
 
     #[tokio::test]
+    async fn drop_all_drops_what_is_held() {
+        let (tx, _rx) = crate::events::EventBus::channel(16);
+        let ctl = Arc::new(InterceptController::new(tx));
+        ctl.set(InterceptSettings {
+            requests: true,
+            responses: false,
+            in_scope_only: false,
+            timeout_secs: None,
+        });
+        let mut held = Vec::new();
+        for n in 0..3 {
+            let c = ctl.clone();
+            held.push(tokio::spawn(async move {
+                c.hold(n, Phase::Request, "GET", "http://a/", None, b"x".to_vec())
+                    .await
+            }));
+        }
+        while ctl.list().len() < 3 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(ctl.drop_all(), 3);
+        for h in held {
+            assert_eq!(h.await.unwrap().unwrap(), Decision::Drop);
+        }
+        assert!(ctl.list().is_empty());
+        assert_eq!(ctl.drop_all(), 0);
+    }
+
+    #[tokio::test]
     async fn hold_resolve_and_release_on_disable() {
-        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let (tx, _rx) = crate::events::EventBus::channel(16);
         let ctl = Arc::new(InterceptController::new(tx));
         ctl.set(InterceptSettings {
             requests: true,
@@ -322,7 +362,7 @@ mod tests {
 
     #[tokio::test]
     async fn abandoned_holds_leave_the_queue() {
-        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let (tx, _rx) = crate::events::EventBus::channel(16);
         let ctl = Arc::new(InterceptController::new(tx));
         let c = ctl.clone();
         let h = tokio::spawn(async move { c.hold(1, Phase::Request, "GET", "u", None, vec![]).await });
@@ -336,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_queue_has_an_item_cap_a_byte_cap_and_a_timeout() {
-        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let (tx, _rx) = crate::events::EventBus::channel(16);
         let ctl = Arc::new(InterceptController::with_limits(tx, 2, 10));
         let hold = |ctl: Arc<InterceptController>, n: usize| {
             tokio::spawn(async move { ctl.hold(1, Phase::Request, "GET", "u", None, vec![0; n]).await })

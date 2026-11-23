@@ -61,6 +61,26 @@ export const api = {
   del: <T>(p: string, b?: unknown) => call<T>('DELETE', p, b),
 };
 
+/** Send a file as the raw body (a project import). */
+export async function upload<T>(path: string, file: File): Promise<T> {
+  const headers: Record<string, string> = { accept: 'application/json', 'content-type': 'application/octet-stream' };
+  if (csrf) headers['x-csrf-token'] = csrf;
+  const r = await fetch(`/api/v1${path}`, { method: 'POST', headers, body: file, credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+  const text = await r.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!r.ok) {
+    const err = data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : '';
+    if (r.status === 401) onUnauthorized();
+    throw new ApiError(r.status, err || r.statusText || `HTTP ${r.status}`);
+  }
+  return data as T;
+}
+
 export async function login(username: string, password: string): Promise<Me> {
   const me = await api.post<Me>('/auth/login', { username, password });
   setCsrf(me.csrf);

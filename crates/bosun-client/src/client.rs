@@ -1,0 +1,602 @@
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use bytes::Bytes;
+use reqwest::{Method, RequestBuilder, StatusCode, Url, cookie::Jar};
+use serde::de::DeserializeOwned;
+use serde_json::json;
+
+use crate::error::{Error, Result};
+use crate::events::{EventStream, Position};
+use crate::types::*;
+
+/// Builds a [`Client`].
+#[derive(Debug, Clone)]
+pub struct ClientBuilder {
+    base: String,
+    token: Option<String>,
+    roots_pem: Vec<Vec<u8>>,
+    timeout: Duration,
+}
+
+impl ClientBuilder {
+    /// Sign in with an API token (`Authorization: Bearer`). Tokens are not ambient credentials, so no CSRF
+    /// token is needed.
+    pub fn token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+
+    /// Trust this certificate (PEM) for an `https://` engine. Without any, only the public web roots are
+    /// trusted, which will not include the engine's own certificate authority.
+    pub fn ca_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
+        self.roots_pem.push(pem.into());
+        self
+    }
+
+    /// How long one request may take (default 30 seconds). The event stream has no limit.
+    pub fn timeout(mut self, t: Duration) -> Self {
+        self.timeout = t;
+        self
+    }
+
+    pub fn build(self) -> Result<Client> {
+        let base = self.base.trim_end_matches('/').to_string();
+        let url = Url::parse(&base).map_err(|e| Error::Setup(format!("bad engine address {base:?}: {e}")))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(Error::Setup(format!(
+                "the engine address must start with http:// or https://, not {base:?}"
+            )));
+        }
+        let jar = Arc::new(Jar::default());
+        let mut b = reqwest::Client::builder()
+            .cookie_provider(jar.clone())
+            // The engine is usually local; a proxy from the environment (perhaps Bosun's own) must not sit between.
+            .no_proxy()
+            .timeout(self.timeout)
+            .redirect(reqwest::redirect::Policy::none());
+        for pem in &self.roots_pem {
+            let cert = reqwest::Certificate::from_pem(pem)
+                .map_err(|e| Error::Setup(format!("bad CA certificate: {e}")))?;
+            b = b.add_root_certificate(cert);
+        }
+        Ok(Client {
+            inner: Arc::new(Inner {
+                http: b.build()?,
+                base,
+                url,
+                token: self.token,
+                roots_pem: self.roots_pem,
+                jar,
+                csrf: Mutex::new(None),
+            }),
+        })
+    }
+}
+
+pub(crate) struct Inner {
+    pub(crate) http: reqwest::Client,
+    pub(crate) base: String,
+    pub(crate) url: Url,
+    pub(crate) token: Option<String>,
+    pub(crate) roots_pem: Vec<Vec<u8>>,
+    pub(crate) jar: Arc<Jar>,
+    csrf: Mutex<Option<String>>,
+}
+
+/// A connection to one engine. Cheap to clone; clones share the session.
+#[derive(Clone)]
+pub struct Client {
+    pub(crate) inner: Arc<Inner>,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("base", &self.inner.base)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Client {
+    /// Start building a client for the engine at `base` (such as `http://127.0.0.1:8090`).
+    pub fn builder(base: impl Into<String>) -> ClientBuilder {
+        ClientBuilder {
+            base: base.into(),
+            token: None,
+            roots_pem: Vec::new(),
+            timeout: Duration::from_secs(30),
+        }
+    }
+
+    /// A client with no credentials yet, for [`Client::setup`], [`Client::login`] and the public endpoints.
+    pub fn new(base: impl Into<String>) -> Result<Self> {
+        Self::builder(base).build()
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.inner.base
+    }
+
+    /// Your credentials, for opening the event stream.
+    pub(crate) fn authorize(&self, h: &mut reqwest::header::HeaderMap) {
+        use reqwest::cookie::CookieStore;
+        if let Some(t) = &self.inner.token {
+            if let Ok(v) = format!("Bearer {t}").parse() {
+                h.insert(reqwest::header::AUTHORIZATION, v);
+            }
+        } else if let Some(c) = self.inner.jar.cookies(&self.inner.url) {
+            h.insert(reqwest::header::COOKIE, c);
+        }
+    }
+
+    fn req(&self, method: Method, path: &str) -> RequestBuilder {
+        let mut rb = self
+            .inner
+            .http
+            .request(method.clone(), format!("{}/api/v1{path}", self.inner.base));
+        if let Some(t) = &self.inner.token {
+            rb = rb.bearer_auth(t);
+        } else if method != Method::GET
+            && method != Method::HEAD
+            && let Some(c) = self.inner.csrf.lock().ok().and_then(|g| g.clone())
+        {
+            rb = rb.header("x-csrf-token", c);
+        }
+        rb
+    }
+
+    async fn check(&self, r: reqwest::Response) -> Result<reqwest::Response> {
+        let status = r.status();
+        if status.is_success() {
+            return Ok(r);
+        }
+        let text = r.text().await.unwrap_or_default();
+        let message = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+            .unwrap_or(text);
+        Err(Error::Api {
+            status: status.as_u16(),
+            message,
+        })
+    }
+
+    async fn json<T: DeserializeOwned>(&self, rb: RequestBuilder) -> Result<T> {
+        let r = self.check(rb.send().await?).await?;
+        let bytes = r.bytes().await?;
+        serde_json::from_slice(&bytes).map_err(Error::decode)
+    }
+
+    async fn unit(&self, rb: RequestBuilder) -> Result<()> {
+        self.check(rb.send().await?).await?;
+        Ok(())
+    }
+
+    fn remember(&self, me: &Me) {
+        if let Ok(mut g) = self.inner.csrf.lock() {
+            *g = me.csrf.clone();
+        }
+    }
+
+    // --- session -------------------------------------------------------------------------------------------
+
+    /// The engine's name and version, and whether first-run setup is pending. Needs no sign-in.
+    pub async fn status(&self) -> Result<Status> {
+        self.json(self.req(Method::GET, "/status")).await
+    }
+
+    /// Create the first admin account with the code the engine printed at start-up, and sign in as it.
+    pub async fn setup(&self, code: &str, username: &str, password: &str) -> Result<Me> {
+        let me: Me = self
+            .json(
+                self.req(Method::POST, "/setup")
+                    .json(&json!({ "code": code, "username": username, "password": password })),
+            )
+            .await?;
+        self.remember(&me);
+        Ok(me)
+    }
+
+    /// Sign in with a password. The session cookie and CSRF token are kept for later calls.
+    pub async fn login(&self, username: &str, password: &str) -> Result<Me> {
+        let me: Me = self
+            .json(
+                self.req(Method::POST, "/auth/login")
+                    .json(&json!({ "username": username, "password": password })),
+            )
+            .await?;
+        self.remember(&me);
+        Ok(me)
+    }
+
+    /// Sign in with the login ticket an embedded engine (`bosun serve --embedded`) gave its parent process.
+    /// A ticket works once, within 60 seconds, and only from the same machine.
+    pub async fn login_ticket(&self, ticket: &str) -> Result<Me> {
+        let me: Me = self
+            .json(
+                self.req(Method::POST, "/auth/ticket")
+                    .json(&json!({ "ticket": ticket })),
+            )
+            .await?;
+        self.remember(&me);
+        Ok(me)
+    }
+
+    pub async fn logout(&self) -> Result<()> {
+        self.unit(self.req(Method::POST, "/auth/logout")).await
+    }
+
+    pub async fn me(&self) -> Result<Me> {
+        let me: Me = self.json(self.req(Method::GET, "/auth/me")).await?;
+        self.remember(&me);
+        Ok(me)
+    }
+
+    pub async fn sso_config(&self) -> Result<SsoInfo> {
+        self.json(self.req(Method::GET, "/auth/sso")).await
+    }
+
+    /// Change your own password. Your API tokens are ended too unless `revoke_tokens` is `Some(false)`.
+    pub async fn change_password(&self, current: &str, new: &str, revoke_tokens: Option<bool>) -> Result<()> {
+        self.unit(
+            self.req(Method::POST, "/auth/password")
+                .json(&json!({ "current": current, "new": new, "revoke_tokens": revoke_tokens })),
+        )
+        .await
+    }
+
+    // --- history ------------------------------------------------------------------------------------------
+
+    pub async fn flows(&self, q: &FlowQuery) -> Result<Vec<FlowSummary>> {
+        self.json(self.req(Method::GET, "/flows").query(q)).await
+    }
+
+    /// Delete flows by id; returns how many were removed.
+    pub async fn delete_flows(&self, ids: &[FlowId]) -> Result<u64> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            deleted: u64,
+        }
+        let r: R = self
+            .json(self.req(Method::DELETE, "/flows").json(&json!({ "ids": ids })))
+            .await?;
+        Ok(r.deleted)
+    }
+
+    pub async fn flow(&self, id: FlowId) -> Result<FlowMeta> {
+        self.json(self.req(Method::GET, &format!("/flows/{id}"))).await
+    }
+
+    /// Set a flow's tags and note. `None` leaves that part as it is.
+    pub async fn annotate_flow(&self, id: FlowId, tags: Option<&[String]>, note: Option<&str>) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/flows/{id}"))
+                .json(&json!({ "tags": tags, "note": note })),
+        )
+        .await
+    }
+
+    pub async fn ws_messages(
+        &self,
+        id: FlowId,
+        after: Option<i64>,
+        limit: Option<u32>,
+    ) -> Result<Vec<WsMessage>> {
+        self.json(
+            self.req(Method::GET, &format!("/flows/{id}/ws"))
+                .query(&[("after", after), ("limit", limit.map(i64::from))]),
+        )
+        .await
+    }
+
+    /// A whole message body. `decoded` undoes the response's `Content-Encoding`.
+    pub async fn flow_body(&self, id: FlowId, part: Part, decoded: bool) -> Result<Bytes> {
+        let mut rb = self.req(Method::GET, &format!("/flows/{id}/{}/body", part.path()));
+        if decoded {
+            rb = rb.query(&[("decoded", "1")]);
+        }
+        Ok(self.check(rb.send().await?).await?.bytes().await?)
+    }
+
+    /// Bytes `start..=end` of a body (to the end when `end` is `None`).
+    pub async fn flow_body_range(
+        &self,
+        id: FlowId,
+        part: Part,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<Bytes> {
+        let range = match end {
+            Some(e) => format!("bytes={start}-{e}"),
+            None => format!("bytes={start}-"),
+        };
+        let rb = self
+            .req(Method::GET, &format!("/flows/{id}/{}/body", part.path()))
+            .header("range", range);
+        let r = rb.send().await?;
+        if r.status() != StatusCode::PARTIAL_CONTENT && r.status() != StatusCode::OK {
+            return Err(self
+                .check(r)
+                .await
+                .err()
+                .unwrap_or_else(|| Error::decode("unexpected status")));
+        }
+        Ok(r.bytes().await?)
+    }
+
+    pub async fn site_map(&self, host: Option<&str>) -> Result<Vec<SiteMapEntry>> {
+        self.json(self.req(Method::GET, "/sitemap").query(&[("host", host)]))
+            .await
+    }
+
+    // --- scope and rules ----------------------------------------------------------------------------------
+
+    pub async fn scope(&self) -> Result<ScopeSpec> {
+        self.json(self.req(Method::GET, "/scope")).await
+    }
+
+    pub async fn put_scope(&self, spec: &ScopeSpec) -> Result<ScopeSpec> {
+        self.json(self.req(Method::PUT, "/scope").json(spec)).await
+    }
+
+    pub async fn rules(&self) -> Result<Vec<MatchRule>> {
+        self.json(self.req(Method::GET, "/rules")).await
+    }
+
+    pub async fn put_rules(&self, rules: &[MatchRule]) -> Result<Vec<MatchRule>> {
+        self.json(self.req(Method::PUT, "/rules").json(rules)).await
+    }
+
+    // --- intercept ----------------------------------------------------------------------------------------
+
+    pub async fn intercept(&self) -> Result<InterceptSettings> {
+        self.json(self.req(Method::GET, "/intercept")).await
+    }
+
+    pub async fn put_intercept(&self, s: &InterceptSettings) -> Result<InterceptSettings> {
+        self.json(self.req(Method::PUT, "/intercept").json(s)).await
+    }
+
+    pub async fn intercept_queue(&self) -> Result<Vec<InterceptSummary>> {
+        self.json(self.req(Method::GET, "/intercept/queue")).await
+    }
+
+    pub async fn intercept_item(&self, id: u64) -> Result<InterceptItem> {
+        self.json(self.req(Method::GET, &format!("/intercept/queue/{id}")))
+            .await
+    }
+
+    pub async fn intercept_decide(&self, id: u64, d: &Decision) -> Result<()> {
+        self.unit(self.req(Method::POST, &format!("/intercept/queue/{id}")).json(d))
+            .await
+    }
+
+    /// Forward everything held; returns how many messages were released.
+    pub async fn intercept_forward_all(&self) -> Result<u64> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            forwarded: u64,
+        }
+        let r: R = self
+            .json(self.req(Method::POST, "/intercept/forward-all"))
+            .await?;
+        Ok(r.forwarded)
+    }
+
+    // --- proxy ---------------------------------------------------------------------------------------------
+
+    pub async fn proxy_info(&self) -> Result<ProxyInfo> {
+        self.json(self.req(Method::GET, "/proxy")).await
+    }
+
+    /// The kill switch for all tool traffic. Returns the new state.
+    pub async fn set_stopped(&self, stopped: bool) -> Result<bool> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            stopped: bool,
+        }
+        let r: R = self
+            .json(
+                self.req(Method::PUT, "/tools/stop")
+                    .json(&json!({ "stopped": stopped })),
+            )
+            .await?;
+        Ok(r.stopped)
+    }
+
+    pub async fn ca_info(&self) -> Result<CaInfo> {
+        self.json(self.req(Method::GET, "/ca")).await
+    }
+
+    /// The CA certificate as PEM text.
+    pub async fn ca_pem(&self) -> Result<String> {
+        Ok(self
+            .check(self.req(Method::GET, "/ca/cert.pem").send().await?)
+            .await?
+            .text()
+            .await?)
+    }
+
+    /// Start a browser set up for the proxy. Returns the browser's name.
+    pub async fn launch_browser(&self) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            launched: String,
+        }
+        let r: R = self.json(self.req(Method::POST, "/browser/launch")).await?;
+        Ok(r.launched)
+    }
+
+    // --- projects ------------------------------------------------------------------------------------------
+
+    pub async fn list_projects(&self) -> Result<ProjectList> {
+        self.json(self.req(Method::GET, "/projects")).await
+    }
+
+    pub async fn create_project(&self, name: &str, open: bool) -> Result<ProjectInfo> {
+        self.json(
+            self.req(Method::POST, "/projects")
+                .json(&json!({ "name": name, "open": open })),
+        )
+        .await
+    }
+
+    /// Switch to a project. Every connected client is told to reload.
+    pub async fn open_project(&self, name: &str) -> Result<CurrentProject> {
+        self.json(self.req(Method::POST, &format!("/projects/{}/open", enc(name))))
+            .await
+    }
+
+    /// Close the project; a temporary in-memory one opens in its place.
+    pub async fn close_project(&self) -> Result<CurrentProject> {
+        self.json(self.req(Method::POST, "/projects/close")).await
+    }
+
+    pub async fn rename_project(&self, name: &str, to: &str) -> Result<ProjectInfo> {
+        self.json(
+            self.req(Method::POST, &format!("/projects/{}/rename", enc(name)))
+                .json(&json!({ "name": to })),
+        )
+        .await
+    }
+
+    pub async fn delete_project(&self, name: &str) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/projects/{}", enc(name))))
+            .await
+    }
+
+    /// The project file's bytes (a consistent copy, also of the open project).
+    pub async fn export_project(&self, name: &str) -> Result<Vec<u8>> {
+        let r = self
+            .req(Method::GET, &format!("/projects/{}/export", enc(name)))
+            .send()
+            .await?;
+        Ok(self.check(r).await?.bytes().await?.to_vec())
+    }
+
+    /// Import a project file under `name`. The file is checked and rebuilt, never opened as it came.
+    pub async fn import_project(&self, name: &str, file: Vec<u8>, open: bool) -> Result<ProjectInfo> {
+        self.json(
+            self.req(Method::POST, "/projects/import")
+                .query(&[("name", name), ("open", if open { "true" } else { "false" })])
+                .header("content-type", "application/octet-stream")
+                .body(file),
+        )
+        .await
+    }
+
+    /// Save a copy in the engine's backups folder.
+    pub async fn backup_project(&self, name: &str) -> Result<BackupInfo> {
+        self.json(self.req(Method::POST, &format!("/projects/{}/backup", enc(name))))
+            .await
+    }
+
+    // --- accounts ------------------------------------------------------------------------------------------
+
+    pub async fn tokens(&self) -> Result<Vec<ApiToken>> {
+        self.json(self.req(Method::GET, "/tokens")).await
+    }
+
+    pub async fn create_token(
+        &self,
+        name: &str,
+        expires_days: Option<u32>,
+        scope: Option<TokenScope>,
+    ) -> Result<NewToken> {
+        self.json(
+            self.req(Method::POST, "/tokens")
+                .json(&json!({ "name": name, "expires_days": expires_days, "scope": scope })),
+        )
+        .await
+    }
+
+    pub async fn delete_token(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/tokens/{id}")))
+            .await
+    }
+
+    pub async fn users(&self) -> Result<Vec<User>> {
+        self.json(self.req(Method::GET, "/users")).await
+    }
+
+    pub async fn create_user(&self, username: &str, password: &str, role: Role) -> Result<User> {
+        self.json(
+            self.req(Method::POST, "/users")
+                .json(&json!({ "username": username, "password": password, "role": role })),
+        )
+        .await
+    }
+
+    pub async fn delete_user(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/users/{id}"))).await
+    }
+
+    pub async fn set_user_role(&self, id: i64, role: Role) -> Result<()> {
+        self.unit(
+            self.req(Method::PUT, &format!("/users/{id}/role"))
+                .json(&json!({ "role": role })),
+        )
+        .await
+    }
+
+    pub async fn user_sessions(&self, id: i64) -> Result<Vec<SessionInfo>> {
+        self.json(self.req(Method::GET, &format!("/users/{id}/sessions")))
+            .await
+    }
+
+    /// End all of a user's sessions; returns how many.
+    pub async fn revoke_user_sessions(&self, id: i64) -> Result<u64> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            revoked: u64,
+        }
+        let r: R = self
+            .json(self.req(Method::DELETE, &format!("/users/{id}/sessions")))
+            .await?;
+        Ok(r.revoked)
+    }
+
+    pub async fn revoke_user_session(&self, id: i64, session_id: &str) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/users/{id}/sessions/{session_id}")))
+            .await
+    }
+
+    pub async fn user_tokens(&self, id: i64) -> Result<Vec<ApiToken>> {
+        self.json(self.req(Method::GET, &format!("/users/{id}/tokens")))
+            .await
+    }
+
+    pub async fn revoke_user_token(&self, id: i64, token_id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/users/{id}/tokens/{token_id}")))
+            .await
+    }
+
+    pub async fn audit(&self, before: Option<i64>, limit: Option<u32>) -> Result<Vec<AuditEntry>> {
+        self.json(
+            self.req(Method::GET, "/audit")
+                .query(&[("before", before), ("limit", limit.map(i64::from))]),
+        )
+        .await
+    }
+
+    // --- events --------------------------------------------------------------------------------------------
+
+    /// Open the live event stream. Pass the [`Position`] of an earlier stream to be sent what it missed.
+    pub async fn events(&self, resume: Option<&Position>) -> Result<EventStream> {
+        EventStream::connect(self.clone(), resume.cloned()).await
+    }
+}
+
+/// Percent-encode a path segment.
+fn enc(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}

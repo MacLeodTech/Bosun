@@ -5,10 +5,15 @@
 
 pub mod app;
 pub mod codec;
+pub mod migrate;
+pub(crate) mod pool;
 pub mod project;
 
 pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, SessionInfo, TokenScope, User};
-pub use project::{FlowFilter, NewFlow, NewWsMessage, Project, SiteMapEntry};
+pub use project::{
+    FlowFilter, FlowMeta, Message, NewFlow, NewWsMessage, PartInfo, Project, ProjectLock, SiteMapEntry,
+    Which, import_foreign, settle,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -24,6 +29,8 @@ pub enum StoreError {
     NewerSchema(i64),
     #[error("refusing to open this file: {0}")]
     Untrusted(String),
+    #[error("schema migration failed, the file was left as it was: {0}")]
+    Migration(String),
     #[error("{0}")]
     Locked(String),
     #[error("{0}")]

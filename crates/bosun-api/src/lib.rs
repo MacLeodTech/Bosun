@@ -11,6 +11,8 @@ pub mod browser;
 pub mod child;
 pub mod events;
 pub mod handlers;
+pub mod openapi;
+pub mod projects;
 pub mod security;
 pub mod sso;
 pub mod web;
@@ -33,6 +35,9 @@ use tokio::net::TcpListener;
 use tower::ServiceExt;
 
 pub use browser::BrowserLauncher;
+
+/// Largest project file the API accepts for import.
+pub const MAX_PROJECT_UPLOAD: u64 = 2 << 30;
 
 pub const SETTING_SCOPE: &str = "scope";
 pub const SETTING_RULES: &str = "match_replace";
@@ -156,7 +161,7 @@ impl std::fmt::Debug for AppState {
 
 pub struct Inner {
     pub app: Arc<AppDb>,
-    pub project: Arc<Project>,
+    pub projects: projects::Manager,
     pub proxy: Proxy,
     pub gate: Gate,
     pub ca: Arc<CertificateAuthority>,
@@ -180,11 +185,15 @@ pub struct Inner {
     pub browser: Option<BrowserLauncher>,
     pub loop_guard: LoopGuard,
     pub sso: Option<sso::Sso>,
+    pub tickets: auth::Tickets,
 }
 
 pub struct Deps {
     pub app: Arc<AppDb>,
-    pub project: Arc<Project>,
+    /// Where projects live (`<data dir>/projects`). Projects are managed by name inside it.
+    pub projects_dir: std::path::PathBuf,
+    /// The file the open project came from; none for a temporary (in-memory) project.
+    pub project_path: Option<std::path::PathBuf>,
     pub proxy: Proxy,
     pub gate: Gate,
     pub ca: Arc<CertificateAuthority>,
@@ -220,6 +229,50 @@ pub fn ui_hosts(cfg: &ApiConfig) -> Vec<String> {
 }
 
 impl AppState {
+    /// A single-use, 60-second ticket that `POST /auth/ticket` exchanges for an admin session (loopback only). For an
+    /// embedded engine to hand to the app that started it. Issuing another replaces the first.
+    pub fn issue_login_ticket(&self) -> String {
+        self.inner.tickets.issue()
+    }
+
+    /// The project that is open now. It can change between two calls (a project switch), so take it once per
+    /// operation.
+    pub fn project(&self) -> Arc<Project> {
+        self.inner.proxy.project()
+    }
+
+    /// Run `f` against the account database on a blocking thread. SQLite calls never run on the async workers.
+    pub(crate) async fn with_app<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&AppDb) -> T + Send + 'static,
+    ) -> Result<T, axum::response::Response> {
+        let app = self.inner.app.clone();
+        tokio::task::spawn_blocking(move || f(&app)).await.map_err(|e| {
+            tracing::error!(error = %e, "a database task failed");
+            security::reject(
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error (see the server log)",
+            )
+        })
+    }
+
+    /// Write an audit entry and wait for it. A failure to write is logged and does not fail the request.
+    pub(crate) async fn audit(
+        &self,
+        user: Option<String>,
+        action: &str,
+        detail: &str,
+        remote: Option<String>,
+    ) {
+        let (action, detail) = (action.to_string(), detail.to_string());
+        let r = self
+            .with_app(move |a| a.audit(user.as_deref(), &action, &detail, remote.as_deref()))
+            .await;
+        if let Ok(Err(e)) = r {
+            tracing::error!(error = %e, "could not write an audit entry");
+        }
+    }
+
     /// Build the state. Returns the setup code when there are no users yet (print it for the operator).
     pub fn new(cfg: &ApiConfig, d: Deps) -> Result<(Self, Option<String>), bosun_store::StoreError> {
         let setup_code = if d.app.user_count()? == 0 {
@@ -247,7 +300,7 @@ impl AppState {
         };
         let inner = Inner {
             app: d.app,
-            project: d.project,
+            projects: projects::Manager::new(d.projects_dir, d.project_path.as_deref(), MAX_PROJECT_UPLOAD),
             proxy: d.proxy,
             gate: d.gate,
             ca: d.ca,
@@ -273,6 +326,7 @@ impl AppState {
             browser,
             loop_guard,
             sso,
+            tickets: auth::Tickets::default(),
         };
         Ok((
             Self {
@@ -291,11 +345,13 @@ pub fn router(st: AppState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
+        .route("/auth/ticket", post(auth::ticket))
         .route("/auth/sso", get(sso::config))
         .route("/auth/password", post(auth::change_password))
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
         .route("/flows/{id}", get(h::get_flow).patch(h::annotate_flow))
         .route("/flows/{id}/ws", get(h::ws_messages))
+        .route("/flows/{id}/{part}/body", get(h::flow_body))
         .route("/sitemap", get(h::site_map))
         .route("/scope", get(h::get_scope).put(h::put_scope))
         .route("/rules", get(h::get_rules).put(h::put_rules))
@@ -329,6 +385,14 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/users", get(h::list_users).post(h::create_user))
         .route("/users/{id}", axum::routing::delete(h::delete_user))
+        .route("/projects", get(projects::list).post(projects::create))
+        .route("/projects/close", post(projects::close))
+        .route("/projects/import", post(projects::import))
+        .route("/projects/{name}", axum::routing::delete(projects::delete))
+        .route("/projects/{name}/open", post(projects::open))
+        .route("/projects/{name}/rename", post(projects::rename))
+        .route("/projects/{name}/export", get(projects::export))
+        .route("/projects/{name}/backup", post(projects::backup))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

@@ -2,117 +2,16 @@
 
 #![allow(clippy::unwrap_used)] // test helpers outside #[test] fns
 
+mod common;
+use common::*;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bosun_api::{ApiConfig, AppState, Deps};
-use bosun_ca::CertificateAuthority;
-use bosun_proxy::{Proxy, ProxyConfig};
-use bosun_scope::{Gate, Scope, ScopeSpec};
-use bosun_store::{AppDb, Project, Role};
+use bosun_store::Role;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use tokio::net::TcpListener;
-
-struct Stack {
-    api: SocketAddr,
-    proxy: SocketAddr,
-    code: String,
-    app: Arc<AppDb>,
-}
-
-async fn stack(proxy_knows_api: bool) -> Stack {
-    stack_with(proxy_knows_api, |_| {}).await
-}
-
-async fn stack_with(proxy_knows_api: bool, tweak: impl FnOnce(&mut ApiConfig)) -> Stack {
-    stack_full(proxy_knows_api, tweak, None).await
-}
-
-async fn stack_full(
-    proxy_knows_api: bool,
-    tweak: impl FnOnce(&mut ApiConfig),
-    ui_tls: Option<Arc<bosun_ca::UiTls>>,
-) -> Stack {
-    let ca = Arc::new(CertificateAuthority::ephemeral().unwrap());
-    let project = Arc::new(Project::open_in_memory().unwrap());
-    let app = Arc::new(AppDb::open_in_memory().unwrap());
-    let gate = Gate::new(Scope::compile(ScopeSpec::default()).unwrap());
-    let (events, _) = tokio::sync::broadcast::channel(64);
-    let api_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api = api_l.local_addr().unwrap();
-    let proxy_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let proxy_addr = proxy_l.local_addr().unwrap();
-    let pcfg = ProxyConfig {
-        listen: proxy_addr,
-        self_addrs: if proxy_knows_api { vec![api] } else { vec![] },
-        ..Default::default()
-    };
-    let proxy = Proxy::new(pcfg, ca.clone(), gate.clone(), project.clone(), events.clone()).unwrap();
-    let p = proxy.clone();
-    tokio::spawn(async move { p.serve(proxy_l, std::future::pending()).await });
-    let mut cfg = ApiConfig {
-        listen: api,
-        ..Default::default()
-    };
-    tweak(&mut cfg);
-    let (st, code) = AppState::new(
-        &cfg,
-        Deps {
-            app: app.clone(),
-            project,
-            proxy,
-            gate,
-            ca,
-            events,
-            browser: None,
-            ui_tls,
-        },
-    )
-    .unwrap();
-    tokio::spawn(bosun_api::serve(st, api_l, std::future::pending()));
-    Stack {
-        api,
-        proxy: proxy_addr,
-        code: code.unwrap(),
-        app,
-    }
-}
-
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .no_proxy()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap()
-}
-
-impl Stack {
-    fn url(&self, p: &str) -> String {
-        format!("http://127.0.0.1:{}/api/v1{p}", self.api.port())
-    }
-
-    /// Complete setup; returns a cookie-carrying client and its CSRF token.
-    async fn admin(&self) -> (reqwest::Client, String) {
-        let c = client();
-        let r = c
-            .post(self.url("/setup"))
-            .json(&json!({ "code": self.code, "username": "admin", "password": "a long enough password" }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(r.status(), StatusCode::OK);
-        let cookie = r.headers()["set-cookie"].to_str().unwrap().to_string();
-        assert!(
-            cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"),
-            "{cookie}"
-        );
-        let v: Value = r.json().await.unwrap();
-        (c, v["csrf"].as_str().unwrap().to_string())
-    }
-}
 
 #[tokio::test]
 async fn setup_needs_the_code_and_happens_once() {
@@ -497,13 +396,19 @@ async fn the_proxy_cannot_reach_the_api() {
             .unwrap();
         let r = c.get(s.url("/status")).send().await.unwrap();
         // Refused either by the proxy (it knows the API address) or by the API (it sees its own proxy's
-        // outbound connection).
-        let want = if knows {
-            StatusCode::BAD_GATEWAY
+        // outbound connection). The API refuses in one of two places depending on whether the proxy has
+        // registered the connection by the time it is accepted: before any HTTP (the proxy then reports 502)
+        // or per request (508). Both are refusals; what matters is that the request never reaches a handler.
+        let ok: &[StatusCode] = if knows {
+            &[StatusCode::BAD_GATEWAY]
         } else {
-            StatusCode::LOOP_DETECTED
+            &[StatusCode::BAD_GATEWAY, StatusCode::LOOP_DETECTED]
         };
-        assert_eq!(r.status(), want, "proxy_knows_api={knows}");
+        assert!(
+            ok.contains(&r.status()),
+            "proxy_knows_api={knows}: got {}",
+            r.status()
+        );
         assert!(!r.text().await.unwrap().contains("setup_required"));
     }
 }
@@ -998,4 +903,388 @@ async fn the_ui_serves_configured_certificate_files_and_otherwise_its_own_self_s
         .connect(rustls::pki_types::ServerName::try_from("localhost").unwrap(), tcp)
         .await;
     assert!(r.is_err());
+}
+
+// ---- Flow bodies ------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_flow_is_its_metadata_and_bodies_come_separately_in_ranges() {
+    let s = stack(true).await;
+    let (c, _csrf) = s.admin().await;
+    let body: Vec<u8> = (0..2_000_000u32).map(|i| (i % 253) as u8).collect();
+    let id = recorded(
+        &s,
+        "/big",
+        "Content-Type: application/octet-stream\r\n",
+        &body,
+        None,
+    );
+
+    // The overview is small whatever the body size, and has the head and the sizes.
+    let r = c.get(s.url(&format!("/flows/{id}"))).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let text = r.text().await.unwrap();
+    assert!(text.len() < 4_000, "{} bytes", text.len());
+    let meta: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(meta["id"], id);
+    assert_eq!(meta["response"]["body_len"], 2_000_000);
+    assert!(meta["original_response"].is_null());
+    assert!(meta.get("response_body_decoded").is_none());
+
+    let url = s.url(&format!("/flows/{id}/response/body"));
+    let all = c.get(&url).send().await.unwrap();
+    assert_eq!(all.status(), StatusCode::OK);
+    let h = all.headers().clone();
+    assert_eq!(h["content-length"], "2000000");
+    assert_eq!(h["accept-ranges"], "bytes");
+    assert_eq!(h["content-type"], "application/octet-stream");
+    assert!(
+        h["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment")
+    );
+    assert_eq!(all.bytes().await.unwrap().as_ref(), &body[..]);
+
+    let ranged = |range: &'static str| {
+        let (c, url) = (c.clone(), url.clone());
+        async move { c.get(&url).header("range", range).send().await.unwrap() }
+    };
+    let r = ranged("bytes=1000-1009").await;
+    assert_eq!(r.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(r.headers()["content-range"], "bytes 1000-1009/2000000");
+    assert_eq!(r.bytes().await.unwrap().as_ref(), &body[1000..1010]);
+    let r = ranged("bytes=1999990-").await;
+    assert_eq!(r.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(r.bytes().await.unwrap().as_ref(), &body[1_999_990..]);
+    let r = ranged("bytes=-5").await;
+    assert_eq!(r.headers()["content-range"], "bytes 1999995-1999999/2000000");
+    assert_eq!(r.bytes().await.unwrap().as_ref(), &body[1_999_995..]);
+    let r = ranged("bytes=1999990-9999999999").await;
+    assert_eq!(r.headers()["content-range"], "bytes 1999990-1999999/2000000");
+    for bad in ["bytes=2000000-", "bytes=-0"] {
+        let r = ranged(bad).await;
+        assert_eq!(r.status(), StatusCode::RANGE_NOT_SATISFIABLE, "{bad}");
+        assert_eq!(r.headers()["content-range"], "bytes */2000000");
+    }
+    for bad in ["bytes=0-1,5-6", "items=0-1", "bytes=9-1", "bytes=x-"] {
+        assert_eq!(
+            ranged(bad).await.status(),
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "{bad}"
+        );
+    }
+
+    // Parts that are not there, and names that are not parts.
+    let get = |p: String| {
+        let c = c.clone();
+        let u = s.url(&p);
+        async move { c.get(u).send().await.unwrap().status() }
+    };
+    assert_eq!(
+        get(format!("/flows/{id}/original-response/body")).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(format!("/flows/{id}/original-request/body")).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get("/flows/99999/response/body".into()).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(format!("/flows/{id}/secrets/body")).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(get(format!("/flows/{id}/request/body")).await, StatusCode::OK);
+    assert_eq!(
+        get(format!("/flows/{id}/request/body?decoded=1")).await,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn a_decoded_body_is_streamed_and_ranges_apply_to_the_decoded_bytes() {
+    use std::io::Write;
+    let s = stack(true).await;
+    let (c, _csrf) = s.admin().await;
+    let text: Vec<u8> = (0..500_000u32).flat_map(|i| i.to_le_bytes()).collect();
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    e.write_all(&text).unwrap();
+    let gz = e.finish().unwrap();
+    let id = recorded(
+        &s,
+        "/gz",
+        "Content-Encoding: gzip\r\n",
+        &gz,
+        Some(b"HTTP/1.1 200 OK\r\n\r\nbefore".to_vec()),
+    );
+
+    let meta: Value = c
+        .get(s.url(&format!("/flows/{id}")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(meta["response_encoding"], "gzip");
+    assert_eq!(meta["response"]["body_len"], gz.len());
+    assert_eq!(meta["original_response"]["body_len"], 6);
+
+    let base = s.url(&format!("/flows/{id}/response/body"));
+    // As stored: still compressed.
+    assert_eq!(
+        c.get(&base).send().await.unwrap().bytes().await.unwrap().as_ref(),
+        &gz[..]
+    );
+    // Decoded: the text, without a length announced in advance.
+    let r = c.get(format!("{base}?decoded=1")).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(r.headers().get("content-length").is_none());
+    assert_eq!(r.bytes().await.unwrap().as_ref(), &text[..]);
+    // A range of the decoded bytes; the total is not known until the end is reached.
+    let r = c
+        .get(format!("{base}?decoded=1"))
+        .header("range", "bytes=1000-1999")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(r.headers()["content-range"], "bytes 1000-1999/*");
+    assert_eq!(r.bytes().await.unwrap().as_ref(), &text[1000..2000]);
+    let r = c
+        .get(format!("{base}?decoded=1"))
+        .header("range", format!("bytes={}-", text.len() - 10))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.headers()["content-range"].to_str().unwrap(),
+        format!("bytes {}-{}/{}", text.len() - 10, text.len() - 1, text.len())
+    );
+    assert_eq!(r.bytes().await.unwrap().as_ref(), &text[text.len() - 10..]);
+    let r = c
+        .get(format!("{base}?decoded=1"))
+        .header("range", format!("bytes={}-", text.len() + 5))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    // The original (before edits) is its own message.
+    let o = s.url(&format!("/flows/{id}/original-response/body"));
+    assert_eq!(
+        c.get(o).send().await.unwrap().bytes().await.unwrap().as_ref(),
+        b"before"
+    );
+
+    // An encoding we cannot undo is said so, not guessed.
+    let weird = recorded(&s, "/x", "Content-Encoding: compress\r\n", b"zzz", None);
+    let r = c
+        .get(s.url(&format!("/flows/{weird}/response/body?decoded=1")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn flow_bodies_need_a_session() {
+    let s = stack(true).await;
+    let (_c, _csrf) = s.admin().await;
+    let id = recorded(&s, "/p", "", b"secret", None);
+    let anon = client();
+    for p in [format!("/flows/{id}"), format!("/flows/{id}/response/body")] {
+        let r = anon.get(s.url(&p)).send().await.unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "{p}");
+    }
+}
+
+// ---- Event stream resume ----------------------------------------------------------------------------------
+
+type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn events_socket(s: &Stack, cookie: &str, query: &str) -> Ws {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut req = format!("ws://127.0.0.1:{}/api/v1/events{query}", s.api.port())
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert("cookie", cookie.parse().unwrap());
+    req.headers_mut().insert(
+        "origin",
+        format!("http://127.0.0.1:{}", s.api.port()).parse().unwrap(),
+    );
+    tokio_tungstenite::connect_async(req).await.unwrap().0
+}
+
+/// The next text message as JSON.
+async fn next_json(ws: &mut Ws) -> Value {
+    use futures_util::StreamExt;
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("an event within 5 s")
+            .unwrap()
+            .unwrap();
+        if let tokio_tungstenite::tungstenite::Message::Text(t) = m {
+            return serde_json::from_str(t.as_str()).unwrap();
+        }
+    }
+}
+
+async fn session_cookie(s: &Stack) -> String {
+    s.admin().await;
+    let r = client()
+        .post(s.url("/auth/login"))
+        .json(&json!({ "username": "admin", "password": "a long enough password" }))
+        .send()
+        .await
+        .unwrap();
+    r.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn a_client_that_reconnects_gets_the_events_it_missed_and_none_twice() {
+    use bosun_proxy::ProxyEvent;
+    let s = stack(true).await;
+    let cookie = session_cookie(&s).await;
+    let ev = |id| ProxyEvent::InterceptResolved { id };
+
+    // A fresh connection says where the stream stands.
+    let mut ws = events_socket(&s, &cookie, "").await;
+    let hello = next_json(&mut ws).await;
+    assert_eq!(hello["type"], "hello");
+    assert_eq!(hello["seq"], 0);
+    let epoch = hello["epoch"].as_str().unwrap().to_string();
+    s.events.send(ev(1));
+    let first = next_json(&mut ws).await;
+    assert_eq!(
+        (first["seq"].as_u64(), first["type"].as_str()),
+        (Some(1), Some("intercept_resolved"))
+    );
+    drop(ws);
+
+    // Events while nobody is connected.
+    for id in 2..=4 {
+        s.events.send(ev(id));
+    }
+    let mut ws = events_socket(&s, &cookie, &format!("?since=1&epoch={epoch}")).await;
+    assert_eq!(next_json(&mut ws).await["type"], "hello");
+    for want in 2..=4u64 {
+        let e = next_json(&mut ws).await;
+        assert_eq!((e["seq"].as_u64(), e["id"].as_u64()), (Some(want), Some(want)));
+    }
+    // And then live ones carry on from there.
+    s.events.send(ev(5));
+    assert_eq!(next_json(&mut ws).await["seq"], 5);
+    drop(ws);
+
+    // Another engine run's position means nothing: reload.
+    let mut ws = events_socket(&s, &cookie, "?since=3&epoch=0000000000000000").await;
+    assert_eq!(next_json(&mut ws).await["type"], "hello");
+    assert_eq!(next_json(&mut ws).await["type"], "reload");
+    drop(ws);
+
+    // A position from the future (the engine restarted) is the same.
+    let mut ws = events_socket(&s, &cookie, &format!("?since=999&epoch={epoch}")).await;
+    assert_eq!(next_json(&mut ws).await["type"], "hello");
+    assert_eq!(next_json(&mut ws).await["type"], "reload");
+    drop(ws);
+
+    // Too much has happened to replay: the bus keeps the last 64.
+    for id in 6..=200 {
+        s.events.send(ev(id));
+    }
+    let mut ws = events_socket(&s, &cookie, &format!("?since=5&epoch={epoch}")).await;
+    assert_eq!(next_json(&mut ws).await["type"], "hello");
+    assert_eq!(next_json(&mut ws).await["type"], "reload");
+    // Live events still arrive after a reload.
+    s.events.send(ev(201));
+    assert_eq!(next_json(&mut ws).await["seq"], 201);
+}
+
+// ---- OpenAPI description ----------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_committed_openapi_description_is_current() {
+    let now = bosun_api::openapi::json();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/openapi.json");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::write(&path, &now).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        committed == now,
+        "docs/openapi.json is out of date: run `BLESS=1 cargo test -p bosun-api --test api openapi` and commit it"
+    );
+}
+
+#[tokio::test]
+async fn every_documented_operation_is_served_and_needs_a_session_unless_public() {
+    let s = stack(true).await;
+    let public = ["/status", "/setup", "/auth/login", "/auth/ticket", "/auth/sso"];
+    for (method, path) in bosun_api::openapi::OPERATIONS {
+        if *path == "/events" {
+            continue; // needs an upgrade request; covered by its own tests
+        }
+        let url = s.url(
+            &path
+                .replace("{id}", "1")
+                .replace("{sid}", "x")
+                .replace("{tid}", "1")
+                .replace("{part}", "request"),
+        );
+        let m = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).unwrap();
+        let r = client().request(m, &url).json(&json!({})).send().await.unwrap();
+        let st = r.status().as_u16();
+        assert!(
+            st != 404 && st != 405,
+            "{method} {path} is documented but not served ({st})"
+        );
+        if !public.contains(path) {
+            assert_eq!(st, 401, "{method} {path} should need a session");
+        }
+    }
+}
+
+/// The other direction of the check above: every route the router serves is documented. The router cannot be
+/// listed at run time, so this reads the `.route(...)` calls out of the source of `router()`.
+#[test]
+fn every_served_route_is_documented() {
+    let src = include_str!("../src/lib.rs");
+    let body = &src[src.find("pub fn router(").expect("router fn")..];
+    let body = &body[..body
+        .find("Router::new()\n        .nest")
+        .expect("end of the api routes")];
+    let mut served = std::collections::BTreeSet::new();
+    for chunk in body.split(".route(").skip(1) {
+        let path = chunk.split('"').nth(1).expect("route path");
+        // The handler part runs to the end of this call: methods are `get(`, `post(`, ... `delete(`.
+        let handlers = &chunk[chunk.find(',').unwrap()..];
+        for m in ["get", "post", "put", "patch", "delete"] {
+            let mut rest = handlers;
+            while let Some(i) = rest.find(&format!("{m}(")) {
+                let before = rest[..i].chars().last();
+                if !before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                    served.insert((m.to_string(), path.to_string()));
+                }
+                rest = &rest[i + m.len()..];
+            }
+        }
+    }
+    let documented: std::collections::BTreeSet<_> = bosun_api::openapi::OPERATIONS
+        .iter()
+        .map(|(m, p)| (m.to_string(), p.to_string()))
+        .collect();
+    assert_eq!(
+        served, documented,
+        "the router and docs/openapi.json disagree (left: served, right: documented)"
+    );
 }

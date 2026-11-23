@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { login, setup } from '../lib/api';
+  import { api, login, setup } from '../lib/api';
   import { session } from '../lib/session.svelte';
 
   // The setup code may arrive in the URL fragment (never sent to the server); take it and clear it.
@@ -12,6 +12,15 @@
   let confirm = $state('');
   let error = $state('');
   let busy = $state(false);
+  // Single sign-on: offered when the server has it configured. With Edge SSO the first click goes through the
+  // sign-in proxy; if that was refused (sso_error), the button falls back to the provider's own sign-in.
+  let sso = $state<{ name: string; login: string; edge: string | null } | null>(null);
+  const ssoError = new URLSearchParams(location.search).get('sso_error') ?? '';
+  if (ssoError) {
+    error = ssoError;
+    history.replaceState(null, '', location.pathname);
+  }
+  api.get<{ sso: { name: string; login: string; edge: string | null } | null }>('/auth/sso').then((r) => (sso = r.sso)).catch(() => {});
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -51,6 +60,11 @@
     {/if}
     {#if error}<p class="error">{error}</p>{/if}
     <button class="primary" disabled={busy}>{session.setupRequired ? 'Create admin' : 'Sign in'}</button>
+    {#if sso && !session.setupRequired}
+      <a class="sso" href={sso.edge && !ssoError ? sso.edge : sso.login}>
+        {sso.edge && !ssoError ? 'Continue with Edge SSO' : `Sign in with ${sso.name}`}
+      </a>
+    {/if}
   </form>
 </div>
 
@@ -58,5 +72,6 @@
   .auth { display: grid; place-items: center; height: 100vh; }
   form { display: flex; flex-direction: column; gap: .7rem; width: 22rem; padding: 2rem; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; }
   h1 { margin: 0 0 .5rem; color: var(--accent); }
+  .sso { text-align: center; padding: .5rem; border: 1px solid var(--line); border-radius: 6px; }
   label { display: flex; flex-direction: column; gap: .25rem; }
 </style>

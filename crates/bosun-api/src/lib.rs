@@ -11,6 +11,7 @@ pub mod browser;
 pub mod events;
 pub mod handlers;
 pub mod security;
+pub mod sso;
 pub mod web;
 
 use std::convert::Infallible;
@@ -52,6 +53,8 @@ pub struct ApiConfig {
     /// reverse proxy in front.
     pub secure_cookies: Option<bool>,
     pub session_hours: u64,
+    /// Sign-in with an OpenID Connect provider and Edge SSO; off unless this table is present.
+    pub sso: Option<sso::SsoConfig>,
 }
 
 impl Default for ApiConfig {
@@ -63,6 +66,7 @@ impl Default for ApiConfig {
             tls: false,
             secure_cookies: None,
             session_hours: 12,
+            sso: None,
         }
     }
 }
@@ -101,6 +105,7 @@ pub struct Inner {
     /// Present only when launching a browser is allowed (the API listens on loopback).
     pub browser: Option<BrowserLauncher>,
     pub loop_guard: LoopGuard,
+    pub sso: Option<sso::Sso>,
 }
 
 pub struct Deps {
@@ -147,6 +152,10 @@ impl AppState {
             None
         };
         let loop_guard = d.proxy.loop_guard();
+        let sso = match &cfg.sso {
+            Some(c) => Some(sso::Sso::new(c).map_err(bosun_store::StoreError::Conflict)?),
+            None => None,
+        };
         let inner = Inner {
             app: d.app,
             project: d.project,
@@ -168,6 +177,7 @@ impl AppState {
             session_ttl_ms: (cfg.session_hours.clamp(1, 24 * 30) * 3600 * 1000) as i64,
             browser,
             loop_guard,
+            sso,
         };
         Ok((
             Self {
@@ -186,6 +196,7 @@ pub fn router(st: AppState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
+        .route("/auth/sso", get(sso::config))
         .route("/auth/password", post(auth::change_password))
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
         .route("/flows/{id}", get(h::get_flow).patch(h::annotate_flow))
@@ -213,6 +224,10 @@ pub fn router(st: AppState) -> Router {
         .route("/events", get(events::events));
     Router::new()
         .nest("/api/v1", api)
+        // Outside /api/: the browser arrives by cross-site redirect (see sso.rs).
+        .route("/auth/oidc/login", get(sso::login))
+        .route("/auth/oidc/callback", get(sso::callback))
+        .route("/auth/oidc/edge", get(sso::edge))
         .fallback(web::static_handler)
         .layer(axum::extract::DefaultBodyLimit::max(70 * 1024 * 1024))
         .layer(axum::middleware::from_fn_with_state(st.clone(), security::guard))

@@ -82,7 +82,7 @@ pub struct Limiter {
 }
 
 impl Limiter {
-    fn blocked(&self, key: &str) -> bool {
+    pub(crate) fn blocked(&self, key: &str) -> bool {
         let mut m = self.failures.lock().unwrap_or_else(|e| e.into_inner());
         match m.get(key) {
             Some((_, t)) if t.elapsed() > FAILURE_WINDOW => {
@@ -94,7 +94,7 @@ impl Limiter {
         }
     }
 
-    fn fail(&self, key: &str) {
+    pub(crate) fn fail(&self, key: &str) {
         let mut m = self.failures.lock().unwrap_or_else(|e| e.into_inner());
         if m.len() > 100_000 {
             m.retain(|_, (_, t)| t.elapsed() <= FAILURE_WINDOW);
@@ -314,6 +314,17 @@ async fn start_session(st: &AppState, user: User) -> Response {
         set_cookie(st, &token, st.inner.session_ttl_ms / 1000),
     );
     r
+}
+
+/// A session for `user` and the `Set-Cookie` that carries it (single sign-on redirects instead of returning JSON).
+pub(crate) fn new_session_cookie(st: &AppState, user: &User) -> Result<HeaderValue, ()> {
+    let token = random_token();
+    let csrf = random_token();
+    st.inner
+        .app
+        .create_session(&token, user.id, &csrf, st.inner.session_ttl_ms)
+        .map_err(|_| ())?;
+    Ok(set_cookie(st, &token, st.inner.session_ttl_ms / 1000))
 }
 
 pub async fn login(

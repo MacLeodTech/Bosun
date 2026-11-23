@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::StoreError;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -153,6 +153,16 @@ impl AppDb {
                 "#,
             )?;
         }
+        if version < 2 {
+            // Single sign-on: the provider identity (issuer|subject) an account is linked to.
+            conn.execute_batch(
+                r#"
+                ALTER TABLE users ADD COLUMN sso TEXT;
+                CREATE UNIQUE INDEX users_sso ON users(sso) WHERE sso IS NOT NULL;
+                PRAGMA user_version = 2;
+                "#,
+            )?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -208,6 +218,47 @@ impl AppDb {
             role: Role::Admin,
             created_ms: now,
         })
+    }
+
+    /// The account linked to a single sign-on identity (`issuer|subject`), created the first time with a name derived
+    /// from `email` and no usable password (the stored hash is not a valid hash, so no password ever verifies). The
+    /// role follows `role` at every sign-in, except that the last admin is never demoted.
+    pub fn ensure_sso_user(&self, key: &str, email: &str, role: Role) -> Result<User, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let found = tx
+            .query_row(
+                "SELECT id, username, role, created_ms FROM users WHERE sso = ?1",
+                [key],
+                user_from_row,
+            )
+            .optional()?;
+        if let Some(mut u) = found {
+            if u.role != role {
+                let admins: i64 = tx.query_row("SELECT count(*) FROM users WHERE role = 'admin'", [], |r| r.get(0))?;
+                if !(u.role == Role::Admin && admins <= 1) {
+                    tx.execute("UPDATE users SET role = ?1 WHERE id = ?2", params![role.as_str(), u.id])?;
+                    u.role = role;
+                }
+            }
+            tx.commit()?;
+            return Ok(u);
+        }
+        let base: String = email.chars().take(60).collect();
+        let mut name = base.clone();
+        let mut n = 2;
+        while tx.query_row("SELECT count(*) FROM users WHERE username = ?1", [&name], |r| r.get::<_, i64>(0))? > 0 {
+            name = format!("{base}-{n}");
+            n += 1;
+        }
+        let now = bosun_model::now_ms();
+        tx.execute(
+            "INSERT INTO users (username, password_hash, role, created_ms, sso) VALUES (?1, '!sso', ?2, ?3, ?4)",
+            params![name, role.as_str(), now, key],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(User { id, username: name, role, created_ms: now })
     }
 
     /// The user and their password hash, for login.

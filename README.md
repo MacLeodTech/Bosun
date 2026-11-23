@@ -16,7 +16,8 @@ web UI work. Repeater, Intruder, Sequencer, the scanner and the OAST server are 
 
 - **Intercepting proxy**: HTTP/1.1 and HTTP/2, HTTPS interception with a per-install CA, WebSockets (recorded
   message by message), streaming responses (SSE, large downloads), upstream HTTP and SOCKS5 proxies, TLS
-  pass-through for pinned hosts, invisible (transparent) proxying.
+  pass-through for pinned hosts, invisible (transparent) proxying for plain HTTP only (transparent HTTPS is
+  planned).
 - **Intercept**: hold requests and/or responses, edit them as raw text, forward or drop; in-scope only by default.
 - **Match and replace** on request/response first lines, headers and bodies (literal or regex).
 - **HTTP history** with full-text search (FTS5 trigram), filters, a virtualised list that stays fast at millions of

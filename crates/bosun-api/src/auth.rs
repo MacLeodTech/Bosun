@@ -15,8 +15,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use argon2::Argon2;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use axum::Json;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
@@ -24,7 +24,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use bosun_store::{Role, TokenScope, User};
-use rand::RngCore;
+use rand::Rng;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
@@ -44,9 +44,8 @@ pub fn random_token() -> String {
 }
 
 pub fn hash_password(pw: &str) -> Result<String, String> {
-    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(pw.as_bytes(), &salt)
+        .hash_password(pw.as_bytes())
         .map(|h| h.to_string())
         .map_err(|e| e.to_string())
 }
@@ -562,5 +561,32 @@ pub async fn change_password(
         }
         Some(Err(e)) => reject(StatusCode::FORBIDDEN, e),
         None => reject(StatusCode::INTERNAL_SERVER_ERROR, "could not change the password"),
+    }
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::*;
+
+    /// A hash made by an earlier build (and independently with Python's `cryptography`) must still verify after a
+    /// dependency upgrade, or every existing account would be locked out.
+    #[test]
+    fn password_hashes_made_earlier_still_verify() {
+        let phc = "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0";
+        assert!(verify_password("correct horse battery staple", phc));
+        assert!(!verify_password("correct horse battery stapl", phc));
+    }
+
+    #[test]
+    fn new_hashes_are_argon2id_with_the_same_cost_and_verify() {
+        let h = hash_password("another long password").unwrap();
+        assert!(h.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"), "{h}");
+        assert!(verify_password("another long password", &h));
+        assert!(!verify_password("something else entirely", &h));
+        assert_ne!(
+            h,
+            hash_password("another long password").unwrap(),
+            "each hash has its own salt"
+        );
     }
 }

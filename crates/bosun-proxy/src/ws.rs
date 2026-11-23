@@ -262,4 +262,70 @@ mod tests {
         assert_eq!(frames[0].payload, vec![1u8; 10]);
         assert!(frames[0].truncated);
     }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn frames() -> impl Strategy<Value = Vec<(u8, Vec<u8>, Option<[u8; 4]>)>> {
+            proptest::collection::vec(
+                (
+                    prop_oneof![Just(1u8), Just(2), Just(8), Just(9), Just(10)],
+                    proptest::collection::vec(any::<u8>(), 0..300),
+                    proptest::option::of(any::<[u8; 4]>()),
+                ),
+                0..6,
+            )
+        }
+
+        proptest! {
+            /// However the byte stream is cut into reads, the parser yields the same frames with the same
+            /// (unmasked) payloads.
+            #[test]
+            fn frames_survive_any_chunking(input in frames(), cuts in proptest::collection::vec(1usize..64, 1..20)) {
+                let mut wire = Vec::new();
+                for (op, payload, mask) in &input {
+                    wire.extend(frame(*op, payload, *mask));
+                }
+                let mut p = FrameParser::new(RECORD_LIMIT);
+                let mut got = Vec::new();
+                let mut rest = &wire[..];
+                let mut i = 0;
+                while !rest.is_empty() {
+                    let n = cuts[i % cuts.len()].min(rest.len());
+                    got.extend(p.feed(&rest[..n]));
+                    rest = &rest[n..];
+                    i += 1;
+                }
+                prop_assert_eq!(got.len(), input.len());
+                for (f, (op, payload, _)) in got.iter().zip(&input) {
+                    prop_assert_eq!(f.opcode, *op);
+                    prop_assert_eq!(&f.payload, payload);
+                    prop_assert!(!f.truncated);
+                }
+            }
+
+            /// A payload past the record limit is cut and flagged, and the next frame still parses.
+            #[test]
+            fn oversize_payloads_are_truncated_but_framing_holds(len in 20usize..400, limit in 1usize..20) {
+                let mut wire = frame(2, &vec![7u8; len], Some([1, 2, 3, 4]));
+                wire.extend(frame(1, b"n", None));
+                let got = FrameParser::new(limit).feed(&wire);
+                prop_assert_eq!(got.len(), 2);
+                prop_assert!(got[0].truncated);
+                prop_assert_eq!(got[0].payload.len(), limit);
+                prop_assert_eq!(&got[1].payload[..], b"n");
+                prop_assert!(!got[1].truncated);
+            }
+
+            /// Random bytes (a hostile peer) never panic the parser and never make it keep more than the limit.
+            #[test]
+            fn arbitrary_bytes_never_panic(data in proptest::collection::vec(any::<u8>(), 0..2000)) {
+                let mut p = FrameParser::new(64);
+                for f in p.feed(&data) {
+                    prop_assert!(f.payload.len() <= 64);
+                }
+            }
+        }
+    }
 }

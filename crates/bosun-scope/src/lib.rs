@@ -346,4 +346,105 @@ mod tests {
             .is_err()
         );
     }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn label() -> impl Strategy<Value = String> {
+            "[a-z0-9]{1,8}"
+        }
+
+        fn host() -> impl Strategy<Value = String> {
+            proptest::collection::vec(label(), 1..4).prop_map(|l| l.join("."))
+        }
+
+        fn scheme() -> impl Strategy<Value = Scheme> {
+            prop_oneof![Just(Scheme::Http), Just(Scheme::Https)]
+        }
+
+        fn scope_with(include: &[&str], exclude: &[&str]) -> Scope {
+            Scope::compile(ScopeSpec {
+                include: include.iter().map(|h| rule(h)).collect(),
+                exclude: exclude.iter().map(|h| rule(h)).collect(),
+            })
+            .unwrap()
+        }
+
+        proptest! {
+            /// Whatever a hostile page puts in a URL, matching never panics.
+            #[test]
+            fn contains_never_panics(h in ".{0,60}", path in ".{0,80}", port in any::<u16>(), s in scheme()) {
+                let scope = scope_with(&["example.com", "*.example.com"], &["admin.example.com"]);
+                let _ = scope.contains(s, &h, port, &path);
+            }
+
+            /// Compiling arbitrary user patterns returns an error or a working scope, never a panic.
+            #[test]
+            fn compile_never_panics(h in ".{0,40}", p in ".{0,40}") {
+                let spec = RuleSpec { host: h, path: Some(p), ..Default::default() };
+                let _ = Scope::compile(ScopeSpec { include: vec![spec], exclude: vec![] });
+            }
+
+            /// An empty include list means nothing is in scope, whatever the target.
+            #[test]
+            fn empty_scope_contains_nothing(h in host(), port in any::<u16>(), s in scheme(), path in "/[a-z/]{0,20}") {
+                let scope = Scope::compile(ScopeSpec::default()).unwrap();
+                prop_assert!(!scope.contains(s, &h, port, &path));
+            }
+
+            /// A literal host rule matches that host in any letter case, with or without a trailing dot.
+            #[test]
+            fn literal_hosts_match_in_any_case(h in host(), port in any::<u16>(), s in scheme()) {
+                let scope = scope_with(&[&h], &[]);
+                let upper = h.to_ascii_uppercase();
+                let dotted = format!("{h}.");
+                prop_assert!(scope.contains(s, &upper, port, "/"));
+                prop_assert!(scope.contains(s, &dotted, port, "/"));
+            }
+
+            /// Exclusion always wins: a target that matches an exclude rule is never in scope.
+            #[test]
+            fn excludes_beat_includes(h in host(), port in any::<u16>(), s in scheme(), path in "/[a-z/]{0,20}") {
+                let scope = scope_with(&[&h], &[&h]);
+                prop_assert!(!scope.contains(s, &h, port, &path));
+            }
+
+            /// `*.example.com` covers exactly one extra label, never the apex and never two levels.
+            #[test]
+            fn wildcard_covers_one_label(a in label(), b in label()) {
+                let scope = scope_with(&["*.example.com"], &[]);
+                let one = format!("{a}.example.com");
+                let two = format!("{a}.{b}.example.com");
+                let lookalike = format!("{a}example.com.evil.test");
+                prop_assert!(scope.contains(Scheme::Https, &one, 443, "/"));
+                prop_assert!(!scope.contains(Scheme::Https, "example.com", 443, "/"));
+                prop_assert!(!scope.contains(Scheme::Https, &two, 443, "/"));
+                // A look-alike suffix is not a sub-domain.
+                prop_assert!(!scope.contains(Scheme::Https, &lookalike, 443, "/"));
+            }
+
+            /// The query string and fragment never change the answer.
+            #[test]
+            fn query_and_fragment_are_ignored(path in "/[a-z/]{0,20}", q in "[ -~]{0,30}") {
+                let spec = RuleSpec { host: "example.com".into(), path: Some("^/api/".into()), ..Default::default() };
+                let scope = Scope::compile(ScopeSpec { include: vec![spec], exclude: vec![] }).unwrap();
+                let base = scope.contains(Scheme::Https, "example.com", 443, &path);
+                let with_query = format!("{path}?{q}");
+                let with_fragment = format!("{path}#{q}");
+                prop_assert_eq!(base, scope.contains(Scheme::Https, "example.com", 443, &with_query));
+                prop_assert_eq!(base, scope.contains(Scheme::Https, "example.com", 443, &with_fragment));
+            }
+
+            /// A port or scheme restriction is honoured exactly.
+            #[test]
+            fn port_and_scheme_restrictions_hold(port in any::<u16>(), other in any::<u16>()) {
+                let spec = RuleSpec { host: "example.com".into(), scheme: Some(Scheme::Https), port: Some(port), path: None };
+                let scope = Scope::compile(ScopeSpec { include: vec![spec], exclude: vec![] }).unwrap();
+                prop_assert!(scope.contains(Scheme::Https, "example.com", port, "/"));
+                prop_assert!(!scope.contains(Scheme::Http, "example.com", port, "/"));
+                prop_assert_eq!(other == port, scope.contains(Scheme::Https, "example.com", other, "/"));
+            }
+        }
+    }
 }

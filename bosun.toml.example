@@ -21,7 +21,8 @@ http2 = true
 verify_upstream_tls = false
 # Hosts to tunnel without interception (certificate-pinned apps), e.g. ["*.apple.com"].
 tls_passthrough = []
-# Accept requests from clients that don't know they are proxied (DNS/iptables redirection).
+# Accept requests from clients that don't know they are proxied (DNS/iptables redirection). Plain HTTP only:
+# transparent HTTPS is not supported yet.
 invisible = false
 record_out_of_scope = true
 upstream_timeout_secs = 120

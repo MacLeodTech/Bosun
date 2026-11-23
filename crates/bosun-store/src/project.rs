@@ -185,7 +185,8 @@ fn verify_schema(conn: &Connection) -> Result<(), StoreError> {
 }
 
 /// Decompress a stored body, refusing to produce more than `limit` bytes. `expect` is the size the file claims.
-fn bounded_decode(data: &[u8], limit: u64, expect: Option<u64>) -> Result<Vec<u8>, StoreError> {
+/// Public so the fuzz targets can reach it.
+pub fn bounded_decode(data: &[u8], limit: u64, expect: Option<u64>) -> Result<Vec<u8>, StoreError> {
     let corrupt = |why: &str| {
         StoreError::Compress(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

@@ -1,0 +1,53 @@
+[package]
+name = "bosun-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bosun-model = { path = "../crates/bosun-model" }
+bosun-scope = { path = "../crates/bosun-scope" }
+bosun-store = { path = "../crates/bosun-store" }
+bosun-proxy = { path = "../crates/bosun-proxy" }
+
+# Not part of the main workspace: it needs nightly and is built only by `cargo fuzz`.
+[workspace]
+
+[[bin]]
+name = "http_messages"
+path = "fuzz_targets/http_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ws_frames"
+path = "fuzz_targets/ws_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_body"
+path = "fuzz_targets/decode_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scope_rules"
+path = "fuzz_targets/scope_rules.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rewrite_rules"
+path = "fuzz_targets/rewrite_rules.rs"
+test = false
+doc = false
+bench = false

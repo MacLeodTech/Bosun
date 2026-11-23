@@ -207,7 +207,7 @@ impl RawResponse {
         } else {
             format!(" {}", self.reason)
         };
-        out.extend_from_slice(format!("{} {}{}\r\n", self.version, self.status, reason).as_bytes());
+        out.extend_from_slice(format!("{} {:03}{}\r\n", self.version, self.status, reason).as_bytes());
         write_headers(&mut out, &self.headers);
         out.extend_from_slice(&self.body);
         out
@@ -269,10 +269,103 @@ mod tests {
     }
 
     #[test]
+    fn a_status_below_100_is_written_with_three_digits() {
+        // Found by the http_messages fuzz target: "024" parsed as 24 and was written back as "24", which no
+        // longer parsed.
+        let resp = RawResponse::parse(b"HTTP/2 024").unwrap();
+        assert_eq!(resp.status, 24);
+        assert_eq!(RawResponse::parse(&resp.to_bytes()).unwrap(), resp);
+    }
+
+    #[test]
     fn response_round_trip() {
         let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
         let resp = RawResponse::parse(raw).unwrap();
         assert_eq!(resp.status, 200);
         assert_eq!(resp.to_bytes(), raw);
+    }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn token() -> impl Strategy<Value = String> {
+            "[A-Za-z][A-Za-z0-9-]{0,11}"
+        }
+
+        fn header() -> impl Strategy<Value = (String, Vec<u8>)> {
+            // Values may hold any visible byte; leading and trailing spaces are trimmed by parsers, so avoid them.
+            (token(), "[!-~]([ -~]{0,30}[!-~])?").prop_map(|(n, v)| (n, v.into_bytes()))
+        }
+
+        fn request() -> impl Strategy<Value = RawRequest> {
+            (
+                "[A-Z]{3,7}",
+                "/[a-zA-Z0-9/_.?=&%-]{0,40}",
+                prop_oneof![Just("HTTP/1.0"), Just("HTTP/1.1")],
+                proptest::collection::vec(header(), 0..8),
+                proptest::collection::vec(any::<u8>(), 0..200),
+            )
+                .prop_map(|(method, target, version, headers, body)| RawRequest {
+                    method,
+                    target,
+                    version: version.into(),
+                    headers,
+                    body,
+                })
+        }
+
+        fn response() -> impl Strategy<Value = RawResponse> {
+            (
+                prop_oneof![Just("HTTP/1.0"), Just("HTTP/1.1")],
+                100u16..600,
+                "[A-Za-z]{0,12}",
+                proptest::collection::vec(header(), 0..8),
+                proptest::collection::vec(any::<u8>(), 0..200),
+            )
+                .prop_map(|(version, status, reason, headers, body)| RawResponse {
+                    version: version.into(),
+                    status,
+                    reason,
+                    headers,
+                    body,
+                })
+        }
+
+        proptest! {
+            /// Serialising a message and parsing it back gives the same message, body bytes included.
+            #[test]
+            fn requests_round_trip(req in request()) {
+                prop_assert_eq!(RawRequest::parse(&req.to_bytes()).unwrap(), req);
+            }
+
+            #[test]
+            fn responses_round_trip(resp in response()) {
+                prop_assert_eq!(RawResponse::parse(&resp.to_bytes()).unwrap(), resp);
+            }
+
+            /// Editors write bare LF; the parsed message is the same as with CRLF.
+            #[test]
+            fn bare_newlines_in_the_head_are_equivalent(req in request()) {
+                let crlf = req.to_bytes();
+                let head_end = crlf.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+                let mut lf = crlf[..head_end].to_vec();
+                lf = String::from_utf8(lf).unwrap().replace("\r\n", "\n").into_bytes();
+                lf.extend_from_slice(&crlf[head_end..]);
+                prop_assert_eq!(RawRequest::parse(&lf).unwrap(), req);
+            }
+
+            /// Hostile or garbled bytes give an error or a message, never a panic, and a parsed message is stable:
+            /// writing it out and parsing again changes nothing.
+            #[test]
+            fn arbitrary_bytes_never_panic_and_reparse_stably(data in proptest::collection::vec(any::<u8>(), 0..400)) {
+                if let Ok(req) = RawRequest::parse(&data) {
+                    prop_assert_eq!(RawRequest::parse(&req.to_bytes()).unwrap(), req);
+                }
+                if let Ok(resp) = RawResponse::parse(&data) {
+                    prop_assert_eq!(RawResponse::parse(&resp.to_bytes()).unwrap(), resp);
+                }
+            }
+        }
     }
 }

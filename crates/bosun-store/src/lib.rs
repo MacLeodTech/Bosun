@@ -7,7 +7,7 @@ pub mod app;
 pub mod codec;
 pub mod project;
 
-pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, User};
+pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, SessionInfo, TokenScope, User};
 pub use project::{FlowFilter, NewFlow, NewWsMessage, Project, SiteMapEntry};
 
 #[derive(Debug, thiserror::Error)]
@@ -22,6 +22,10 @@ pub enum StoreError {
     Io(String, std::io::Error),
     #[error("this file was written by a newer version of Bosun (schema {0})")]
     NewerSchema(i64),
+    #[error("refusing to open this file: {0}")]
+    Untrusted(String),
+    #[error("{0}")]
+    Locked(String),
     #[error("{0}")]
     Conflict(String),
 }

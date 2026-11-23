@@ -9,6 +9,13 @@
   overrides the path.
 - The UI runs under a strict CSP: no inline `<script>`, no `style=` attributes or `style:` directives (use the
   `css` action in `web/src/lib/style.ts`), no `{@html}` with target content.
+- More tests (all run in CI, see `docs/testing.md`):
+  - `proptest` property tests sit in the unit-test modules, so plain `cargo test` runs them.
+  - `cd e2e && npm ci && npx playwright install chromium && npm test` drives the real UI against `target/debug/bosun`
+    (build it first with `cargo build -p bosun`, and rebuild the web UI before that if it changed).
+  - `cd fuzz && cargo +nightly fuzz run <target> -- -max_total_time=30` (needs nightly and `cargo install cargo-fuzz`).
+    A new parser of untrusted input gets a fuzz target in `fuzz/fuzz_targets/` and an entry in `fuzz/Cargo.toml`
+    and in the CI matrix.
 - Security rules (see `docs/threat-model.md`):
   - every API handler takes a `Caller` and calls `caller.require(role)` first;
   - every outbound request from a tool goes through `bosun_scope::Gate::check`;

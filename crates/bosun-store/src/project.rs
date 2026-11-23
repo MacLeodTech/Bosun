@@ -1,6 +1,8 @@
 //! A project file: recorded flows, bodies, WebSocket messages and project settings in one SQLite database.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -14,6 +16,11 @@ use sha2::{Digest, Sha256};
 use crate::{StoreError, codec};
 
 const SCHEMA_VERSION: i64 = 1;
+/// The most a stored body may claim to be once decompressed. The proxy never records more than its buffer caps
+/// (64 MiB), so a larger claim means a corrupt or hostile file.
+const MAX_BLOB: u64 = 128 * 1024 * 1024;
+/// The most a stored WebSocket payload may decompress to (the proxy records up to 1 MiB per message).
+const MAX_WS_PAYLOAD: u64 = 4 * 1024 * 1024;
 /// How much decoded text per flow goes into the search index.
 const INDEX_TEXT_LIMIT: usize = 64 * 1024;
 
@@ -89,10 +96,166 @@ pub struct SiteMapEntry {
 pub struct Project {
     conn: Mutex<Connection>,
     next_id: AtomicI64,
+    /// Held for as long as the project is open; the OS releases it if we die.
+    _lock: Option<std::fs::File>,
+}
+
+/// Every statement that creates this version's schema.
+const SCHEMA_V1: &str = r#"
+    CREATE TABLE blobs (
+        hash BLOB PRIMARY KEY,
+        size INTEGER NOT NULL,
+        data BLOB NOT NULL
+    ) WITHOUT ROWID;
+    CREATE TABLE flows (
+        id INTEGER PRIMARY KEY,
+        source TEXT NOT NULL,
+        started_ms INTEGER NOT NULL,
+        duration_ms INTEGER,
+        scheme TEXT NOT NULL,
+        host TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        base_path TEXT NOT NULL,
+        http_version TEXT NOT NULL,
+        status INTEGER,
+        request_len INTEGER NOT NULL,
+        response_len INTEGER,
+        mime TEXT,
+        in_scope INTEGER NOT NULL,
+        edited INTEGER NOT NULL,
+        error TEXT,
+        tags TEXT NOT NULL DEFAULT '[]',
+        note TEXT,
+        req_blob BLOB NOT NULL REFERENCES blobs(hash),
+        orig_req_blob BLOB REFERENCES blobs(hash),
+        resp_blob BLOB REFERENCES blobs(hash),
+        orig_resp_blob BLOB REFERENCES blobs(hash),
+        resp_truncated INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX flows_host ON flows(host);
+    CREATE INDEX flows_site ON flows(scheme, host, port, base_path);
+    CREATE VIRTUAL TABLE flow_text USING fts5(body, content='', contentless_delete=1, tokenize='trigram');
+    CREATE TABLE ws_messages (
+        id INTEGER PRIMARY KEY,
+        flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+        time_ms INTEGER NOT NULL,
+        direction INTEGER NOT NULL,
+        opcode INTEGER NOT NULL,
+        payload BLOB NOT NULL,
+        truncated INTEGER NOT NULL
+    );
+    CREATE INDEX ws_by_flow ON ws_messages(flow_id);
+    CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+"#;
+
+/// The schema objects in a database as (type, name, sql), ignoring SQLite's own bookkeeping tables.
+fn schema_objects(conn: &Connection) -> Result<BTreeSet<(String, String, String)>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT type, name, coalesce(sql, '') FROM sqlite_master WHERE substr(name, 1, 7) <> 'sqlite_'",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// A project file may come from someone else: refuse anything that is not exactly the schema this version
+/// creates. Triggers and views in particular run SQL of the file author's choosing on our connection.
+fn verify_schema(conn: &Connection) -> Result<(), StoreError> {
+    let expected = Connection::open_in_memory()?;
+    expected.execute_batch(SCHEMA_V1)?;
+    let want = schema_objects(&expected)?;
+    let have = schema_objects(conn)?;
+    if let Some(extra) = have.difference(&want).next() {
+        return Err(StoreError::Untrusted(format!(
+            "unexpected {} `{}`",
+            extra.0, extra.1
+        )));
+    }
+    if let Some(missing) = want.difference(&have).next() {
+        return Err(StoreError::Untrusted(format!(
+            "missing or altered {} `{}`",
+            missing.0, missing.1
+        )));
+    }
+    Ok(())
+}
+
+/// Decompress a stored body, refusing to produce more than `limit` bytes. `expect` is the size the file claims.
+/// Public so the fuzz targets can reach it.
+pub fn bounded_decode(data: &[u8], limit: u64, expect: Option<u64>) -> Result<Vec<u8>, StoreError> {
+    let corrupt = |why: &str| {
+        StoreError::Compress(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            why.to_string(),
+        ))
+    };
+    if let Some(n) = expect
+        && n > limit
+    {
+        return Err(corrupt("stored size exceeds the limit"));
+    }
+    let cap = expect.unwrap_or(limit);
+    let mut out = Vec::new();
+    let dec = zstd::stream::read::Decoder::new(data).map_err(StoreError::Compress)?;
+    dec.take(cap + 1)
+        .read_to_end(&mut out)
+        .map_err(StoreError::Compress)?;
+    if out.len() as u64 > cap {
+        return Err(corrupt("decompressed data is larger than recorded"));
+    }
+    if let Some(n) = expect
+        && out.len() as u64 != n
+    {
+        return Err(corrupt("decompressed size does not match the recorded size"));
+    }
+    Ok(out)
+}
+
+/// The lock file beside a project: `<project>.lock`.
+fn lock_path(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(".lock");
+    PathBuf::from(s)
+}
+
+fn take_lock(path: &Path) -> Result<std::fs::File, StoreError> {
+    use std::io::Write;
+    let lp = lock_path(path);
+    let io = |e| StoreError::Io(lp.display().to_string(), e);
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lp)
+        .map_err(io)?;
+    match f.try_lock() {
+        Ok(()) => {
+            let _ = f.set_len(0);
+            let _ = write!(f, "{}", std::process::id());
+            Ok(f)
+        }
+        Err(std::fs::TryLockError::WouldBlock) => {
+            let mut who = String::new();
+            let _ = f.read_to_string(&mut who);
+            let who = who.trim();
+            Err(StoreError::Locked(if who.is_empty() {
+                format!("{} is open in another Bosun process", path.display())
+            } else {
+                format!("{} is open in another Bosun process (pid {who})", path.display())
+            }))
+        }
+        Err(std::fs::TryLockError::Error(e)) => Err(io(e)),
+    }
 }
 
 impl Project {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
+        let lock = take_lock(path)?;
         let conn = Connection::open(path)?;
         #[cfg(unix)]
         {
@@ -100,82 +263,43 @@ impl Project {
             // Projects hold credentials and session tokens captured from targets.
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
-        Self::init(conn)
+        Self::init(conn, Some(lock))
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(Connection::open_in_memory()?, None)
     }
 
-    fn init(conn: Connection) -> Result<Self, StoreError> {
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.pragma_update(None, "secure_delete", "ON")?;
+    fn init(conn: Connection, lock: Option<std::fs::File>) -> Result<Self, StoreError> {
+        // The file may be hostile: no SQL stored in it (triggers, views, generated columns) may call
+        // functions that have side effects, corrupt pages must not be followed, and the connection must not
+        // allow the schema to be rewritten from under us.
+        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
+        conn.pragma_update(None, "trusted_schema", "OFF")?;
+        conn.pragma_update(None, "cell_size_check", "ON")?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version > SCHEMA_VERSION {
             return Err(StoreError::NewerSchema(version));
         }
+        if version == 1 {
+            verify_schema(&conn)?;
+        } else if !schema_objects(&conn)?.is_empty() {
+            return Err(StoreError::Untrusted("not a Bosun project".into()));
+        }
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "secure_delete", "ON")?;
         if version < 1 {
-            conn.execute_batch(
-                r#"
-                CREATE TABLE blobs (
-                    hash BLOB PRIMARY KEY,
-                    size INTEGER NOT NULL,
-                    data BLOB NOT NULL
-                ) WITHOUT ROWID;
-                CREATE TABLE flows (
-                    id INTEGER PRIMARY KEY,
-                    source TEXT NOT NULL,
-                    started_ms INTEGER NOT NULL,
-                    duration_ms INTEGER,
-                    scheme TEXT NOT NULL,
-                    host TEXT NOT NULL,
-                    port INTEGER NOT NULL,
-                    method TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    base_path TEXT NOT NULL,
-                    http_version TEXT NOT NULL,
-                    status INTEGER,
-                    request_len INTEGER NOT NULL,
-                    response_len INTEGER,
-                    mime TEXT,
-                    in_scope INTEGER NOT NULL,
-                    edited INTEGER NOT NULL,
-                    error TEXT,
-                    tags TEXT NOT NULL DEFAULT '[]',
-                    note TEXT,
-                    req_blob BLOB NOT NULL REFERENCES blobs(hash),
-                    orig_req_blob BLOB REFERENCES blobs(hash),
-                    resp_blob BLOB REFERENCES blobs(hash),
-                    orig_resp_blob BLOB REFERENCES blobs(hash),
-                    resp_truncated INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE INDEX flows_host ON flows(host);
-                CREATE INDEX flows_site ON flows(scheme, host, port, base_path);
-                CREATE VIRTUAL TABLE flow_text USING fts5(body, content='', contentless_delete=1, tokenize='trigram');
-                CREATE TABLE ws_messages (
-                    id INTEGER PRIMARY KEY,
-                    flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-                    time_ms INTEGER NOT NULL,
-                    direction INTEGER NOT NULL,
-                    opcode INTEGER NOT NULL,
-                    payload BLOB NOT NULL,
-                    truncated INTEGER NOT NULL
-                );
-                CREATE INDEX ws_by_flow ON ws_messages(flow_id);
-                CREATE TABLE settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-                PRAGMA user_version = 1;
-                "#,
-            )?;
+            conn.execute_batch(SCHEMA_V1)?;
+            conn.pragma_update(None, "user_version", 1)?;
         }
         let max: Option<i64> = conn.query_row("SELECT max(id) FROM flows", [], |r| r.get(0))?;
         Ok(Self {
             conn: Mutex::new(conn),
             next_id: AtomicI64::new(max.unwrap_or(0) + 1),
+            _lock: lock,
         })
     }
 
@@ -467,7 +591,7 @@ impl Project {
                     Direction::ClientToServer
                 },
                 opcode,
-                payload: zstd::decode_all(&payload[..]).map_err(StoreError::Compress)?,
+                payload: bounded_decode(&payload, MAX_WS_PAYLOAD, None)?,
                 truncated,
             });
         }
@@ -590,8 +714,12 @@ fn put_blob(tx: &rusqlite::Transaction<'_>, data: &[u8]) -> Result<Vec<u8>, Stor
 }
 
 fn get_blob(conn: &Connection, hash: &[u8]) -> Result<Vec<u8>, StoreError> {
-    let data: Vec<u8> = conn.query_row("SELECT data FROM blobs WHERE hash = ?1", [hash], |r| r.get(0))?;
-    zstd::decode_all(&data[..]).map_err(StoreError::Compress)
+    let (size, data): (i64, Vec<u8>) =
+        conn.query_row("SELECT size, data FROM blobs WHERE hash = ?1", [hash], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+    let size = u64::try_from(size).map_err(|_| StoreError::Untrusted("negative blob size".into()))?;
+    bounded_decode(&data, MAX_BLOB, Some(size))
 }
 
 /// What gets indexed for search: the request (head and text body) and the response (head and decoded text
@@ -820,5 +948,132 @@ mod tests {
         assert_eq!(got[0].direction, Direction::ServerToClient);
         assert_eq!(got[1].payload, b"{\"hi\":1}");
         assert_eq!(p.ws_messages(f.id, Some(got[0].id), 10).unwrap().len(), 1);
+    }
+
+    fn raw(path: &Path) -> Connection {
+        Connection::open(path).unwrap()
+    }
+
+    #[test]
+    fn a_zstd_bomb_in_a_blob_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        let hash = {
+            let p = Project::open(&path).unwrap();
+            let f = flow(&p, "a.test", "/", 200, "hello");
+            let id = f.id;
+            p.write_batch(&[f], &[]).unwrap();
+            p.get_flow(id).unwrap().unwrap();
+            let c = raw(&path);
+            c.query_row("SELECT req_blob FROM flows", [], |r| r.get::<_, Vec<u8>>(0))
+                .unwrap()
+        };
+        // 200 MiB of zeros compresses to a few KiB; claim it is small.
+        let bomb = zstd::encode_all(std::io::repeat(0).take(200 * 1024 * 1024), 3).unwrap();
+        assert!(bomb.len() < 64 * 1024);
+        let c = raw(&path);
+        c.execute(
+            "UPDATE blobs SET data = ?1, size = 10 WHERE hash = ?2",
+            params![bomb, hash],
+        )
+        .unwrap();
+        drop(c);
+        let p = Project::open(&path).unwrap();
+        assert!(matches!(p.get_flow(1).unwrap_err(), StoreError::Compress(_)));
+        // Claiming an enormous size is refused before decoding anything.
+        raw(&path)
+            .execute("UPDATE blobs SET size = 9000000000", [])
+            .unwrap();
+        assert!(matches!(p.get_flow(1).unwrap_err(), StoreError::Compress(_)));
+        // A size that disagrees with the data is corruption too.
+        let ok = zstd::encode_all(&b"hello"[..], 3).unwrap();
+        raw(&path)
+            .execute("UPDATE blobs SET data = ?1, size = 99", [ok])
+            .unwrap();
+        assert!(matches!(p.get_flow(1).unwrap_err(), StoreError::Compress(_)));
+    }
+
+    #[test]
+    fn a_zstd_bomb_in_a_websocket_payload_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        {
+            let p = Project::open(&path).unwrap();
+            let f = flow(&p, "a.test", "/ws", 101, "");
+            let id = f.id;
+            let m = NewWsMessage {
+                flow_id: id,
+                time_ms: 1,
+                direction: Direction::ClientToServer,
+                opcode: 1,
+                payload: b"hi".to_vec(),
+                truncated: false,
+            };
+            p.write_batch(&[f], &[m]).unwrap();
+        }
+        let bomb = zstd::encode_all(std::io::repeat(0).take(64 * 1024 * 1024), 3).unwrap();
+        raw(&path)
+            .execute("UPDATE ws_messages SET payload = ?1", [bomb])
+            .unwrap();
+        let p = Project::open(&path).unwrap();
+        assert!(matches!(
+            p.ws_messages(1, None, 10).unwrap_err(),
+            StoreError::Compress(_)
+        ));
+    }
+
+    #[test]
+    fn files_with_extra_triggers_views_or_tables_are_refused() {
+        for (n, sql) in [
+            (
+                "trigger",
+                "CREATE TRIGGER t AFTER INSERT ON settings BEGIN DELETE FROM flows; END",
+            ),
+            ("view", "CREATE VIEW v AS SELECT * FROM settings"),
+            ("table", "CREATE TABLE extra (x)"),
+            ("index", "CREATE INDEX extra_idx ON settings(value)"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("p.bosun");
+            drop(Project::open(&path).unwrap());
+            raw(&path).execute_batch(sql).unwrap();
+            let err = Project::open(&path).unwrap_err();
+            assert!(matches!(err, StoreError::Untrusted(_)), "{n}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_changed_column_is_refused_and_foreign_databases_are_not_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        drop(Project::open(&path).unwrap());
+        raw(&path)
+            .execute_batch("ALTER TABLE settings ADD COLUMN sneaky TEXT")
+            .unwrap();
+        assert!(matches!(
+            Project::open(&path).unwrap_err(),
+            StoreError::Untrusted(_)
+        ));
+        // Some other application's database (user_version 0, but has tables) is not a project.
+        let other = dir.path().join("other.db");
+        raw(&other).execute_batch("CREATE TABLE people (name)").unwrap();
+        assert!(matches!(
+            Project::open(&other).unwrap_err(),
+            StoreError::Untrusted(_)
+        ));
+    }
+
+    #[test]
+    fn a_second_open_of_a_locked_project_is_refused_until_the_first_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        let first = Project::open(&path).unwrap();
+        let err = Project::open(&path).unwrap_err();
+        assert!(matches!(err, StoreError::Locked(_)), "{err}");
+        // Windows refuses to read a byte-range-locked file, so only elsewhere can the other pid be named.
+        #[cfg(unix)]
+        assert!(err.to_string().contains(&std::process::id().to_string()), "{err}");
+        drop(first);
+        Project::open(&path).unwrap();
     }
 }

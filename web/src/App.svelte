@@ -18,6 +18,7 @@
   };
   let page = $state<Page>(fromHash());
   let held = $state(0);
+  let lost = $state<{ n: number; error: string } | null>(null);
 
   function go(p: Page) {
     page = p;
@@ -28,6 +29,7 @@
     session.init();
     return session.on((e) => {
       if (e.type === 'intercept_state') held = e.requests + e.responses;
+      else if (e.type === 'recorder_failed') lost = { n: (lost?.n ?? 0) + e.lost, error: e.error };
     });
   });
 </script>
@@ -52,6 +54,12 @@
       <span class="small muted">{session.me.user.username} ({session.me.user.role})</span>
       <button onclick={() => session.logout()}>Sign out</button>
     </header>
+    {#if lost}
+      <div class="lost" role="alert">
+        History could not be saved: {lost.n} item{lost.n === 1 ? '' : 's'} lost ({lost.error}).
+        <button onclick={() => (lost = null)}>Dismiss</button>
+      </div>
+    {/if}
     <main>
       {#if page === 'intercept'}<Intercept />
       {:else if page === 'history'}<History />
@@ -73,5 +81,6 @@
   .count { margin-left: .35rem; background: var(--accent); color: #000; border-radius: 8px; padding: 0 .4rem; font-size: .75rem; }
   .dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--bad); }
   .dot.on { background: var(--ok); }
+  .lost { padding: .35rem .75rem; background: var(--bad); color: #000; display: flex; gap: .75rem; align-items: center; }
   .loading { padding: 2rem; color: var(--muted); }
 </style>

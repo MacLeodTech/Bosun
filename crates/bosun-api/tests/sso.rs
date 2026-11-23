@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use argon2::password_hash::rand_core::OsRng;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use bosun_api::sso::SsoConfig;
@@ -17,6 +16,7 @@ use bosun_scope::{Gate, Scope, ScopeSpec};
 use bosun_store::{AppDb, Project};
 use reqwest::StatusCode;
 use rsa::pkcs1v15::SigningKey;
+use rsa::rand_core::OsRng;
 use rsa::signature::{SignatureEncoding, Signer};
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, sha2::Sha256};
@@ -115,6 +115,7 @@ async fn serve(sso: SsoConfig) -> (SocketAddr, Arc<AppDb>) {
             ca,
             events,
             browser: None,
+            ui_tls: None,
         },
     )
     .unwrap();

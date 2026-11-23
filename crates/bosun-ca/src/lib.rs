@@ -9,6 +9,7 @@
 //! which keeps issuing cheap.
 
 pub mod sealed;
+pub mod ui;
 
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
@@ -27,6 +28,7 @@ use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 
 pub use sealed::{DataKey, SealError};
+pub use ui::UiTls;
 
 const CA_CERT_FILE: &str = "ca.crt.pem";
 const CA_KEY_FILE: &str = "ca.key.sealed";
@@ -245,7 +247,7 @@ fn generate_ca() -> Result<(String, KeyPair), CaError> {
     let key = KeyPair::generate()?;
     let mut params = CertificateParams::default();
     let mut id = [0u8; 4];
-    rand::RngCore::fill_bytes(&mut rand::rng(), &mut id);
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut id);
     let id = id.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, format!("Bosun local CA {id}"));
@@ -264,9 +266,9 @@ fn generate_ca() -> Result<(String, KeyPair), CaError> {
     Ok((cert.pem(), key))
 }
 
-fn random_serial() -> SerialNumber {
+pub(crate) fn random_serial() -> SerialNumber {
     let mut b = [0u8; 16];
-    rand::RngCore::fill_bytes(&mut rand::rng(), &mut b);
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut b);
     b[0] &= 0x7f; // keep it positive
     SerialNumber::from_slice(&b)
 }

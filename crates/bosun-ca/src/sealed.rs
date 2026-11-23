@@ -13,7 +13,7 @@ use std::path::Path;
 use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
-use rand::RngCore;
+use rand::Rng;
 use thiserror::Error;
 
 const MAGIC: &[u8; 5] = b"BSNS1";
@@ -113,12 +113,12 @@ impl DataKey {
     }
 
     pub fn seal(&self, purpose: &str, plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
-        let cipher = ChaCha20Poly1305::new(Key::from_slice(&self.key));
+        let cipher = ChaCha20Poly1305::new(&Key::from(self.key));
         let mut nonce = [0u8; NONCE_LEN];
         rand::rng().fill_bytes(&mut nonce);
         let ct = cipher
             .encrypt(
-                Nonce::from_slice(&nonce),
+                &Nonce::from(nonce),
                 Payload {
                     msg: plaintext,
                     aad: purpose.as_bytes(),
@@ -137,10 +137,11 @@ impl DataKey {
             return Err(SealError::Open);
         }
         let (nonce, ct) = sealed[MAGIC.len()..].split_at(NONCE_LEN);
-        let cipher = ChaCha20Poly1305::new(Key::from_slice(&self.key));
+        let nonce = Nonce::try_from(nonce).map_err(|_| SealError::Open)?;
+        let cipher = ChaCha20Poly1305::new(&Key::from(self.key));
         cipher
             .decrypt(
-                Nonce::from_slice(nonce),
+                &nonce,
                 Payload {
                     msg: ct,
                     aad: purpose.as_bytes(),
@@ -169,6 +170,12 @@ pub fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 /// Refuse a secret file that group or others can read.
+///
+/// On Windows there is no mode to check and this accepts every file. Access there is decided by ACLs, and the
+/// data directory lives under the user's profile (`%LOCALAPPDATA%`), which other standard users cannot read; a
+/// file created inside inherits that. Rewriting ACLs without `unsafe` code is not possible with the standard
+/// library, so Bosun relies on the profile's protection and `docs/threat-model.md` says so. Keep the data
+/// directory inside your profile (or another location only you can read) on Windows.
 pub fn check_private(path: &Path) -> Result<(), SealError> {
     #[cfg(unix)]
     {
@@ -193,6 +200,24 @@ pub fn check_private(path: &Path) -> Result<(), SealError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A blob sealed by an earlier build (and independently with Python's `cryptography`) must still open after
+    /// a dependency upgrade, or every installed CA key would become unreadable.
+    #[test]
+    fn data_sealed_by_an_earlier_version_still_opens() {
+        let blob = hex_decode(
+            "42534e5331a0a1a2a3a4a5a6a7a8a9aaab67c5172823c6a3c3d3789666dc8e9888e95718ef75fae2fbd8468e3b82074f34c6",
+        );
+        let key = DataKey::from_bytes(core::array::from_fn(|i| i as u8));
+        assert_eq!(key.open("ca-key", &blob).unwrap(), b"known answer test");
+    }
+
+    fn hex_decode(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
 
     #[test]
     fn seal_open_round_trip_and_purpose_binding() {

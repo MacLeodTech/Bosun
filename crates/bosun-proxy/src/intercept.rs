@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use bosun_model::FlowId;
 use serde::{Deserialize, Serialize};
@@ -54,10 +54,22 @@ pub struct InterceptSettings {
     pub responses: bool,
     /// Only hold in-scope traffic (on by default: intercepting every analytics beacon is useless).
     pub in_scope_only: bool,
+    /// Forward a held message, unedited, after this many seconds (none: hold until decided).
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
+
+/// The queue is full; the message was not held (and must not be forwarded as if it had been).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueFull;
 
 #[derive(Debug)]
 pub struct InterceptController {
+    timeout_secs: AtomicU64,
+    max_items: usize,
+    max_bytes: usize,
+    queued_bytes: AtomicUsize,
+    refused: AtomicU64,
     requests: AtomicBool,
     responses: AtomicBool,
     in_scope_only: AtomicBool,
@@ -68,7 +80,16 @@ pub struct InterceptController {
 
 impl InterceptController {
     pub fn new(events: EventSender) -> Self {
+        Self::with_limits(events, 256, 128 * 1024 * 1024)
+    }
+
+    pub fn with_limits(events: EventSender, max_items: usize, max_bytes: usize) -> Self {
         Self {
+            timeout_secs: AtomicU64::new(0),
+            max_items,
+            max_bytes,
+            queued_bytes: AtomicUsize::new(0),
+            refused: AtomicU64::new(0),
             requests: AtomicBool::new(false),
             responses: AtomicBool::new(false),
             in_scope_only: AtomicBool::new(true),
@@ -83,7 +104,18 @@ impl InterceptController {
             requests: self.requests.load(Ordering::SeqCst),
             responses: self.responses.load(Ordering::SeqCst),
             in_scope_only: self.in_scope_only.load(Ordering::SeqCst),
+            timeout_secs: Some(self.timeout_secs.load(Ordering::SeqCst)).filter(|t| *t > 0),
         }
+    }
+
+    /// Messages refused because the queue was full.
+    pub fn refused(&self) -> u64 {
+        self.refused.load(Ordering::Relaxed)
+    }
+
+    /// Bytes currently held.
+    pub fn queued_bytes(&self) -> usize {
+        self.queued_bytes.load(Ordering::Relaxed)
     }
 
     /// Change what is intercepted. Turning interception off releases everything held, unedited.
@@ -91,6 +123,8 @@ impl InterceptController {
         self.requests.store(s.requests, Ordering::SeqCst);
         self.responses.store(s.responses, Ordering::SeqCst);
         self.in_scope_only.store(s.in_scope_only, Ordering::SeqCst);
+        self.timeout_secs
+            .store(s.timeout_secs.unwrap_or(0), Ordering::SeqCst);
         if !s.requests || !s.responses {
             let release: Vec<u64> = self
                 .lock()
@@ -123,7 +157,9 @@ impl InterceptController {
         self.pending.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Hold a message until the user decides. If the controller goes away the message is forwarded.
+    /// Hold a message until the user decides (or the timeout passes, which forwards it unedited). If the
+    /// controller goes away the message is forwarded. `Err(QueueFull)` when the item or byte cap would be
+    /// exceeded: the caller must refuse the message, not forward it.
     pub async fn hold(
         &self,
         flow_id: FlowId,
@@ -132,7 +168,7 @@ impl InterceptController {
         url: &str,
         status: Option<u16>,
         raw: Vec<u8>,
-    ) -> Decision {
+    ) -> Result<Decision, QueueFull> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let summary = InterceptSummary {
             id,
@@ -144,21 +180,43 @@ impl InterceptController {
             queued_ms: bosun_model::now_ms(),
         };
         let (tx, rx) = oneshot::channel();
-        self.lock().insert(
-            id,
-            (
-                InterceptItem {
-                    summary: summary.clone(),
-                    raw,
-                },
-                tx,
-            ),
-        );
+        let size = raw.len();
+        {
+            let mut q = self.lock();
+            if q.len() >= self.max_items || self.queued_bytes.load(Ordering::SeqCst) + size > self.max_bytes {
+                drop(q);
+                self.refused.fetch_add(1, Ordering::Relaxed);
+                let _ = self.events.send(ProxyEvent::InterceptRefused {
+                    reason: "the intercept queue is full; the message was refused (503)".into(),
+                });
+                return Err(QueueFull);
+            }
+            self.queued_bytes.fetch_add(size, Ordering::SeqCst);
+            q.insert(
+                id,
+                (
+                    InterceptItem {
+                        summary: summary.clone(),
+                        raw,
+                    },
+                    tx,
+                ),
+            );
+        }
         let _ = self.events.send(ProxyEvent::InterceptQueued { item: summary });
         let guard = Cleanup { ctl: self, id };
-        let d = rx.await.unwrap_or(Decision::Forward { raw: None });
+        let timeout = self.timeout_secs.load(Ordering::SeqCst);
+        let d = if timeout > 0 {
+            tokio::time::timeout(std::time::Duration::from_secs(timeout), rx)
+                .await
+                .map_or(Decision::Forward { raw: None }, |r| {
+                    r.unwrap_or(Decision::Forward { raw: None })
+                })
+        } else {
+            rx.await.unwrap_or(Decision::Forward { raw: None })
+        };
         drop(guard);
-        d
+        Ok(d)
     }
 
     pub fn list(&self) -> Vec<InterceptSummary> {
@@ -172,7 +230,8 @@ impl InterceptController {
     pub fn resolve(&self, id: u64, d: Decision) -> bool {
         let entry = self.lock().remove(&id);
         match entry {
-            Some((_, tx)) => {
+            Some((item, tx)) => {
+                self.queued_bytes.fetch_sub(item.raw.len(), Ordering::SeqCst);
                 let _ = tx.send(d);
                 let _ = self.events.send(ProxyEvent::InterceptResolved { id });
                 true
@@ -197,7 +256,9 @@ struct Cleanup<'a> {
 
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
-        if self.ctl.lock().remove(&self.id).is_some() {
+        let removed = self.ctl.lock().remove(&self.id);
+        if let Some((item, _)) = removed {
+            self.ctl.queued_bytes.fetch_sub(item.raw.len(), Ordering::SeqCst);
             let _ = self
                 .ctl
                 .events
@@ -219,6 +280,7 @@ mod tests {
             requests: true,
             responses: false,
             in_scope_only: true,
+            timeout_secs: None,
         });
         assert!(ctl.should_hold(Phase::Request, true));
         assert!(!ctl.should_hold(Phase::Request, false));
@@ -240,7 +302,7 @@ mod tests {
             }
         ));
         assert_eq!(
-            h.await.unwrap(),
+            h.await.unwrap().unwrap(),
             Decision::Forward {
                 raw: Some(b"y".to_vec())
             }
@@ -254,7 +316,7 @@ mod tests {
             tokio::task::yield_now().await;
         }
         ctl.set(InterceptSettings::default());
-        assert_eq!(h.await.unwrap(), Decision::Forward { raw: None });
+        assert_eq!(h.await.unwrap().unwrap(), Decision::Forward { raw: None });
         assert!(ctl.list().is_empty());
     }
 
@@ -270,6 +332,47 @@ mod tests {
         h.abort();
         let _ = h.await;
         assert!(ctl.list().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_queue_has_an_item_cap_a_byte_cap_and_a_timeout() {
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let ctl = Arc::new(InterceptController::with_limits(tx, 2, 10));
+        let hold = |ctl: Arc<InterceptController>, n: usize| {
+            tokio::spawn(async move { ctl.hold(1, Phase::Request, "GET", "u", None, vec![0; n]).await })
+        };
+        let a = hold(ctl.clone(), 4);
+        let b = hold(ctl.clone(), 4);
+        while ctl.list().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+        // Item cap.
+        assert_eq!(
+            ctl.hold(1, Phase::Request, "GET", "u", None, vec![]).await,
+            Err(QueueFull)
+        );
+        ctl.forward_all();
+        let _ = (a.await, b.await);
+        assert_eq!(ctl.queued_bytes(), 0);
+        // Byte cap.
+        assert_eq!(
+            ctl.hold(1, Phase::Request, "GET", "u", None, vec![0; 11]).await,
+            Err(QueueFull)
+        );
+        assert_eq!(ctl.refused(), 2);
+        // Timeout: forwarded unedited, queue empty again.
+        ctl.set(InterceptSettings {
+            requests: true,
+            timeout_secs: Some(1),
+            ..Default::default()
+        });
+        let d = ctl
+            .hold(1, Phase::Request, "GET", "u", None, vec![0; 3])
+            .await
+            .unwrap();
+        assert_eq!(d, Decision::Forward { raw: None });
+        assert!(ctl.list().is_empty());
+        assert_eq!(ctl.queued_bytes(), 0);
     }
 
     #[test]

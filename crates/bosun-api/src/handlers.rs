@@ -9,7 +9,7 @@ use bosun_model::{FlowId, RawResponse};
 use bosun_proxy::{Decision, InterceptSettings, RuleSpec};
 use bosun_scope::{Scope, ScopeSpec};
 use bosun_store::codec::{self, Decoded};
-use bosun_store::{FlowFilter, Role};
+use bosun_store::{FlowFilter, Role, TokenScope};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{Caller, check_password_policy, check_username, hash_password, random_token};
@@ -284,6 +284,17 @@ pub async fn put_intercept(
 ) -> R {
     caller.require(Role::Tester)?;
     st.inner.proxy.intercept().set(s);
+    caller.audit(
+        &st,
+        "intercept.settings",
+        &format!(
+            "requests={} responses={} in_scope_only={} timeout={}",
+            s.requests,
+            s.responses,
+            s.in_scope_only,
+            s.timeout_secs.map_or("none".into(), |t| format!("{t}s"))
+        ),
+    );
     st.inner
         .project
         .set_setting(SETTING_INTERCEPT, &s)
@@ -311,7 +322,19 @@ pub async fn intercept_decide(
     Json(d): Json<Decision>,
 ) -> R {
     caller.require(Role::Tester)?;
+    // Only changes are audited: a plain forward is what happens anyway.
+    let what = match &d {
+        Decision::Drop => Some(("intercept.drop", format!("item {id}"))),
+        Decision::Forward { raw: Some(r) } => Some((
+            "intercept.forward_edited",
+            format!("item {id}, {} bytes", r.len()),
+        )),
+        Decision::Forward { raw: None } => None,
+    };
     if st.inner.proxy.intercept().resolve(id, d) {
+        if let Some((action, detail)) = what {
+            caller.audit(&st, action, &detail);
+        }
         Ok(empty(StatusCode::NO_CONTENT))
     } else {
         Err(reject(StatusCode::NOT_FOUND, "no such item (already forwarded?)"))
@@ -321,6 +344,7 @@ pub async fn intercept_decide(
 pub async fn intercept_forward_all(State(st): State<AppState>, caller: Caller) -> R {
     caller.require(Role::Tester)?;
     let n = st.inner.proxy.intercept().forward_all();
+    caller.audit(&st, "intercept.forward_all", &format!("{n} items"));
     Ok(Json(serde_json::json!({ "forwarded": n })).into_response())
 }
 
@@ -339,6 +363,7 @@ pub async fn proxy_info(State(st): State<AppState>, caller: Caller) -> R {
         "auth_required": c.auth.is_some(),
         "record_out_of_scope": c.record_out_of_scope,
         "tools_stopped": st.inner.gate.is_stopped(),
+        "stats": st.inner.proxy.stats(),
     }))
     .into_response())
 }
@@ -403,6 +428,11 @@ pub async fn launch_browser(State(st): State<AppState>, caller: Caller) -> R {
 #[derive(Deserialize)]
 pub struct NewToken {
     name: String,
+    /// Days until the token stops working (none: never; at most 3650).
+    expires_days: Option<u32>,
+    /// `read` tokens can only make GET requests. Defaults to `full`.
+    #[serde(default)]
+    scope: TokenScope,
 }
 
 pub async fn list_tokens(State(st): State<AppState>, caller: Caller) -> R {
@@ -415,13 +445,31 @@ pub async fn create_token(State(st): State<AppState>, caller: Caller, Json(b): J
     if b.name.is_empty() || b.name.len() > 64 {
         return Err(reject(StatusCode::BAD_REQUEST, "token names are 1-64 characters"));
     }
+    if b.expires_days.is_some_and(|d| d == 0 || d > 3650) {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "expires_days must be between 1 and 3650",
+        ));
+    }
+    let expires = b
+        .expires_days
+        .map(|d| bosun_model::now_ms() + i64::from(d) * 86_400_000);
     let token = format!("bosun_{}", random_token());
     let t = st
         .inner
         .app
-        .create_api_token(&b.name, &token, caller.user.id)
+        .create_api_token(&b.name, &token, caller.user.id, b.scope, expires)
         .map_err(internal)?;
-    caller.audit(&st, "token.create", &b.name);
+    caller.audit(
+        &st,
+        "token.create",
+        &format!(
+            "{} ({}, {})",
+            b.name,
+            b.scope.as_str(),
+            b.expires_days.map_or("no expiry".into(), |d| format!("{d} days"))
+        ),
+    );
     // The token is shown once; only its hash is stored.
     Ok((
         StatusCode::CREATED,
@@ -439,6 +487,85 @@ pub async fn delete_token(State(st): State<AppState>, caller: Caller, Path(id): 
         .map_err(internal)?
     {
         caller.audit(&st, "token.delete", &id.to_string());
+        Ok(empty(StatusCode::NO_CONTENT))
+    } else {
+        Err(reject(StatusCode::NOT_FOUND, "no such token"))
+    }
+}
+
+/// Your own sessions and tokens need the viewer role; anyone else's need admin.
+fn own_or_admin(caller: &Caller, user_id: i64) -> Result<(), Response> {
+    caller.require(if caller.user.id == user_id {
+        Role::Viewer
+    } else {
+        Role::Admin
+    })
+}
+
+#[derive(Deserialize)]
+pub struct RoleBody {
+    role: Role,
+}
+
+pub async fn set_user_role(
+    State(st): State<AppState>,
+    caller: Caller,
+    Path(id): Path<i64>,
+    Json(b): Json<RoleBody>,
+) -> R {
+    caller.require(Role::Admin)?;
+    match st.inner.app.set_role(id, b.role) {
+        Ok(true) => {
+            // The new role applies at once: the user signs in again (their tokens keep their owner's role).
+            let _ = st.inner.app.revoke_sessions(id);
+            caller.audit(&st, "user.role", &format!("user {id} -> {}", b.role.as_str()));
+            Ok(empty(StatusCode::NO_CONTENT))
+        }
+        Ok(false) => Err(reject(StatusCode::NOT_FOUND, "no such user")),
+        Err(bosun_store::StoreError::Conflict(m)) => Err(reject(StatusCode::CONFLICT, &m)),
+        Err(e) => Err(internal(e)),
+    }
+}
+
+pub async fn list_user_sessions(State(st): State<AppState>, caller: Caller, Path(id): Path<i64>) -> R {
+    own_or_admin(&caller, id)?;
+    Ok(Json(st.inner.app.list_sessions(id).map_err(internal)?).into_response())
+}
+
+pub async fn revoke_user_sessions(State(st): State<AppState>, caller: Caller, Path(id): Path<i64>) -> R {
+    own_or_admin(&caller, id)?;
+    let n = st.inner.app.revoke_sessions(id).map_err(internal)?;
+    caller.audit(&st, "session.revoke_all", &format!("user {id}, {n} sessions"));
+    Ok(Json(serde_json::json!({ "revoked": n })).into_response())
+}
+
+pub async fn revoke_user_session(
+    State(st): State<AppState>,
+    caller: Caller,
+    Path((id, sid)): Path<(i64, String)>,
+) -> R {
+    own_or_admin(&caller, id)?;
+    if st.inner.app.revoke_session(id, &sid).map_err(internal)? {
+        caller.audit(&st, "session.revoke", &format!("user {id}, session {sid}"));
+        Ok(empty(StatusCode::NO_CONTENT))
+    } else {
+        Err(reject(StatusCode::NOT_FOUND, "no such session"))
+    }
+}
+
+pub async fn list_user_tokens(State(st): State<AppState>, caller: Caller, Path(id): Path<i64>) -> R {
+    own_or_admin(&caller, id)?;
+    Ok(Json(st.inner.app.list_api_tokens(id).map_err(internal)?).into_response())
+}
+
+pub async fn revoke_user_token(
+    State(st): State<AppState>,
+    caller: Caller,
+    Path((id, tid)): Path<(i64, i64)>,
+) -> R {
+    own_or_admin(&caller, id)?;
+    if st.inner.app.delete_api_token(tid, id).map_err(internal)? {
+        caller.audit(&st, "token.revoke", &format!("user {id}, token {tid}"));
         Ok(empty(StatusCode::NO_CONTENT))
     } else {
         Err(reject(StatusCode::NOT_FOUND, "no such token"))

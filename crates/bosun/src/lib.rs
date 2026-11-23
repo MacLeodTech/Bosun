@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use bosun_api::{AppState, BrowserLauncher, Deps};
 use bosun_ca::{CertificateAuthority, DataKey};
 use bosun_proxy::{InterceptSettings, Proxy, ProxyConfig, RuleSpec};
@@ -34,6 +34,10 @@ impl Paths {
     pub fn ca(&self) -> PathBuf {
         self.data.join("ca")
     }
+    /// The UI's own certificate (never the interception CA's).
+    pub fn ui_tls(&self) -> PathBuf {
+        self.data.join("ui-tls")
+    }
     pub fn app_db(&self) -> PathBuf {
         self.data.join("app.db")
     }
@@ -53,7 +57,8 @@ impl Paths {
     }
 }
 
-/// Create a directory only the owner can enter.
+/// Create a directory only the owner can enter. On Windows the directory simply inherits the ACL of its parent
+/// (the user's profile); see `bosun_ca::sealed::check_private` for why nothing more is done there.
 pub fn private_dir(p: &Path) -> Result<()> {
     std::fs::create_dir_all(p).with_context(|| format!("cannot create {}", p.display()))?;
     #[cfg(unix)]
@@ -84,6 +89,8 @@ pub struct Engine {
     /// Present until the first admin is created.
     pub setup_code: Option<String>,
     pub ca_fingerprint: String,
+    /// Fingerprint of the certificate the UI serves over HTTPS (none when `api.tls` is off).
+    pub ui_fingerprint: Option<String>,
     pub project_path: PathBuf,
     proxy: Proxy,
     stop: watch::Sender<bool>,
@@ -151,6 +158,22 @@ impl Engine {
             listen: api_addr,
             ..cfg.api.clone()
         };
+        let ui_tls = if cfg.api.tls {
+            Some(Arc::new(match (&cfg.api.tls_cert, &cfg.api.tls_key) {
+                (Some(cert), Some(key)) => bosun_ca::UiTls::from_files(cert, key)
+                    .context("cannot load the UI certificate (api.tls_cert and api.tls_key)")?,
+                (None, None) => bosun_ca::UiTls::self_signed(
+                    &paths.ui_tls(),
+                    &load_key(cfg, &paths)?,
+                    &bosun_api::ui_hosts(&api_cfg),
+                )
+                .context("cannot make the UI certificate")?,
+                _ => bail!("api.tls_cert and api.tls_key must be set together"),
+            }))
+        } else {
+            None
+        };
+        let ui_fingerprint = ui_tls.as_ref().map(|u| u.fingerprint());
         let (state, setup_code) = AppState::new(
             &api_cfg,
             Deps {
@@ -161,6 +184,7 @@ impl Engine {
                 ca: ca.clone(),
                 events,
                 browser: Some(browser),
+                ui_tls,
             },
         )?;
 
@@ -178,6 +202,7 @@ impl Engine {
             api_tls: cfg.api.tls,
             setup_code,
             ca_fingerprint: ca.fingerprint(),
+            ui_fingerprint,
             project_path,
             proxy,
             stop,

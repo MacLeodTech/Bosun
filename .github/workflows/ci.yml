@@ -237,7 +237,9 @@ jobs:
           docker run --rm bosun:ci --version
           docker run -d --name bosun --read-only --cap-drop ALL -p 127.0.0.1:18090:8090 bosun:ci
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:18090/api/v1/status && break; sleep 1; done
-          docker logs bosun 2>&1 | grep -q "setup code"
+          # Capture first: `grep -q` quits at the first match, and with pipefail the writer's SIGPIPE (141) fails the step.
+          logs=$(docker logs bosun 2>&1)
+          grep -q "setup code" <<<"$logs"
           docker rm -f bosun
       - name: Trivy image (a fixable HIGH or CRITICAL fails)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0

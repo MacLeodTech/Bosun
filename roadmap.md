@@ -23,19 +23,25 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done.
 
 ## Where we are (updated 2026-11-23): resume here
 
-- **Code:** M0 and M1 are written and pass fmt, clippy and tests locally. The Docker image and `bosun-desktop`
-  have never been built (no Docker socket or webview libraries in the dev environment).
-- **Repo:** `MacLeodTech/Bosun`, `main` pushed (commits 357d61a, 98f41c8). The Apache-2.0 switch, the
-  hosted-runner-only workflows and the README/roadmap/Cargo edits are **uncommitted**.
-- **Visibility:** the owner says it is public, but `gh repo view` still reported PRIVATE. Check it first.
-- **CI policy:** GitHub-hosted runners only (`ubuntu-latest` is hard-coded). Never the homelab self-hosted pools
-  for this repo, and no `RUNNER` variable. Earlier hosted runs failed on an account billing block, not on code.
+- **Code:** Phases 0, 1 and 2 are merged to `main` (PR #5, then PR #11). That is M0 and M1, the hardening packages
+  WP-01 to WP-09, the test harness (WP-36) and the foundation packages WP-10 to WP-17, WP-35 and WP-37. The Dependabot
+  updates open at the time (PRs #6 to #10) are merged too. `bosun-desktop` still needs the platform webview libraries
+  to build, so CI builds it on Linux only.
+- **Repo:** `MacLeodTech/Bosun` is **public**. `main` has branch protection with required status checks. CI runs on
+  GitHub-hosted runners only (`ubuntu-latest`, Windows and macOS for the test job); never the homelab self-hosted
+  pools for this repo, and no `RUNNER` variable. Every PR so far has gone in as one branch per phase.
+- **Gates:** the Phase 1 and Phase 2 security reviews are done. The Phase 2 review found nothing to fix; its one note
+  (an imported project's scope can carry `allow_private` rules) is by design and in `docs/threat-model.md`.
+- **Open follow-ups from Phase 2:** the footprint baselines in `footprint-budgets.json` (idle 17.0 MB, image 40.0 MB)
+  came from a dev machine. Compare them with the first numbers the CI `footprint` job prints on GitHub's runners and
+  adjust. Consider a Dependabot group for `github/codeql-action/*`, because `init`, `analyze` and `upload-sarif`
+  must be the same version and Dependabot opens them as three PRs.
 - **Next, in order** (see the phase plan below):
-  1. **Phase 0, WP-34:** commit and push the pending changes (ask the owner first), get CI green on
-     GitHub-hosted runners, review the Dependabot PRs, turn on branch protection.
-  2. **Phase 1:** the hardening packages WP-01 to WP-09, with the test harness (WP-36) alongside.
-  3. **Phase 2:** the foundation packages. M2 starts as soon as WP-10, WP-12 and WP-35 are done, with the raw
-     request engine (WP-40) and then Repeater (WP-41).
+  1. **Phase 3, track A (M2):** WP-40 (the raw request engine), then WP-41 (Repeater), WP-42 and WP-44, then WP-43
+     and WP-45. WP-38 and WP-39 are the M1 follow-ups.
+  2. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
+     release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches.
+  3. **Owner tasks before v0.2:** look up the pending BOSUN Class 9 filing; an Apple Developer account.
 - **Decided (2026-11-23):** the product keeps the name Bosun. Published artefacts use distinct names: the crates.io
   crate is `bosun-dast` (the installed binary stays `bosun`), and any npm package goes under the `@macleodtech` scope.
   Windows code signing is deferred; unsigned builds ship until then. The name check found a medium risk: a pending

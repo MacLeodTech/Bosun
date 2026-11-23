@@ -758,6 +758,10 @@ These rules apply to every package:
   - Review the Dependabot PRs (TypeScript 7, Node 26, `actions/setup-go` 7.1.0).
   - Turn on branch protection with the required checks.
 - **Done when:** every CI job passes on `main`; branch protection requires them.
+- **Status (2026-11-23):** done except the Dependabot PRs. The repo is public; CI is green on `main`; branch
+  protection requires the six CI jobs. Left: merge Dependabot PRs #1 to #4 once their rebased CI passes (#4 is a
+  10-crate cargo bump with several major versions; #3 is TypeScript 7), and decide on the open `glib` alert
+  (0.18.5 comes in through Tauri's GTK3 stack on Linux; no fix until Tauri moves on).
 - **Owner tasks:** approving the push; the visibility setting.
 
 #### WP-35 Schema migrations framework · Phase 2 · S
@@ -1170,7 +1174,7 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [x] "Open browser": a system Chromium with its own profile and the CA pinned by SPKI
 - [x] CLI: `serve`, `doctor`, `ca`, `user`, `example-config`
 - [x] Container image (distroless, nonroot) and compose example
-- [ ] **Run the image and desktop CI jobs for the first time, and fix what they find** (neither could be built in
+- [x] **Run the image and desktop CI jobs for the first time, and fix what they find** (neither could be built in
   the dev environment) → **WP-34**
 - [ ] Bundle Chrome for Testing with the desktop installers (download, verify by SHA-256, keep it updated): **WP-21**
 - [ ] One-time login ticket for the desktop app, so it doesn't ask for a password on every launch: **WP-15**
@@ -1323,9 +1327,9 @@ the phase plan above sets the order. Tick an item here when its package lands.
 ### Housekeeping
 
 - [x] Create the GitHub repository (MacLeodTech/Bosun); public, CI on GitHub-hosted runners only
-- [ ] Confirm visibility really is public (the last check said PRIVATE) and the repo has no `RUNNER` variable →
+- [x] Confirm visibility really is public (the last check said PRIVATE) and the repo has no `RUNNER` variable →
   **WP-34**
-- [ ] Commit the Apache-2.0 switch and the hosted-runner workflows → **WP-34**
-- [ ] Get CI green: SAST + SCA, Container image and Desktop shell have not passed yet → **WP-34**
+- [x] Commit the Apache-2.0 switch and the hosted-runner workflows → **WP-34**
+- [x] Get CI green: SAST + SCA, Container image and Desktop shell have not passed yet → **WP-34**
 - [ ] Review the Dependabot PRs (TypeScript 7, Node 26, setup-go 7.1.0) → **WP-34**
-- [ ] Set up branch protection and required checks once CI is green → **WP-34**
+- [x] Set up branch protection and required checks once CI is green → **WP-34**

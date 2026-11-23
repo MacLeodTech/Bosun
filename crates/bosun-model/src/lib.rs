@@ -15,7 +15,7 @@ pub type FlowId = i64;
 
 /// Where a flow came from. Every tool that sends traffic records it with its own source so history can be
 /// filtered and so nothing a tool sends is hidden from the user.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowSource {
     Proxy,
@@ -83,7 +83,7 @@ impl Target {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Scheme {
     Http,
@@ -115,7 +115,7 @@ impl Scheme {
 }
 
 /// A flow as listed in history: everything needed for the table, without bodies.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FlowSummary {
     pub id: FlowId,
     pub source: FlowSource,
@@ -160,7 +160,7 @@ pub struct FlowDetail {
 }
 
 /// A WebSocket message seen on an upgraded connection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct WsMessage {
     pub id: i64,
     /// The flow holding the HTTP upgrade handshake.
@@ -169,11 +169,12 @@ pub struct WsMessage {
     pub direction: Direction,
     pub opcode: u8,
     #[serde(with = "b64")]
+    #[schema(value_type = String, format = Byte)]
     pub payload: Vec<u8>,
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {
     ClientToServer,

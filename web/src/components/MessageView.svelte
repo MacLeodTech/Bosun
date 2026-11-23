@@ -1,7 +1,7 @@
 <script lang="ts">
   // Shows one HTTP message. Target content is hostile: it is only ever shown as text, or rendered in a fully
   // sandboxed iframe (no scripts, opaque origin, and it inherits this page's CSP).
-  import { b64ToBytes, bytesToText, hexDump, splitMessage, textToBytes, bytesToB64, type TextMode } from '../lib/bytes';
+  import { b64ToBytes, bytesToText, fmtSize, hexDump, splitMessage, textToBytes, bytesToB64, type TextMode } from '../lib/bytes';
 
   let {
     raw,
@@ -9,12 +9,24 @@
     editable = false,
     onEdit,
     title = '',
+    rawRemaining = 0,
+    decodedMore = false,
+    onMore,
+    downloadHref = '',
   }: {
     raw: string | null;
     decodedBody?: string | null;
     editable?: boolean;
     onEdit?: (b64: string) => void;
     title?: string;
+    /** Bytes of the stored body that are not loaded yet. */
+    rawRemaining?: number;
+    /** The decoded body goes on past what is loaded. */
+    decodedMore?: boolean;
+    /** Load the next page of the stored body (false) or of the decoded one (true). */
+    onMore?: (decoded: boolean) => void;
+    /** Where the whole body can be downloaded from. */
+    downloadHref?: string;
   } = $props();
 
   type View = 'raw' | 'headers' | 'hex' | 'render';
@@ -65,6 +77,7 @@
       <label class="small"><input type="checkbox" bind:checked={showDecoded} /> decoded body</label>
     {/if}
     {#if text.mode === 'latin1'}<span class="badge">binary</span>{/if}
+    {#if downloadHref}<a class="small" href={downloadHref} download>download body</a>{/if}
   </div>
   {#if raw === null}
     <div class="empty">No message.</div>
@@ -89,6 +102,14 @@
   {:else}
     <iframe class="render" title="Rendered response (sandboxed, no scripts)" sandbox="" referrerpolicy="no-referrer" srcdoc={renderBody}></iframe>
   {/if}
+  {#if onMore && ((decoded && showDecoded && !editable) ? decodedMore : rawRemaining > 0)}
+    <div class="more">
+      <span class="small muted">
+        {#if decoded && showDecoded && !editable}Showing the first part of the decoded body.{:else}{fmtSize(rawRemaining)} of the body not loaded.{/if}
+      </span>
+      <button class="small" onclick={() => onMore(!!(decoded && showDecoded && !editable))}>Load more</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -99,4 +120,5 @@
   .scroll { overflow: auto; flex: 1; }
   .render { flex: 1; border: 0; background: #fff; }
   .empty { padding: 1rem; color: var(--muted); }
+  .more { display: flex; gap: .6rem; align-items: center; padding: .25rem .5rem; border-top: 1px solid var(--line); }
 </style>

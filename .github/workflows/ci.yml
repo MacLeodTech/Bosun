@@ -98,6 +98,11 @@ jobs:
       - name: Install (lockfile only, no install scripts)
         working-directory: web
         run: npm ci --no-fund --ignore-scripts
+      - name: The generated API types match docs/openapi.json
+        working-directory: web
+        run: |
+          npm run gen:api
+          git diff --exit-code -- src/lib/api-types.ts
       - name: Type check
         working-directory: web
         run: npm run check
@@ -188,6 +193,27 @@ jobs:
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4
         with: {sarif_file: trivy-fs.sarif, category: trivy-fs}
 
+  # Footprint budgets: idle memory of a release `bosun serve` (budget in footprint-budgets.json), and below, in the
+  # image job, the image size. Fails when over budget or when it grows more than regression_pct over the baseline.
+  # The numbers go to the run summary. The throughput and latency benchmarks of WP-27 and WP-28 report here too
+  # (`scripts/footprint.py check name=value`, with an entry in footprint-budgets.json).
+  footprint:
+    name: Footprint (idle memory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 26
+      - name: Toolchain
+        run: *toolchain
+      - name: Build the UI and the release binary
+        run: |
+          (cd web && npm ci --no-fund --ignore-scripts && npm run build)
+          cargo build --release --locked -p bosun
+      - name: Idle memory against its budget
+        run: python3 scripts/footprint.py idle target/release/bosun
+
   image:
     name: Container image (build + Trivy)
     # Needs Docker.
@@ -203,6 +229,8 @@ jobs:
           context: .
           load: true
           tags: bosun:ci
+      - name: Image size against its budget (footprint-budgets.json)
+        run: python3 scripts/footprint.py image bosun:ci
       - name: Smoke test (starts, prints the setup code, refuses an open proxy)
         run: |
           set -euo pipefail
@@ -274,7 +302,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [http_messages, ws_frames, decode_body, scope_rules, rewrite_rules]
+        target: [http_messages, ws_frames, decode_body, scope_rules, rewrite_rules, import_project]
     env:
       FUZZ_SECONDS: ${{ github.event_name == 'schedule' && 600 || 30 }}
       NIGHTLY: nightly-2026-11-22

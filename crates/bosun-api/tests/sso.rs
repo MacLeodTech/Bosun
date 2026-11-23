@@ -89,7 +89,7 @@ async fn serve(sso: SsoConfig) -> (SocketAddr, Arc<AppDb>) {
     let project = Arc::new(Project::open_in_memory().unwrap());
     let app = Arc::new(AppDb::open_in_memory().unwrap());
     let gate = Gate::new(Scope::compile(ScopeSpec::default()).unwrap());
-    let (events, _) = tokio::sync::broadcast::channel(64);
+    let events = bosun_proxy::EventBus::new(64);
     let api_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = api_l.local_addr().unwrap();
     let proxy_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -109,7 +109,8 @@ async fn serve(sso: SsoConfig) -> (SocketAddr, Arc<AppDb>) {
         &cfg,
         Deps {
             app: app.clone(),
-            project,
+            projects_dir: std::env::temp_dir(),
+            project_path: None,
             proxy,
             gate,
             ca,

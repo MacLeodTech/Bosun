@@ -46,7 +46,10 @@
     api.get<InterceptSettings>('/intercept').then((s) => (settings = s));
     refresh();
     return session.on((e) => {
-      if (e.type === 'intercept_queued') {
+      if (e.type === 'reload') {
+        api.get<InterceptSettings>('/intercept').then((s) => (settings = s));
+        refresh();
+      } else if (e.type === 'intercept_queued') {
         queue = [...queue, e.item];
         if (!current) select(e.item.id);
       } else if (e.type === 'intercept_refused') {

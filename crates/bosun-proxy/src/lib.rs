@@ -18,7 +18,7 @@ pub mod upstream;
 pub mod ws;
 
 pub use config::{ProxyAuth, ProxyConfig, UpstreamProxy};
-pub use events::{EventSender, ProxyEvent};
+pub use events::{EventBus, EventReceiver, EventSender, ProxyEvent, Resume, Sequenced};
 pub use intercept::{
     Decision, InterceptController, InterceptItem, InterceptSettings, InterceptSummary, Phase,
 };

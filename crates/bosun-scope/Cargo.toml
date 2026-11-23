@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 bosun-model.workspace = true
 serde.workspace = true
+utoipa.workspace = true
 regex.workspace = true
 thiserror.workspace = true
 

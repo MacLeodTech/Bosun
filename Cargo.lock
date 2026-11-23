@@ -374,6 +374,7 @@ dependencies = [
  "base64 0.23.1",
  "bosun-api",
  "bosun-ca",
+ "bosun-client",
  "bosun-model",
  "bosun-proxy",
  "bosun-scope",
@@ -397,12 +398,14 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bosun-ca",
+ "bosun-client",
  "bosun-model",
  "bosun-proxy",
  "bosun-scope",
  "bosun-store",
  "bytes",
  "cookie",
+ "flate2",
  "futures-util",
  "http",
  "http-body-util",
@@ -415,6 +418,7 @@ dependencies = [
  "rcgen",
  "reqwest 0.12.28",
  "rsa",
+ "rusqlite",
  "rust-embed",
  "rustls",
  "serde",
@@ -428,6 +432,7 @@ dependencies = [
  "tokio-tungstenite",
  "tower",
  "tracing",
+ "utoipa",
 ]
 
 [[package]]
@@ -446,6 +451,22 @@ dependencies = [
  "time",
  "tracing",
  "x509-parser",
+]
+
+[[package]]
+name = "bosun-client"
+version = "0.1.0"
+dependencies = [
+ "bosun-model",
+ "bytes",
+ "futures-util",
+ "reqwest 0.12.28",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -469,6 +490,7 @@ dependencies = [
  "proptest",
  "serde",
  "thiserror 2.0.21",
+ "utoipa",
 ]
 
 [[package]]
@@ -489,6 +511,7 @@ dependencies = [
  "hyper-util",
  "ipnet",
  "proptest",
+ "rand 0.10.4",
  "rcgen",
  "regex",
  "reqwest 0.12.28",
@@ -503,7 +526,8 @@ dependencies = [
  "tokio-tungstenite",
  "tower-service",
  "tracing",
- "webpki-roots",
+ "utoipa",
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -515,6 +539,7 @@ dependencies = [
  "regex",
  "serde",
  "thiserror 2.0.21",
+ "utoipa",
 ]
 
 [[package]]
@@ -530,6 +555,7 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
+ "utoipa",
  "zstd",
 ]
 
@@ -2167,7 +2193,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -4106,7 +4132,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots",
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -5477,8 +5503,12 @@ checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5737,6 +5767,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.21",
 ]
@@ -5838,6 +5870,29 @@ name = "utf_types"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
+
+[[package]]
+name = "utoipa"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8765fe27aeff71012a3f90fa474cf1df863a7d0dd81ed25de4e63fff2544994f"
+dependencies = [
+ "indexmap 2.14.2",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d935f1c83fdf8b88f09bbe050d0cea78ea4afee6d7b0317403228c1200b2c8ab"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
 
 [[package]]
 name = "uuid"
@@ -6083,6 +6138,15 @@ dependencies = [
  "pkg-config",
  "soup3-sys",
  "system-deps",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]

@@ -5,15 +5,13 @@
 //! is enough). Password hashing happens in the API layer (argon2id); this module only stores the PHC string.
 
 use std::path::Path;
-use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::StoreError;
-
-const SCHEMA_VERSION: i64 = 3;
+use crate::pool::Db;
+use crate::{StoreError, migrate};
 
 /// A session's expiry is only rewritten when it would move by more than this, so a busy client doesn't cause a
 /// database write on every request.
@@ -21,7 +19,7 @@ const SLIDE_GRANULARITY_MS: i64 = 60_000;
 /// `last_used_ms` of a token is refreshed at most this often.
 const TOKEN_USED_GRANULARITY_MS: i64 = 60_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Read history and findings.
@@ -51,7 +49,7 @@ impl Role {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct User {
     pub id: i64,
     pub username: String,
@@ -67,7 +65,7 @@ pub struct Session {
 }
 
 /// What an API token may do. A `Read` token can only make requests that don't change anything (GET, HEAD).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenScope {
     Read,
@@ -89,7 +87,7 @@ impl TokenScope {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApiToken {
     pub id: i64,
     pub name: String,
@@ -102,7 +100,7 @@ pub struct ApiToken {
 
 /// A signed-in browser session, as shown to its owner and to admins. The id is a prefix of the stored hash; it
 /// cannot be used to sign in.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SessionInfo {
     pub id: String,
     pub user_id: i64,
@@ -110,7 +108,7 @@ pub struct SessionInfo {
     pub expires_ms: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AuditEntry {
     pub id: i64,
     pub time_ms: i64,
@@ -120,9 +118,72 @@ pub struct AuditEntry {
     pub remote: Option<String>,
 }
 
+/// The account database's history. Never edit an entry that has shipped; add a new one at the end.
+const MIGRATIONS: &[migrate::Migration] = &[
+    migrate::Migration {
+        version: 1,
+        rebuild: false,
+        what: "accounts, sessions, tokens, audit log",
+        sql: r#"
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_ms INTEGER NOT NULL
+            );
+            CREATE TABLE sessions (
+                token_hash BLOB PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                csrf TEXT NOT NULL,
+                created_ms INTEGER NOT NULL,
+                expires_ms INTEGER NOT NULL
+            ) WITHOUT ROWID;
+            CREATE TABLE api_tokens (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                token_hash BLOB NOT NULL UNIQUE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_ms INTEGER NOT NULL,
+                last_used_ms INTEGER
+            );
+            -- Append-only: nothing in the code updates or deletes rows here.
+            CREATE TABLE audit (
+                id INTEGER PRIMARY KEY,
+                time_ms INTEGER NOT NULL,
+                username TEXT,
+                action TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                remote TEXT
+            );
+            CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+            CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        "#,
+    },
+    migrate::Migration {
+        version: 2,
+        rebuild: false,
+        what: "single sign-on identity on accounts",
+        sql: r#"
+            ALTER TABLE users ADD COLUMN sso TEXT;
+            CREATE UNIQUE INDEX users_sso ON users(sso) WHERE sso IS NOT NULL;
+        "#,
+    },
+    migrate::Migration {
+        version: 3,
+        rebuild: false,
+        what: "token expiry and scope (existing tokens keep full access and no expiry)",
+        sql: r#"
+            ALTER TABLE api_tokens ADD COLUMN expires_ms INTEGER;
+            ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'full';
+        "#,
+    },
+];
+
 #[derive(Debug)]
 pub struct AppDb {
-    conn: Mutex<Connection>,
+    db: Db,
 }
 
 pub fn token_hash(token: &str) -> Vec<u8> {
@@ -138,94 +199,31 @@ impl AppDb {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
                 .map_err(|e| StoreError::Io(path.display().to_string(), e))?;
         }
-        Self::init(conn)
+        Self::init(conn, Some(path.to_path_buf()))
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(Connection::open_in_memory()?, None)
     }
 
-    fn init(conn: Connection) -> Result<Self, StoreError> {
+    fn init(mut conn: Connection, path: Option<std::path::PathBuf>) -> Result<Self, StoreError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "secure_delete", "ON")?;
-        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > SCHEMA_VERSION {
-            return Err(StoreError::NewerSchema(version));
-        }
-        if version < 1 {
-            conn.execute_batch(
-                r#"
-                CREATE TABLE users (
-                    id INTEGER PRIMARY KEY,
-                    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                    password_hash TEXT NOT NULL,
-                    role TEXT NOT NULL,
-                    created_ms INTEGER NOT NULL
-                );
-                CREATE TABLE sessions (
-                    token_hash BLOB PRIMARY KEY,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    csrf TEXT NOT NULL,
-                    created_ms INTEGER NOT NULL,
-                    expires_ms INTEGER NOT NULL
-                ) WITHOUT ROWID;
-                CREATE TABLE api_tokens (
-                    id INTEGER PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    token_hash BLOB NOT NULL UNIQUE,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    created_ms INTEGER NOT NULL,
-                    last_used_ms INTEGER
-                );
-                -- Append-only: nothing in the code updates or deletes rows here.
-                CREATE TABLE audit (
-                    id INTEGER PRIMARY KEY,
-                    time_ms INTEGER NOT NULL,
-                    username TEXT,
-                    action TEXT NOT NULL,
-                    detail TEXT NOT NULL,
-                    remote TEXT
-                );
-                CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
-                CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
-                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                PRAGMA user_version = 1;
-                "#,
-            )?;
-        }
-        if version < 2 {
-            // Single sign-on: the provider identity (issuer|subject) an account is linked to.
-            conn.execute_batch(
-                r#"
-                ALTER TABLE users ADD COLUMN sso TEXT;
-                CREATE UNIQUE INDEX users_sso ON users(sso) WHERE sso IS NOT NULL;
-                PRAGMA user_version = 2;
-                "#,
-            )?;
-        }
-        if version < 3 {
-            // Token expiry and scope. Existing tokens keep working as they did: no expiry, full access.
-            conn.execute_batch(
-                r#"
-                ALTER TABLE api_tokens ADD COLUMN expires_ms INTEGER;
-                ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'full';
-                PRAGMA user_version = 3;
-                "#,
-            )?;
-        }
+        migrate::run(&mut conn, MIGRATIONS)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            db: Db::new(conn, path, |c| c.pragma_update(None, "foreign_keys", "ON")),
         })
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+        self.db.write()
     }
 
     pub fn user_count(&self) -> Result<i64, StoreError> {
         Ok(self
-            .conn()
+            .db
+            .read()?
             .query_row("SELECT count(*) FROM users", [], |r| r.get(0))?)
     }
 
@@ -269,6 +267,33 @@ impl AppDb {
             role: Role::Admin,
             created_ms: now,
         })
+    }
+
+    /// The account a desktop login ticket signs in as: the oldest admin. With no users at all, a local admin named
+    /// `name` is created first, with no usable password (the stored hash is not a valid hash, so none verifies;
+    /// `bosun user passwd` can set one later). Returns the user and whether it was just created.
+    pub fn ticket_user(&self, name: &str) -> Result<(User, bool), StoreError> {
+        let now = bosun_model::now_ms();
+        let conn = self.conn();
+        let n = conn.execute(
+            "INSERT INTO users (username, password_hash, role, created_ms)
+             SELECT ?1, '!ticket', 'admin', ?2 WHERE NOT EXISTS (SELECT 1 FROM users)",
+            params![name, now],
+        )?;
+        let created = n > 0;
+        let user = conn.query_row(
+            "SELECT id, username, role, created_ms FROM users WHERE role = 'admin' ORDER BY id LIMIT 1",
+            [],
+            |r| {
+                Ok(User {
+                    id: r.get(0)?,
+                    username: r.get(1)?,
+                    role: Role::parse(&r.get::<_, String>(2)?).unwrap_or(Role::Viewer),
+                    created_ms: r.get(3)?,
+                })
+            },
+        )?;
+        Ok((user, created))
     }
 
     /// The account linked to a single sign-on identity (`issuer|subject`), created the first time with a name derived
@@ -329,7 +354,8 @@ impl AppDb {
     /// The user and their password hash, for login.
     pub fn user_for_login(&self, username: &str) -> Result<Option<(User, String)>, StoreError> {
         Ok(self
-            .conn()
+            .db
+            .read()?
             .query_row(
                 "SELECT id, username, role, created_ms, password_hash FROM users WHERE username = ?1",
                 [username],
@@ -387,7 +413,7 @@ impl AppDb {
     }
 
     pub fn list_users(&self) -> Result<Vec<User>, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let mut stmt = conn.prepare("SELECT id, username, role, created_ms FROM users ORDER BY id")?;
         Ok(stmt.query_map([], user_from_row)?.collect::<Result<_, _>>()?)
     }
@@ -463,7 +489,7 @@ impl AppDb {
 
     pub fn list_sessions(&self, user_id: i64) -> Result<Vec<SessionInfo>, StoreError> {
         let now = bosun_model::now_ms();
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let mut stmt = conn.prepare(
             "SELECT hex(substr(token_hash, 1, 8)), user_id, created_ms, expires_ms FROM sessions
              WHERE user_id = ?1 AND expires_ms > ?2 ORDER BY created_ms",
@@ -559,7 +585,7 @@ impl AppDb {
     }
 
     pub fn list_api_tokens(&self, user_id: i64) -> Result<Vec<ApiToken>, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let mut stmt = conn.prepare(
             "SELECT id, name, user_id, created_ms, last_used_ms, expires_ms, scope FROM api_tokens
              WHERE user_id = ?1 ORDER BY id",
@@ -600,7 +626,7 @@ impl AppDb {
     }
 
     pub fn audit_log(&self, before: Option<i64>, limit: u32) -> Result<Vec<AuditEntry>, StoreError> {
-        let conn = self.conn();
+        let conn = self.db.read()?;
         let mut stmt = conn.prepare(
             "SELECT id, time_ms, username, action, detail, remote FROM audit WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
         )?;
@@ -619,7 +645,8 @@ impl AppDb {
 
     pub fn meta(&self, key: &str) -> Result<Option<String>, StoreError> {
         Ok(self
-            .conn()
+            .db
+            .read()?
             .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
             .optional()?)
     }
@@ -773,5 +800,31 @@ mod tests {
             "only the owner's"
         );
         assert_eq!(db.revoke_sessions(u.id).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_database_from_each_earlier_version_upgrades_and_keeps_its_accounts() {
+        for from in 1..migrate::latest(MIGRATIONS) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("app.db");
+            {
+                let mut c = Connection::open(&path).unwrap();
+                migrate::run(&mut c, &MIGRATIONS[..from as usize]).unwrap();
+                c.execute(
+                    "INSERT INTO users (username, password_hash, role, created_ms) VALUES ('ann', 'h', 'admin', 1)",
+                    [],
+                )
+                .unwrap();
+            }
+            let db = AppDb::open(&path).unwrap();
+            assert_eq!(db.user_count().unwrap(), 1, "from v{from}");
+            // The newest columns exist and work.
+            db.create_user("bob", "h", Role::Viewer).unwrap();
+            let back = Connection::open(migrate::backup_path(path.to_str().unwrap(), from)).unwrap();
+            let v: i64 = back
+                .pragma_query_value(None, "user_version", |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, from, "the backup is the file as it was");
+        }
     }
 }

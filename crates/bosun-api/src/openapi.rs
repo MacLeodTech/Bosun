@@ -1,0 +1,384 @@
+//! The API's OpenAPI description, built from the types the handlers use.
+//!
+//! `docs/openapi.json` is generated from this (`cargo test -p bosun-api --test openapi` rewrites it with
+//! `BLESS=1`), and CI fails if the two differ. The test also calls every documented route on the real router,
+//! so a path that is documented but not served is caught. Handlers are not annotated one by one: the
+//! operations live here, next to the response shapes that the handlers build with `json!`.
+
+#![allow(dead_code)]
+
+use serde::Serialize;
+use utoipa::OpenApi;
+use utoipa::ToSchema;
+
+use bosun_model::{FlowSummary, WsMessage};
+use bosun_proxy::intercept::{Decision, InterceptItem, InterceptSettings, InterceptSummary};
+use bosun_proxy::{ProxyEvent, ProxyStats};
+use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
+
+use crate::handlers::FlowOverview;
+use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
+use bosun_proxy::rules::RuleSpec as MatchRule;
+use bosun_scope::ScopeSpec;
+
+#[derive(ToSchema, Serialize)]
+pub struct Error {
+    pub error: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Status {
+    pub name: String,
+    pub version: String,
+    pub setup_required: bool,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Me {
+    pub user: User,
+    /** Present for cookie sessions: send it as `x-csrf-token` on changes. */
+    pub csrf: Option<String>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct SsoButton {
+    pub name: String,
+    pub login: String,
+    pub edge: Option<String>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct SsoInfo {
+    pub sso: Option<SsoButton>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Deleted {
+    pub deleted: u64,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Forwarded {
+    pub forwarded: u64,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Revoked {
+    pub revoked: u64,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Stopped {
+    pub stopped: bool,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Launched {
+    pub launched: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct CaInfo {
+    pub fingerprint_sha256: String,
+    pub spki_sha256: String,
+    pub pem: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct NewTokenReply {
+    pub token: String,
+    pub info: ApiToken,
+}
+#[derive(ToSchema, Serialize)]
+pub struct ProxyInfo {
+    pub listen: String,
+    pub http2: bool,
+    pub invisible: bool,
+    pub verify_upstream_tls: bool,
+    pub upstream: Option<String>,
+    pub tls_passthrough: Vec<String>,
+    pub auth_required: bool,
+    pub record_out_of_scope: bool,
+    pub tools_stopped: bool,
+    pub stats: ProxyStats,
+}
+#[derive(ToSchema, Serialize)]
+pub struct SetupBody {
+    pub code: String,
+    pub username: String,
+    pub password: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct LoginBody {
+    pub username: String,
+    pub password: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TicketBody {
+    /** The single-use ticket an embedded engine printed for its parent. */
+    pub ticket: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct PasswordBody {
+    pub current: String,
+    pub new: String,
+    /** Also end the user's API tokens (default true). */
+    pub revoke_tokens: Option<bool>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct DeleteFlows {
+    pub ids: Vec<i64>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct Annotate {
+    pub tags: Option<Vec<String>>,
+    pub note: Option<String>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct StopBody {
+    pub stopped: bool,
+}
+#[derive(ToSchema, Serialize)]
+pub struct NewToken {
+    pub name: String,
+    pub expires_days: Option<u32>,
+    pub scope: Option<TokenScope>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct NewUser {
+    pub username: String,
+    pub password: String,
+    pub role: Role,
+}
+#[derive(ToSchema, Serialize)]
+pub struct RoleBody {
+    pub role: Role,
+}
+/// Not JSON: raw bytes.
+#[derive(ToSchema, Serialize)]
+#[schema(value_type = String, format = Binary)]
+pub struct Bytes(Vec<u8>);
+
+#[utoipa::path(get, path = "/status", operation_id = "status", tag = "session", description = "Server name, version and whether first-run setup is pending. No sign-in needed.", responses((status = 200, description = "OK", body = Status), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn status() {}
+
+#[utoipa::path(post, path = "/setup", operation_id = "setup", tag = "session", description = "Create the first admin account with the code printed at startup. No sign-in needed.", request_body = SetupBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn setup() {}
+
+#[utoipa::path(post, path = "/auth/login", operation_id = "login", tag = "session", description = "Sign in with a username and password. Sets the session cookie. No sign-in needed.", request_body = LoginBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn login() {}
+
+#[utoipa::path(post, path = "/auth/logout", operation_id = "logout", tag = "session", description = "End the current session. Needs the viewer role or above.", responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn logout() {}
+
+#[utoipa::path(get, path = "/auth/me", operation_id = "me", tag = "session", description = "The signed-in user and the CSRF token for cookie sessions. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn me() {}
+
+#[utoipa::path(post, path = "/auth/ticket", operation_id = "login_ticket", tag = "session", description = "Exchange the single-use, 60-second login ticket of an embedded engine (`bosun serve --embedded`) for an admin session. Loopback only; the exchange is audited. No sign-in needed.", request_body = TicketBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Ticket not valid", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn login_ticket() {}
+
+#[utoipa::path(get, path = "/auth/sso", operation_id = "sso_config", tag = "session", description = "Single sign-on button details, if configured. No sign-in needed.", responses((status = 200, description = "OK", body = SsoInfo), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn sso_config() {}
+
+#[utoipa::path(post, path = "/auth/password", operation_id = "change_password", tag = "session", description = "Change your own password. Needs the viewer role or above.", request_body = PasswordBody, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn change_password() {}
+
+#[utoipa::path(get, path = "/flows", operation_id = "list_flows", tag = "history", description = "List recorded flows, newest first. Needs the viewer role or above.", params(("text" = Option<String>, Query), ("host" = Option<String>, Query), ("methods" = Option<String>, Query), ("status_min" = Option<i64>, Query), ("status_max" = Option<i64>, Query), ("in_scope_only" = Option<bool>, Query), ("source" = Option<String>, Query), ("hide_ext" = Option<String>, Query), ("before" = Option<i64>, Query), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = Vec<FlowSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_flows() {}
+
+#[utoipa::path(delete, path = "/flows", operation_id = "delete_flows", tag = "history", description = "Delete flows by id. Needs the tester role or above.", request_body = DeleteFlows, responses((status = 200, description = "OK", body = Deleted), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn delete_flows() {}
+
+#[utoipa::path(get, path = "/flows/{id}", operation_id = "get_flow", tag = "history", description = "One flow without bodies. Needs the viewer role or above.", params(("id" = i64, Path)), responses((status = 200, description = "OK", body = FlowOverview), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_flow() {}
+
+#[utoipa::path(patch, path = "/flows/{id}", operation_id = "annotate_flow", tag = "history", description = "Set tags and note. Needs the tester role or above.", params(("id" = i64, Path)), request_body = Annotate, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn annotate_flow() {}
+
+#[utoipa::path(get, path = "/flows/{id}/ws", operation_id = "ws_messages", tag = "history", description = "WebSocket messages of an upgraded flow. Needs the viewer role or above.", params(("id" = i64, Path), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = Vec<WsMessage>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn ws_messages() {}
+
+#[utoipa::path(get, path = "/flows/{id}/{part}/body", operation_id = "flow_body", tag = "history", description = "A message body, streamed. Supports a single Range; ?decoded=1 undoes Content-Encoding (parts: request, response, original-request, original-response). Needs the viewer role or above.", params(("id" = i64, Path), ("part" = String, Path), ("decoded" = Option<String>, Query)), responses((status = 200, description = "Bytes", body = Bytes, content_type = "application/octet-stream"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn flow_body() {}
+
+#[utoipa::path(get, path = "/sitemap", operation_id = "site_map", tag = "history", description = "Distinct hosts and paths seen. Needs the viewer role or above.", params(("host" = Option<String>, Query)), responses((status = 200, description = "OK", body = Vec<SiteMapEntry>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn site_map() {}
+
+#[utoipa::path(get, path = "/scope", operation_id = "get_scope", tag = "scope", description = "The target scope. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ScopeSpec), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_scope() {}
+
+#[utoipa::path(put, path = "/scope", operation_id = "put_scope", tag = "scope", description = "Replace the target scope (audited). Needs the tester role or above.", request_body = ScopeSpec, responses((status = 200, description = "OK", body = ScopeSpec), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_scope() {}
+
+#[utoipa::path(get, path = "/rules", operation_id = "get_rules", tag = "rules", description = "Match and replace rules. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<MatchRule>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_rules() {}
+
+#[utoipa::path(put, path = "/rules", operation_id = "put_rules", tag = "rules", description = "Replace the rules (audited). Needs the tester role or above.", request_body = Vec<MatchRule>, responses((status = 200, description = "OK", body = Vec<MatchRule>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_rules() {}
+
+#[utoipa::path(get, path = "/intercept", operation_id = "get_intercept", tag = "intercept", description = "Interception settings. Needs the viewer role or above.", responses((status = 200, description = "OK", body = InterceptSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_intercept() {}
+
+#[utoipa::path(put, path = "/intercept", operation_id = "put_intercept", tag = "intercept", description = "Change interception settings. Needs the tester role or above.", request_body = InterceptSettings, responses((status = 200, description = "OK", body = InterceptSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_intercept() {}
+
+#[utoipa::path(get, path = "/intercept/queue", operation_id = "intercept_queue", tag = "intercept", description = "Held messages. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<InterceptSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn intercept_queue() {}
+
+#[utoipa::path(get, path = "/intercept/queue/{id}", operation_id = "intercept_item", tag = "intercept", description = "One held message. Needs the viewer role or above.", params(("id" = i64, Path)), responses((status = 200, description = "OK", body = InterceptItem), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn intercept_item() {}
+
+#[utoipa::path(post, path = "/intercept/queue/{id}", operation_id = "intercept_decide", tag = "intercept", description = "Forward (optionally edited) or drop a held message. Needs the tester role or above.", params(("id" = i64, Path)), request_body = Decision, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn intercept_decide() {}
+
+#[utoipa::path(post, path = "/intercept/forward-all", operation_id = "intercept_forward_all", tag = "intercept", description = "Forward everything held. Needs the tester role or above.", responses((status = 200, description = "OK", body = Forwarded), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn intercept_forward_all() {}
+
+#[utoipa::path(get, path = "/proxy", operation_id = "proxy_info", tag = "proxy", description = "Proxy settings and resource counters. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ProxyInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn proxy_info() {}
+
+#[utoipa::path(put, path = "/tools/stop", operation_id = "set_stopped", tag = "proxy", description = "The kill switch for all tool traffic. Needs the tester role or above.", request_body = StopBody, responses((status = 200, description = "OK", body = Stopped), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn set_stopped() {}
+
+#[utoipa::path(get, path = "/ca", operation_id = "ca_info", tag = "proxy", description = "The CA certificate's fingerprints and PEM. Needs the viewer role or above.", responses((status = 200, description = "OK", body = CaInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn ca_info() {}
+
+#[utoipa::path(get, path = "/ca/cert.pem", operation_id = "ca_pem", tag = "proxy", description = "The CA certificate for download. Needs the viewer role or above.", responses((status = 200, description = "Bytes", body = Bytes, content_type = "application/octet-stream"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn ca_pem() {}
+
+#[utoipa::path(post, path = "/browser/launch", operation_id = "launch_browser", tag = "proxy", description = "Start a browser preconfigured for the proxy (loopback servers only). Needs the tester role or above.", responses((status = 200, description = "OK", body = Launched), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn launch_browser() {}
+
+#[utoipa::path(get, path = "/tokens", operation_id = "list_tokens", tag = "accounts", description = "Your API tokens. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<ApiToken>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_tokens() {}
+
+#[utoipa::path(post, path = "/tokens", operation_id = "create_token", tag = "accounts", description = "Create an API token; the secret is shown once. Needs the viewer role or above.", request_body = NewToken, responses((status = 201, description = "OK", body = NewTokenReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn create_token() {}
+
+#[utoipa::path(delete, path = "/tokens/{id}", operation_id = "delete_token", tag = "accounts", description = "Revoke one of your tokens. Needs the viewer role or above.", params(("id" = i64, Path)), responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn delete_token() {}
+
+#[utoipa::path(get, path = "/users", operation_id = "list_users", tag = "accounts", description = "All users. Needs the admin role or above.", responses((status = 200, description = "OK", body = Vec<User>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_users() {}
+
+#[utoipa::path(post, path = "/users", operation_id = "create_user", tag = "accounts", description = "Create a user. Needs the admin role or above.", request_body = NewUser, responses((status = 201, description = "OK", body = User), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn create_user() {}
+
+#[utoipa::path(delete, path = "/users/{id}", operation_id = "delete_user", tag = "accounts", description = "Delete a user. Needs the admin role or above.", params(("id" = i64, Path)), responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn delete_user() {}
+
+#[utoipa::path(put, path = "/users/{id}/role", operation_id = "set_user_role", tag = "accounts", description = "Change a user's role. Needs the admin role or above.", params(("id" = i64, Path)), request_body = RoleBody, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn set_user_role() {}
+
+#[utoipa::path(get, path = "/users/{id}/sessions", operation_id = "list_user_sessions", tag = "accounts", description = "A user's sessions. Needs the admin role or above.", params(("id" = i64, Path)), responses((status = 200, description = "OK", body = Vec<SessionInfo>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_user_sessions() {}
+
+#[utoipa::path(delete, path = "/users/{id}/sessions", operation_id = "revoke_user_sessions", tag = "accounts", description = "End all of a user's sessions. Needs the admin role or above.", params(("id" = i64, Path)), responses((status = 200, description = "OK", body = Revoked), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn revoke_user_sessions() {}
+
+#[utoipa::path(delete, path = "/users/{id}/sessions/{sid}", operation_id = "revoke_user_session", tag = "accounts", description = "End one session. Needs the admin role or above.", params(("id" = i64, Path), ("sid" = String, Path)), responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn revoke_user_session() {}
+
+#[utoipa::path(get, path = "/users/{id}/tokens", operation_id = "list_user_tokens", tag = "accounts", description = "A user's API tokens. Needs the admin role or above.", params(("id" = i64, Path)), responses((status = 200, description = "OK", body = Vec<ApiToken>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_user_tokens() {}
+
+#[utoipa::path(delete, path = "/users/{id}/tokens/{tid}", operation_id = "revoke_user_token", tag = "accounts", description = "Revoke a user's token. Needs the admin role or above.", params(("id" = i64, Path), ("tid" = i64, Path)), responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn revoke_user_token() {}
+
+#[utoipa::path(get, path = "/projects", operation_id = "list_projects", tag = "projects", description = "The projects in the projects folder, the one that is open, and recently opened names. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ProjectList), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn list_projects() {}
+
+#[utoipa::path(post, path = "/projects", operation_id = "create_project", tag = "projects", description = "Create a project, and open it if asked. Needs the admin role or above; audited.", request_body = NewProject, responses((status = 201, description = "Created", body = ProjectInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn create_project() {}
+
+#[utoipa::path(post, path = "/projects/close", operation_id = "close_project", tag = "projects", description = "Close the project: a temporary in-memory one opens in its place. Connected clients are told to reload. Needs the admin role or above; audited.", responses((status = 200, description = "OK", body = CurrentProject), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn close_project() {}
+
+#[utoipa::path(post, path = "/projects/import", operation_id = "import_project", tag = "projects", description = "Import a project file sent as the request body (application/octet-stream). The file is never opened as it is: it is checked, then its content is copied into a new project. Needs the admin role or above; audited.", params(("name" = String, Query), ("open" = Option<bool>, Query)), responses((status = 201, description = "Created", body = ProjectInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn import_project() {}
+
+#[utoipa::path(delete, path = "/projects/{name}", operation_id = "delete_project", tag = "projects", description = "Delete a project that is not open. Needs the admin role or above; audited.", params(("name" = String, Path)), responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn delete_project() {}
+
+#[utoipa::path(post, path = "/projects/{name}/open", operation_id = "open_project", tag = "projects", description = "Switch to a project. Held intercept messages are dropped, interception starts off, and connected clients are told to reload. Needs the admin role or above; audited.", params(("name" = String, Path)), responses((status = 200, description = "OK", body = CurrentProject), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn open_project() {}
+
+#[utoipa::path(post, path = "/projects/{name}/rename", operation_id = "rename_project", tag = "projects", description = "Rename a project that is not open. Needs the admin role or above; audited.", params(("name" = String, Path)), request_body = RenameProject, responses((status = 200, description = "OK", body = ProjectInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn rename_project() {}
+
+#[utoipa::path(get, path = "/projects/{name}/export", operation_id = "export_project", tag = "projects", description = "Download a consistent copy of a project (including the open one) as a file. Needs the admin role or above; audited.", params(("name" = String, Path)), responses((status = 200, description = "The project file", content_type = "application/octet-stream"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn export_project() {}
+
+#[utoipa::path(post, path = "/projects/{name}/backup", operation_id = "backup_project", tag = "projects", description = "Save a copy of a project in the backups folder. Needs the admin role or above; audited.", params(("name" = String, Path)), responses((status = 200, description = "OK", body = BackupInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
+fn backup_project() {}
+
+#[utoipa::path(get, path = "/audit", operation_id = "audit_log", tag = "accounts", description = "The audit log, newest first. Needs the admin role or above.", params(("before" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = Vec<AuditEntry>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn audit_log() {}
+
+#[utoipa::path(get, path = "/events", operation_id = "events", tag = "events", description = "WebSocket event stream. ?since=N&epoch=E resumes after event N of that engine run (see ProxyEvent). Needs the viewer role or above.", params(("since" = Option<i64>, Query), ("epoch" = Option<String>, Query)), responses((status = 101, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn events() {}
+
+#[derive(OpenApi)]
+#[openapi(
+    info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
+        description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
+    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    components(schemas(ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
+    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "accounts"), (name = "projects"), (name = "events"))
+)]
+pub struct Api;
+
+/// The description as pretty JSON, the form committed in `docs/openapi.json`.
+pub fn json() -> String {
+    let mut s = Api::openapi()
+        .to_pretty_json()
+        .expect("the description serialises");
+    s.push('\n');
+    s
+}
+
+/// Every documented (method, path), for checking against the router.
+pub const OPERATIONS: &[(&str, &str)] = &[
+    ("get", "/status"),
+    ("post", "/setup"),
+    ("post", "/auth/login"),
+    ("post", "/auth/logout"),
+    ("get", "/auth/me"),
+    ("post", "/auth/ticket"),
+    ("get", "/auth/sso"),
+    ("post", "/auth/password"),
+    ("get", "/flows"),
+    ("delete", "/flows"),
+    ("get", "/flows/{id}"),
+    ("patch", "/flows/{id}"),
+    ("get", "/flows/{id}/ws"),
+    ("get", "/flows/{id}/{part}/body"),
+    ("get", "/sitemap"),
+    ("get", "/scope"),
+    ("put", "/scope"),
+    ("get", "/rules"),
+    ("put", "/rules"),
+    ("get", "/intercept"),
+    ("put", "/intercept"),
+    ("get", "/intercept/queue"),
+    ("get", "/intercept/queue/{id}"),
+    ("post", "/intercept/queue/{id}"),
+    ("post", "/intercept/forward-all"),
+    ("get", "/proxy"),
+    ("put", "/tools/stop"),
+    ("get", "/ca"),
+    ("get", "/ca/cert.pem"),
+    ("post", "/browser/launch"),
+    ("get", "/tokens"),
+    ("post", "/tokens"),
+    ("delete", "/tokens/{id}"),
+    ("get", "/users"),
+    ("post", "/users"),
+    ("delete", "/users/{id}"),
+    ("put", "/users/{id}/role"),
+    ("get", "/users/{id}/sessions"),
+    ("delete", "/users/{id}/sessions"),
+    ("delete", "/users/{id}/sessions/{sid}"),
+    ("get", "/users/{id}/tokens"),
+    ("delete", "/users/{id}/tokens/{tid}"),
+    ("get", "/projects"),
+    ("post", "/projects"),
+    ("post", "/projects/close"),
+    ("post", "/projects/import"),
+    ("delete", "/projects/{name}"),
+    ("post", "/projects/{name}/open"),
+    ("post", "/projects/{name}/rename"),
+    ("get", "/projects/{name}/export"),
+    ("post", "/projects/{name}/backup"),
+    ("get", "/audit"),
+    ("get", "/events"),
+];

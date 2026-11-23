@@ -2,13 +2,17 @@
   import { onMount } from 'svelte';
   import { api, qs } from '../lib/api';
   import { session } from '../lib/session.svelte';
-  import { b64ToBytes, bytesToText, flowUrl, fmtSize, fmtTime } from '../lib/bytes';
-  import type { FlowDetail, FlowSummary, WsMessage } from '../lib/types';
+  import { b64ToBytes, bytesToB64, bytesToText, flowUrl, fmtSize, fmtTime } from '../lib/bytes';
+  import { bodyUrl, loadMore, loadPart, type Loaded, type PartName } from '../lib/flowbody';
+  import type { FlowMeta, FlowSummary, WsMessage } from '../lib/types';
   import VirtualList from '../components/VirtualList.svelte';
   import MessageView from '../components/MessageView.svelte';
 
   let flows = $state<FlowSummary[]>([]);
-  let selected = $state<FlowDetail | null>(null);
+  let selected = $state<FlowMeta | null>(null);
+  let req = $state<Loaded | null>(null);
+  let resp = $state<Loaded | null>(null);
+  let loadError = $state('');
   let wsMessages = $state<WsMessage[]>([]);
   let detailTab = $state<'messages' | 'original' | 'ws'>('messages');
   let pending = $state(0);
@@ -57,28 +61,81 @@
     return true;
   }
 
+  // Which stored messages the two panes show: the current ones, or what the client and server first sent.
+  function parts(tab: 'messages' | 'original'): [PartName, PartName] {
+    if (tab === 'messages' || !selected) return ['request', 'response'];
+    return [selected.original_request ? 'original-request' : 'request', selected.original_response ? 'original-response' : 'response'];
+  }
+
+  let opening = 0;
+  async function loadPanes() {
+    const m = selected;
+    if (!m) return;
+    const ticket = ++opening;
+    loadError = '';
+    try {
+      const tab = detailTab === 'original' ? 'original' : 'messages';
+      const [rp, sp] = parts(tab);
+      const info = (p: PartName) => (p === 'request' ? m.request : p === 'response' ? m.response : p === 'original-request' ? m.original_request : m.original_response);
+      const [a, b] = await Promise.all([
+        loadPart(m, rp, info(rp)!),
+        info(sp) ? loadPart(m, sp, info(sp)!) : Promise.resolve(null),
+      ]);
+      if (ticket !== opening) return;
+      req = a;
+      resp = b;
+    } catch (e) {
+      if (ticket === opening) loadError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function loadNext(which: 'req' | 'resp', decoded: boolean) {
+    const m = selected;
+    const cur = which === 'req' ? req : resp;
+    if (!m || !cur) return;
+    const [rp, sp] = parts(detailTab === 'original' ? 'original' : 'messages');
+    try {
+      const next = await loadMore(m, which === 'req' ? rp : sp, cur, decoded);
+      if (which === 'req') req = next;
+      else resp = next;
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  const toB64 = (l: Loaded | null) => (l ? bytesToB64(join(l.head, l.body)) : null);
+  function join(a: Uint8Array, b: Uint8Array): Uint8Array {
+    const out = new Uint8Array(a.length + b.length);
+    out.set(a, 0);
+    out.set(b, a.length);
+    return out;
+  }
+
   async function open(f: FlowSummary) {
-    selected = await api.get<FlowDetail>(`/flows/${f.id}`);
+    selected = await api.get<FlowMeta>(`/flows/${f.id}`);
     detailTab = 'messages';
     wsMessages = [];
+    req = null;
+    resp = null;
+    await loadPanes();
     if (f.status === 101) wsMessages = await api.get<WsMessage[]>(`/flows/${f.id}/ws`);
   }
 
   async function saveNote() {
     if (!selected) return;
-    await api.patch(`/flows/${selected.summary.id}`, { note: selected.summary.note ?? '', tags: selected.summary.tags });
+    await api.patch(`/flows/${selected.id}`, { note: selected.note ?? '', tags: selected.tags });
   }
 
   async function remove() {
     if (!selected) return;
-    const id = selected.summary.id;
+    const id = selected.id;
     await api.del('/flows', { ids: [id] });
     flows = flows.filter((f) => f.id !== id);
     selected = null;
   }
 
   async function copyUrl() {
-    if (selected) await navigator.clipboard.writeText(flowUrl(selected.summary));
+    if (selected) await navigator.clipboard.writeText(flowUrl(selected));
   }
 
   function statusClass(s: number | null): string {
@@ -89,6 +146,10 @@
   onMount(() => {
     reload();
     return session.on((e) => {
+      if (e.type === 'reload') {
+        reload();
+        return;
+      }
       if (e.type !== 'flow') return;
       if (simpleFilter) {
         if (matches(e.flow)) flows = [e.flow, ...flows];
@@ -120,13 +181,13 @@
     <div class="body">
       <VirtualList items={flows} onNearEnd={more}>
         {#snippet row(f: FlowSummary)}
-          <button class="row" class:active={selected?.summary.id === f.id} class:oos={!f.in_scope} onclick={() => open(f)}>
+          <button class="row" class:active={selected?.id === f.id} class:oos={!f.in_scope} onclick={() => open(f)}>
             <span class="c-id">{f.id}</span>
             <span class="c-m">{f.method}</span>
             <span class="c-host">{f.scheme}://{f.host}{(f.scheme === 'https' && f.port === 443) || (f.scheme === 'http' && f.port === 80) ? '' : ':' + f.port}</span>
             <span class="c-path">{f.path}</span>
-            <span class="c-st {statusClass(f.status)}">{f.error ? 'error' : (f.status ?? '…')}</span>
-            <span class="c-len">{fmtSize(f.response_len)}</span>
+            <span class="c-st {statusClass(f.status ?? null)}">{f.error ? 'error' : (f.status ?? '…')}</span>
+            <span class="c-len">{fmtSize(f.response_len ?? 0)}</span>
             <span class="c-mime">{f.mime ?? ''}</span>
             <span class="c-t">{fmtTime(f.started_ms)}</span>
           </button>
@@ -139,20 +200,20 @@
     <div class="detail">
       <div class="toolbar">
         <div class="seg">
-          <button class:active={detailTab === 'messages'} onclick={() => (detailTab = 'messages')}>Request / Response</button>
+          <button class:active={detailTab === 'messages'} onclick={() => { detailTab = 'messages'; loadPanes(); }}>Request / Response</button>
           {#if selected.original_request || selected.original_response}
-            <button class:active={detailTab === 'original'} onclick={() => (detailTab = 'original')}>Original (before edits)</button>
+            <button class:active={detailTab === 'original'} onclick={() => { detailTab = 'original'; loadPanes(); }}>Original (before edits)</button>
           {/if}
-          {#if selected.summary.status === 101}
+          {#if selected.status === 101}
             <button class:active={detailTab === 'ws'} onclick={() => (detailTab = 'ws')}>WebSocket ({wsMessages.length})</button>
           {/if}
         </div>
-        <span class="url" title={flowUrl(selected.summary)}>{flowUrl(selected.summary)}</span>
+        <span class="url" title={flowUrl(selected)}>{flowUrl(selected)}</span>
         <span class="spacer"></span>
         <button onclick={copyUrl}>Copy URL</button>
         {#if session.can('tester')}<button onclick={remove}>Delete</button>{/if}
       </div>
-      {#if selected.summary.error}<p class="error pad">{selected.summary.error}</p>{/if}
+      {#if selected.error}<p class="error pad">{selected.error}</p>{/if}
       {#if detailTab === 'ws'}
         <div class="ws">
           {#each wsMessages as m (m.id)}
@@ -164,20 +225,32 @@
         </div>
       {:else}
         <div class="pair">
-          {#key `${selected.summary.id}-${detailTab}`}
-            <MessageView title="Request" raw={detailTab === 'original' ? (selected.original_request ?? selected.request) : selected.request} />
+          {#key `${selected.id}-${detailTab}`}
+            {@const names = parts(detailTab === 'original' ? 'original' : 'messages')}
+            <MessageView
+              title="Request"
+              raw={toB64(req)}
+              rawRemaining={req ? req.bodyLen - req.body.length : 0}
+              onMore={(d) => loadNext('req', d)}
+              downloadHref={bodyUrl(selected.id, names[0])}
+            />
             <MessageView
               title={selected.response_truncated ? 'Response (truncated)' : 'Response'}
-              raw={detailTab === 'original' ? (selected.original_response ?? selected.response) : selected.response}
-              decodedBody={detailTab === 'original' ? null : selected.response_body_decoded}
+              raw={toB64(resp)}
+              decodedBody={resp?.decoded ? bytesToB64(resp.decoded) : null}
+              rawRemaining={resp ? resp.bodyLen - resp.body.length : 0}
+              decodedMore={resp?.decodedMore ?? false}
+              onMore={(d) => loadNext('resp', d)}
+              downloadHref={resp ? bodyUrl(selected.id, names[1]) : ''}
             />
           {/key}
         </div>
       {/if}
-      {#if selected.decode_note}<p class="small muted pad">{selected.decode_note}</p>{/if}
+      {#if resp?.note}<p class="small muted pad">{resp.note}</p>{/if}
+      {#if loadError}<p class="error pad">{loadError}</p>{/if}
       {#if session.can('tester')}
         <div class="toolbar">
-          <input class="grow" placeholder="Note" bind:value={selected.summary.note} onchange={saveNote} />
+          <input class="grow" placeholder="Note" bind:value={selected.note} onchange={saveNote} />
         </div>
       {/if}
     </div>

@@ -62,6 +62,22 @@ test('history: a request through the proxy appears without a reload', async () =
   await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
 });
 
+test('history: a large response is shown a page at a time', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/big`);
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await page.locator('.row', { hasText: '/big' }).click();
+  const resp = page.locator('.msg').nth(1);
+  await expect(resp.locator('pre.code')).toContainText('START-MARK');
+  await expect(resp.locator('pre.code')).not.toContainText('END-MARK');
+  await expect(resp.getByText(/of the body not loaded/)).toBeVisible();
+  // Two more pages bring in the rest.
+  await resp.getByRole('button', { name: 'Load more' }).click();
+  await resp.getByRole('button', { name: 'Load more' }).click();
+  await expect(resp.locator('pre.code')).toContainText('END-MARK');
+  await expect(resp.getByRole('button', { name: 'Load more' })).toHaveCount(0);
+  await expect(resp.getByRole('link', { name: 'download body' })).toHaveAttribute('href', /\/response\/body$/);
+});
+
 test('the render view cannot run script from a hostile page', async () => {
   await viaProxy(PROXY_PORT, `${TARGET}/evil`);
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
@@ -113,4 +129,25 @@ test('intercept: dropping a request answers the client with an error', async () 
   expect(reply.status).not.toBe(200);
   expect(seen.some((s) => s.path === '/dropped')).toBe(false);
   await page.getByLabel('Intercept requests').uncheck();
+});
+
+test('projects: a new project starts empty, and the first one comes back with its history', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Projects' }).click();
+  await expect(page.getByText('Open: default')).toBeVisible();
+
+  await page.getByLabel('Project name').fill('second');
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page.locator('tbody tr', { hasText: 'second' })).toBeVisible();
+  // "open it" is on by default.
+  await expect(page.getByText('Open: second')).toBeVisible();
+
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toHaveCount(0);
+
+  await nav.getByRole('button', { name: 'Projects' }).click();
+  await page.locator('tbody tr', { hasText: 'default' }).getByRole('button', { name: 'Open' }).click();
+  await expect(page.getByText('Open: default')).toBeVisible();
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/hello-history' }).first()).toBeVisible();
 });

@@ -35,7 +35,7 @@
     error = '';
     msg = '';
     const clean = (rs: ScopeRule[]) =>
-      rs.filter((r) => r.host.trim()).map((r) => ({ host: r.host.trim(), scheme: r.scheme || null, port: r.port || null, path: r.path || null }));
+      rs.filter((r) => r.host.trim()).map((r) => ({ host: r.host.trim(), scheme: r.scheme || null, port: r.port || null, path: r.path || null, allow_private: !!r.allow_private }));
     try {
       scope = await api.put<ScopeSpec>('/scope', { include: clean(scope.include), exclude: clean(scope.exclude) });
       msg = 'Scope saved.';
@@ -97,14 +97,14 @@
     <div class="scroll pad">
       <p class="small muted">
         Active tools only ever send to in-scope targets. Empty include list means nothing is in scope.
-        Host patterns: <code>example.com</code>, or <code>*.example.com</code> for one sub-domain level. Path is a regex.
+        Host patterns: <code>example.com</code>, or <code>*.example.com</code> for one sub-domain level. Path is a regex. Tools refuse a host that resolves to this machine (loopback, link-local, cloud metadata) unless the rule ticks Allow local.
       </p>
       {#if error}<p class="error">{error}</p>{/if}
       {#if msg}<p class="ok">{msg}</p>{/if}
       {#each [['include', 'Include'], ['exclude', 'Exclude']] as const as [kind, label] (kind)}
         <h3>{label}</h3>
         <table class="grid">
-          <thead><tr><th>Scheme</th><th>Host</th><th>Port</th><th>Path regex</th><th></th></tr></thead>
+          <thead><tr><th>Scheme</th><th>Host</th><th>Port</th><th>Path regex</th><th title="Let this rule reach this machine's own addresses (loopback, link-local, the server's networks)">Allow local</th><th></th></tr></thead>
           <tbody>
             {#each scope[kind] as r, i (i)}
               <tr>
@@ -116,6 +116,7 @@
                 <td><input bind:value={r.host} disabled={!canEdit} class="mono" /></td>
                 <td><input type="number" bind:value={r.port} disabled={!canEdit} class="num" /></td>
                 <td><input bind:value={r.path} disabled={!canEdit} class="mono" /></td>
+                <td><input type="checkbox" bind:checked={r.allow_private} disabled={!canEdit} aria-label="Allow local addresses" /></td>
                 <td>{#if canEdit}<button onclick={() => (scope[kind] = scope[kind].filter((_, j) => j !== i))}>Remove</button>{/if}</td>
               </tr>
             {/each}

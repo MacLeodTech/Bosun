@@ -128,7 +128,7 @@ async fn start(cfg: ProxyConfig, scope_hosts: &[&str]) -> Harness {
         exclude: vec![],
     })
     .unwrap();
-    let (events, _) = tokio::sync::broadcast::channel(64);
+    let events = bosun_proxy::EventBus::new(64);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let cfg = ProxyConfig { listen: addr, ..cfg };

@@ -51,3 +51,10 @@ path = "fuzz_targets/rewrite_rules.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "import_project"
+path = "fuzz_targets/import_project.rs"
+test = false
+doc = false
+bench = false

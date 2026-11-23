@@ -50,8 +50,10 @@ pub(crate) struct Shared {
     pub cfg: ProxyConfig,
     pub ca: Arc<CertificateAuthority>,
     pub gate: Gate,
-    pub project: Arc<Project>,
-    pub recorder: Recorder,
+    /// The project being recorded to, and the recorder that writes to it. A request keeps the pair it started
+    /// with, so switching projects never sends half a flow to each.
+    pub active: RwLock<Arc<Active>>,
+    pub events: EventSender,
     pub intercept: Arc<InterceptController>,
     pub rules: RwLock<Arc<RuleSet>>,
     pub client: UpClient,
@@ -63,6 +65,11 @@ pub(crate) struct Shared {
     pub budget: MemoryBudget,
     pub passthrough: Scope,
     pub expected_auth: Option<String>,
+}
+
+pub(crate) struct Active {
+    pub project: Arc<Project>,
+    pub recorder: Recorder,
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +86,7 @@ struct ConnCtx {
 }
 
 /// Resource counters (see [`Proxy::stats`]).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct ProxyStats {
     pub memory_budget: usize,
     pub memory_used: usize,
@@ -168,19 +175,22 @@ impl Proxy {
             cfg.memory_budget_mib
                 .map_or_else(MemoryBudget::default_cap, |m| m.saturating_mul(1 << 20)),
         );
-        let recorder = Recorder::start(project.clone(), events.clone(), budget.clone());
+        let active = Arc::new(Active {
+            recorder: Recorder::start(project.clone(), events.clone(), budget.clone()),
+            project,
+        });
         Ok(Self {
             shared: Arc::new(Shared {
                 intercept: Arc::new(InterceptController::with_limits(
-                    events,
+                    events.clone(),
                     cfg.max_intercept_items,
                     cfg.max_intercept_bytes,
                 )),
                 cfg,
                 ca,
                 gate,
-                project,
-                recorder,
+                active: RwLock::new(active),
+                events,
                 rules: RwLock::new(Arc::new(RuleSet::default())),
                 client,
                 ws_client,
@@ -197,26 +207,27 @@ impl Proxy {
     /// Counters for `/proxy`: memory in use, and what had to be refused or dropped.
     pub fn stats(&self) -> ProxyStats {
         let sh = &self.shared;
+        let active = sh.active();
         ProxyStats {
             memory_budget: sh.budget.cap(),
             memory_used: sh.budget.used(),
             memory_refused: sh.budget.refused(),
-            recorder_bodies_dropped: sh
+            recorder_bodies_dropped: active
                 .recorder
                 .stats()
                 .bodies_dropped
                 .load(std::sync::atomic::Ordering::Relaxed),
-            recorder_records_dropped: sh
+            recorder_records_dropped: active
                 .recorder
                 .stats()
                 .records_dropped
                 .load(std::sync::atomic::Ordering::Relaxed),
-            recorder_write_failures: sh
+            recorder_write_failures: active
                 .recorder
                 .stats()
                 .write_failures
                 .load(std::sync::atomic::Ordering::Relaxed),
-            recorder_records_lost: sh
+            recorder_records_lost: active
                 .recorder
                 .stats()
                 .records_lost
@@ -250,7 +261,30 @@ impl Proxy {
 
     /// Wait until everything recorded so far has been written to the project.
     pub fn flush(&self) {
-        self.shared.recorder.flush();
+        self.shared.active().recorder.flush();
+    }
+
+    /// The project flows are being recorded to.
+    pub fn project(&self) -> Arc<Project> {
+        self.shared.active().project.clone()
+    }
+
+    /// Record to `project` from now on. Requests already in flight finish into the project they began in; this
+    /// waits until everything recorded so far has been written there, so the old project can then be closed.
+    pub fn switch_project(&self, project: Arc<Project>) {
+        let fresh = Arc::new(Active {
+            recorder: Recorder::start(
+                project.clone(),
+                self.shared.events.clone(),
+                self.shared.budget.clone(),
+            ),
+            project,
+        });
+        let old = std::mem::replace(
+            &mut *self.shared.active.write().unwrap_or_else(|e| e.into_inner()),
+            fresh,
+        );
+        old.recorder.flush();
     }
 
     pub async fn bind(&self) -> Result<TcpListener, ProxyError> {
@@ -281,6 +315,10 @@ impl Proxy {
 }
 
 impl Shared {
+    fn active(&self) -> Arc<Active> {
+        self.active.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     fn rules(&self) -> Arc<RuleSet> {
         self.rules.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -578,7 +616,8 @@ impl Shared {
     ) -> Response<RespBody> {
         let started = bosun_model::now_ms();
         let t0 = std::time::Instant::now();
-        let flow_id = self.project.next_flow_id();
+        let active = self.active();
+        let flow_id = active.project.next_flow_id();
         let wants_upgrade = is_upgrade(req.headers());
         let client_upgrade = wants_upgrade.then(|| hyper::upgrade::on(&mut req));
         let (parts, body) = req.into_parts();
@@ -641,7 +680,7 @@ impl Shared {
             match held {
                 Decision::Drop => {
                     if record {
-                        self.recorder.flow(self.new_flow(
+                        active.recorder.flow(self.new_flow(
                             flow_id,
                             &target,
                             started,
@@ -757,7 +796,7 @@ impl Shared {
             Ok(Err(e)) => {
                 let msg = error_chain(&e);
                 if record {
-                    self.recorder.flow(self.new_flow(
+                    active.recorder.flow(self.new_flow(
                         flow_id,
                         &target,
                         started,
@@ -779,7 +818,7 @@ impl Shared {
             Err(_) => {
                 let msg = "timed out waiting for the response".to_string();
                 if record {
-                    self.recorder.flow(self.new_flow(
+                    active.recorder.flow(self.new_flow(
                         flow_id,
                         &target,
                         started,
@@ -809,7 +848,7 @@ impl Shared {
             && let (Some(client_upgrade), Some(server_upgrade)) = (client_upgrade, server_upgrade)
         {
             if record {
-                self.recorder.flow(self.new_flow(
+                active.recorder.flow(self.new_flow(
                     flow_id,
                     &target,
                     started,
@@ -823,7 +862,7 @@ impl Shared {
                     in_scope,
                 ));
             }
-            let recorder = self.recorder.clone();
+            let recorder = active.recorder.clone();
             tokio::spawn(async move {
                 match tokio::join!(client_upgrade, server_upgrade) {
                     (Ok(c), Ok(s)) => {
@@ -852,7 +891,7 @@ impl Shared {
                     Err(e) => {
                         let msg = format!("failed to read the response body: {e:?}");
                         if record {
-                            self.recorder.flow(self.new_flow(
+                            active.recorder.flow(self.new_flow(
                                 flow_id,
                                 &target,
                                 started,
@@ -892,7 +931,7 @@ impl Shared {
                 match held {
                     Decision::Drop => {
                         if record {
-                            self.recorder.flow(self.new_flow(
+                            active.recorder.flow(self.new_flow(
                                 flow_id,
                                 &target,
                                 started,
@@ -933,7 +972,7 @@ impl Shared {
                 Response::from_parts(rparts, full(rbody))
             };
             if record {
-                self.recorder.flow(self.new_flow(
+                active.recorder.flow(self.new_flow(
                     flow_id,
                     &target,
                     started,
@@ -989,7 +1028,7 @@ impl Shared {
                     h.extend_from_slice(&captured);
                     h
                 });
-                shared.recorder.flow(shared.new_flow(
+                active.recorder.flow(shared.new_flow(
                     flow_id,
                     &target,
                     started,

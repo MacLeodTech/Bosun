@@ -92,6 +92,10 @@ pub struct Engine {
     /// Fingerprint of the certificate the UI serves over HTTPS (none when `api.tls` is off).
     pub ui_fingerprint: Option<String>,
     pub project_path: PathBuf,
+    /// SHA-256 of the CA's public key (what a browser is told to trust).
+    pub ca_spki: String,
+    /// For an embedded engine: the single-use ticket its parent exchanges for a session (`POST /auth/ticket`).
+    pub login_ticket: Option<String>,
     proxy: Proxy,
     stop: watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -99,6 +103,12 @@ pub struct Engine {
 
 impl Engine {
     pub async fn start(cfg: &Config) -> Result<Self> {
+        Self::start_with(cfg, false).await
+    }
+
+    /// Start the engine. `embedded` is for a desktop app that runs the engine as a child process: it gets a login
+    /// ticket (see [`Engine::login_ticket`]) so the user is not asked for a password on every launch.
+    pub async fn start_with(cfg: &Config, embedded: bool) -> Result<Self> {
         let paths = Paths::new(cfg.data_dir());
         private_dir(&paths.data)?;
         private_dir(&paths.projects())?;
@@ -115,7 +125,7 @@ impl Engine {
 
         let scope_spec: ScopeSpec = project.setting(bosun_api::SETTING_SCOPE)?.unwrap_or_default();
         let gate = Gate::new(Scope::compile(scope_spec).context("the saved scope is invalid")?);
-        let (events, _) = tokio::sync::broadcast::channel(4096);
+        let events = bosun_proxy::EventBus::new(4096);
 
         // Bind first, so port 0 in the config (tests) resolves before the proxy learns the API address.
         let api_listener = tokio::net::TcpListener::bind(cfg.api.listen)
@@ -178,7 +188,8 @@ impl Engine {
             &api_cfg,
             Deps {
                 app,
-                project,
+                projects_dir: paths.projects(),
+                project_path: Some(project_path.clone()),
                 proxy: proxy.clone(),
                 gate,
                 ca: ca.clone(),
@@ -188,6 +199,7 @@ impl Engine {
             },
         )?;
 
+        let login_ticket = embedded.then(|| state.issue_login_ticket());
         let (stop, rx) = watch::channel(false);
         let wait = |mut rx: watch::Receiver<bool>| async move {
             let _ = rx.wait_for(|v| *v).await;
@@ -204,10 +216,28 @@ impl Engine {
             ca_fingerprint: ca.fingerprint(),
             ui_fingerprint,
             project_path,
+            ca_spki: ca.spki_hash(),
+            login_ticket,
             proxy,
             stop,
             tasks: vec![t1, t2],
         })
+    }
+
+    /// The address of the API, without the first-run setup code that [`Engine::ui_url`] carries.
+    pub fn api_url(&self) -> String {
+        let scheme = if self.api_tls { "https" } else { "http" };
+        let ip = if self.api_addr.ip().is_unspecified() {
+            std::net::IpAddr::from([127, 0, 0, 1])
+        } else {
+            self.api_addr.ip()
+        };
+        let host = if ip.is_ipv6() {
+            format!("[{ip}]")
+        } else {
+            ip.to_string()
+        };
+        format!("{scheme}://{host}:{}", self.api_addr.port())
     }
 
     /// The URL of the web UI (with the setup code in the fragment on first run; fragments are not sent to the

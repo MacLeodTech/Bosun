@@ -65,6 +65,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
   the operator's terminal or container log; the browser link carries it in the URL fragment, which is never sent
   to the server or written to its logs.
 
+- *Login tickets (the desktop app signing in).* An embedded engine (`bosun serve --embedded`) listens on loopback
+  only and prints one single-use ticket on its stdout, which only the parent process reads. `POST /auth/ticket`
+  exchanges it for an admin session: the ticket lives 60 seconds, is compared in constant time, is destroyed by
+  the first attempt that matches (and by expiry), is refused from any non-loopback peer, and goes through the same
+  per-address attempt limits as passwords. Both outcomes are audited. A page in the user's browser cannot use one: it
+  never sees it, and the Origin and Host rules still apply to the request.
+
 ### Tampering
 
 - *Traffic that reaches the UI through the proxy.* Requests the proxy would send to its own listeners are refused
@@ -79,14 +86,32 @@ This document says what is protected, from whom, and how. Code comments refer ba
   trigger would run the file author's SQL on our connection). Stored bodies are decompressed through a hard
   limit (128 MiB per body, 4 MiB per WebSocket message) and must match the size the file records, so a
   decompression bomb is refused as corruption. Importing someone else's project means copying rows into a new
-  file, never working in the foreign file.
+  file, never working in the foreign file: `POST /projects/import` streams the upload (at most 2 GiB) into a private
+  temporary file, opens it read-only with the checks above plus SQLite's quick check, and has SQLite write its live
+  content into a fresh file (`VACUUM INTO`), so free pages, stale data and anything else hiding in the original do
+  not come along. That file is then opened and upgraded like any other and only then given its name. A refused
+  import leaves no file behind and writes an audit entry. A project name is 1 to 64 characters of letters, digits,
+  spaces, dots, dashes and underscores (no path separators, no leading dot, no Windows device names), and names
+  map to `<projects dir>/<name>.bosun`, so no request can name a file anywhere else. The import path has a fuzz
+  target (`import_project`).
+- *Switching projects.* Admin only, one operation at a time. The new project is opened and checked first, so a
+  locked, damaged or hostile file changes nothing. Then the recorder, scope, rules and intercept settings change
+  together (a request already in flight finishes into the project it began in), held intercept messages are
+  dropped (nobody approved forwarding them in the new project), interception starts off, and every connected
+  client gets `project_switched` with a new event epoch, so none of them keeps showing, or acting on, the old
+  project's data. Settings saves wait for a switch in progress, so a setting is never saved to one project and applied
+  to another. Exports and backups are consistent snapshots (`VACUUM INTO`) and are audited; they hold everything the
+  project holds, credentials included, and are written owner-only.
+- *A stale or replayed event position.* The stream names its epoch (a new one with each engine run and each project
+  switch); a position from another epoch is answered with `reload`, never with events from the wrong project.
 - *Two processes on one project.* `<project>.lock` is held exclusively while a project is open; a second open
   fails and names the process that holds it.
 
 ### Repudiation
 
 - An append-only audit log (database triggers refuse UPDATE and DELETE) records sign-ins, account, token, scope,
-  rule, kill-switch, role, session-revocation and intercept changes (settings, drop, edited forward, forward-all),
+  rule, kill-switch, role, session-revocation, login-ticket, project (create, open, close, rename, delete, export,
+  backup, import and refused imports) and intercept changes (settings, drop, edited forward, forward-all),
   with the user and remote address. Admins can read it in the UI.
 
 ### Information disclosure
@@ -142,6 +167,21 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Out-of-scope traffic from tools.* Every request from Repeater, Intruder, the scanner, the crawler and plugins
   goes through one gate (`bosun-scope`) that refuses out-of-scope targets and honours a global stop switch. The
   proxy itself is exempt: it forwards what the user's own browser asks for.
+- *A scoped name pointed at the machine Bosun runs on (SSRF, DNS rebinding).* The gate resolves the name itself and
+  returns the addresses the tool must connect to; tools never resolve again. It refuses loopback, link-local (which
+  includes `169.254.169.254` and the IPv6 metadata address), unspecified and multicast addresses, IPv4-mapped IPv6
+  forms of those, and the host's own networks when the server lists them. One internal address among several
+  answers refuses the whole name. Only an include rule that names the address literally, or sets `allow_private`,
+  lifts this, and the Repeater's "send out of scope" choice does not. A per-host rate limit sits in the same gate.
+  Open: the server does not yet fill in its own networks (WP-23), so in container mode only the address classes
+  above are refused.
+- *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
+  with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
+  the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a
+  corrupt or hostile project file cannot make a read run on or allocate more than a few chunks.
+- *Upgrading a project or account file.* Each migration runs in one transaction, after the file is copied to
+  `<file>.pre-v<N>.bak` (owner-only, like the file). A failed step leaves the file as it was. These copies hold the
+  same secrets as the file and are not deleted automatically: remove them after checking the upgrade.
 - `unsafe` code is forbidden in every crate.
 - Containers run as nonroot on a distroless base, read-only root, all capabilities dropped.
 - The desktop window exposes no Tauri IPC commands and may only navigate to the engine's own origin.

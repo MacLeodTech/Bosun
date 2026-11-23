@@ -396,13 +396,19 @@ async fn the_proxy_cannot_reach_the_api() {
             .unwrap();
         let r = c.get(s.url("/status")).send().await.unwrap();
         // Refused either by the proxy (it knows the API address) or by the API (it sees its own proxy's
-        // outbound connection).
-        let want = if knows {
-            StatusCode::BAD_GATEWAY
+        // outbound connection). The API refuses in one of two places depending on whether the proxy has
+        // registered the connection by the time it is accepted: before any HTTP (the proxy then reports 502)
+        // or per request (508). Both are refusals; what matters is that the request never reaches a handler.
+        let ok: &[StatusCode] = if knows {
+            &[StatusCode::BAD_GATEWAY]
         } else {
-            StatusCode::LOOP_DETECTED
+            &[StatusCode::BAD_GATEWAY, StatusCode::LOOP_DETECTED]
         };
-        assert_eq!(r.status(), want, "proxy_knows_api={knows}");
+        assert!(
+            ok.contains(&r.status()),
+            "proxy_knows_api={knows}: got {}",
+            r.status()
+        );
         assert!(!r.text().await.unwrap().contains("setup_required"));
     }
 }

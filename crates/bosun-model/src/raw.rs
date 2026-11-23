@@ -96,7 +96,13 @@ fn swap_h2_version(input: &[u8], in_start_line_prefix: bool) -> (Vec<u8>, bool) 
     let pos = if in_start_line_prefix {
         line.starts_with(needle).then_some(0)
     } else {
-        line.windows(needle.len()).rposition(|w| w == needle)
+        // Only the version token (the last word of the request line) counts. A target such as `/HTTP/2/x`
+        // must not be rewritten: the rewrite would change the target and mark the message as HTTP/2.
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        line.iter()
+            .rposition(|&b| b == b' ')
+            .map(|sp| sp + 1)
+            .filter(|&p| &line[p..] == needle || &line[p..] == b"HTTP/2.0")
     };
     match pos {
         Some(p) if !line[p..].starts_with(b"HTTP/2.") || line[p..].starts_with(b"HTTP/2.0") => {
@@ -252,6 +258,28 @@ mod tests {
         let resp = RawResponse::parse(b"HTTP/2 204\r\nx: y\r\n\r\n").unwrap();
         assert_eq!(resp.status, 204);
         assert_eq!(resp.version, "HTTP/2");
+    }
+
+    #[test]
+    fn http2_text_inside_the_target_is_not_the_version() {
+        // Found by the http_messages fuzz target: the version swap used to match "HTTP/2" anywhere in the line, so
+        // a message with that text in its target did not survive a parse, serialise, parse round trip.
+        let raw = b"HTT TOHTTP/2/P HTTP/1.0\naa: a\n\n";
+        let req = RawRequest::parse(raw).unwrap();
+        assert_eq!(
+            (req.target.as_str(), req.version.as_str()),
+            ("TOHTTP/2/P", "HTTP/1.0")
+        );
+        assert_eq!(RawRequest::parse(&req.to_bytes()).as_ref(), Ok(&req));
+        // The real version token still works, with and without a carriage return, and as `HTTP/2.0`.
+        for raw in [
+            &b"GET /HTTP/2 HTTP/2\r\nh: a\r\n\r\n"[..],
+            b"GET /HTTP/2 HTTP/2.0\nh: a\n\n",
+        ] {
+            let req = RawRequest::parse(raw).unwrap();
+            assert_eq!((req.target.as_str(), req.version.as_str()), ("/HTTP/2", "HTTP/2"));
+            assert_eq!(RawRequest::parse(&req.to_bytes()).as_ref(), Ok(&req));
+        }
     }
 
     #[test]

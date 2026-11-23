@@ -1,0 +1,7 @@
+# Integration tests hold throw-away passwords and keys on purpose ("wrong password!!"), which the
+# hard-coded-cryptographic-value query reports as critical. They never ship, so they are not analysed.
+name: bosun
+paths-ignore:
+  - "**/tests/**"
+  - "e2e/**"
+  - "fuzz/**"

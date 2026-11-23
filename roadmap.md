@@ -758,7 +758,7 @@ These rules apply to every package:
   - Review the Dependabot PRs (TypeScript 7, Node 26, `actions/setup-go` 7.1.0).
   - Turn on branch protection with the required checks.
 - **Done when:** every CI job passes on `main`; branch protection requires them.
-- **Status (2026-11-23):** done. The repo is public; CI is green on `main`; branch protection requires the six
+- **Status (2026-11-23):** done. CodeQL skips `tests/`, `e2e/` and `fuzz/` (`.github/codeql/codeql-config.yml`): test fixtures hold throw-away passwords that its hard-coded-key query reports as critical. The repo is public; CI is green on `main`; branch protection requires the six
   CI jobs (add `e2e` and the `fuzz` matrix to the required list once they have passed on a pull request).
   - Code scanning: the custom CodeQL workflow works now that the default setup is off (re-run on `main` passed).
     Its nine first findings were false positives or by design and are dismissed with a comment each (zeroed

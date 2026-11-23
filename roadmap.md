@@ -36,7 +36,10 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done.
   2. **Phase 1:** the hardening packages WP-01 to WP-09, with the test harness (WP-36) alongside.
   3. **Phase 2:** the foundation packages. M2 starts as soon as WP-10, WP-12 and WP-35 are done, with the raw
      request engine (WP-40) and then Repeater (WP-41).
-- **Open decision:** the name check (domains, trademarks) is still to do.
+- **Decided (2026-11-23):** the product keeps the name Bosun. Published artefacts use distinct names: the crates.io
+  crate is `bosun-dast` (the installed binary stays `bosun`), and any npm package goes under the `@macleodtech` scope.
+  Windows code signing is deferred; unsigned builds ship until then. The name check found a medium risk: a pending
+  Class 9 filing for BOSUN (Bosun Technology Limited, Jan 2025, serial 98940487) to look up on TSDR before v0.2.
 
 ---
 
@@ -83,7 +86,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
 - Track D, release: WP-69, WP-70 (the first pages), WP-31.
-- Owner: the name check, signing certificates (Windows), an Apple Developer account.
+- Owner: look up the pending BOSUN Class 9 filing before v0.2; an Apple Developer account. Windows signing is deferred.
 - Gate: v0.2 for Windows, macOS and Linux; Docker and Podman images; the CLI; security review 3.
 
 **Phase 4: Intruder, Sequencer and performance. Release v0.3.**
@@ -574,7 +577,8 @@ These rules apply to every package:
   - Signed auto-update, off by default when a managed-environment policy is set.
   - A tagged-release workflow with checksums and SBOMs.
 - **Replaces:** Release items "Desktop installers" and "Auto-update for the desktop app".
-- **Decision for the owner:** which signing certificates to buy.
+- **Decision for the owner:** deferred (2026-11-23). Ship unsigned Windows builds for now. The free option to try later
+    is SignPath Foundation, which signs open-source projects at no cost.
 
 #### WP-23 Server mode in the engine · Phase 3 · M
 
@@ -1287,7 +1291,8 @@ the phase plan above sets the order. Tick an item here when its package lands.
 ### Release and packaging (from the first public release onwards)
 
 - [x] Licence decided: Apache-2.0 (was PolyForm Noncommercial, which barred paid client work).
-- [ ] Finish the name check for Bosun: domains and trademarks (crates.io `bosun` is taken, though the crates are
+- [ ] Finish the name check for Bosun: the name is kept (decided 2026-11-23, crate `bosun-dast`, npm `@macleodtech`).
+  Still to do: look up the pending BOSUN Class 9 filing (serial 98940487) and pick a domain (the crates are
   never published; the GitHub repos with this name are unrelated: an old monitoring tool and a small agent
   orchestrator). No Burp, Collaborator or ZAP branding anywhere. → owner task, Phase 3
 - [ ] A release workflow: tagged builds for Linux, macOS and Windows (x86_64 and aarch64), multi-arch images for

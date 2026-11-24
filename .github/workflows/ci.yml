@@ -2,7 +2,7 @@
 # any code change). Results go to the Security tab (code scanning) as well as failing the job.
 #
 # What fails the build:
-#   - rustfmt / clippy -D warnings / cargo test failures (tests also on Windows and macOS)
+#   - rustfmt / clippy -D warnings / cargo test failures (tests also on Windows; macOS is paused, see the `portable` job)
 #   - the web UI type check (svelte-check, warnings are errors) or build
 #   - the Playwright end-to-end suite (a real `bosun serve`, a real browser) and the fuzz targets (30 s each on
 #     pull requests, 10 min each in the weekly run)
@@ -76,7 +76,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        # macOS is paused (2026-11-23): GitHub's macOS runners are scarce and queue or cancel often, which made
+        # unrelated PRs fail. Re-enable by adding `macos-latest` back (roadmap, Housekeeping, tracks this).
+        os: [windows-latest]  # , macos-latest]
     defaults:
       run:
         shell: bash

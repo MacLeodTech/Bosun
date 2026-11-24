@@ -28,7 +28,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done.
   updates open at the time (PRs #6 to #10) are merged too. `bosun-desktop` still needs the platform webview libraries
   to build, so CI builds it on Linux only.
 - **Repo:** `MacLeodTech/Bosun` is **public**. `main` has branch protection with required status checks. CI runs on
-  GitHub-hosted runners only (`ubuntu-latest`, Windows and macOS for the test job); never the homelab self-hosted
+  GitHub-hosted runners only (`ubuntu-latest`, plus `windows-latest` for the test job; the macOS test job is paused, see Housekeeping); never the homelab self-hosted
   pools for this repo, and no `RUNNER` variable. Every PR so far has gone in as one branch per phase.
 - **Gates:** the Phase 1 and Phase 2 security reviews are done. The Phase 2 review found nothing to fix; its one note
   (an imported project's scope can carry `allow_private` rules) is by design and in `docs/threat-model.md`.
@@ -1416,3 +1416,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [x] Get CI green: SAST + SCA, Container image and Desktop shell have not passed yet → **WP-34**
 - [ ] Review the Dependabot PRs (TypeScript 7, Node 26, setup-go 7.1.0) → **WP-34**
 - [x] Set up branch protection and required checks once CI is green → **WP-34**
+- [ ] Re-enable the macOS test job (`macos-latest` in the `portable` matrix of `ci.yml`), paused 2026-11-23 because
+  GitHub's macOS runners queue or cancel often and made unrelated PRs fail. Do it before the v0.2 gate, which needs
+  macOS builds → **WP-09**, **WP-69**

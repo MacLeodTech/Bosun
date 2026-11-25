@@ -38,14 +38,16 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   came from a dev machine. Compare them with the first numbers the CI `footprint` job prints on GitHub's runners and
   adjust. Consider a Dependabot group for `github/codeql-action/*`, because `init`, `analyze` and `upload-sarif`
   must be the same version and Dependabot opens them as three PRs.
-- **Merged to `main` (2026-11-25), PR #22** (it combined #18 to #21 and the fix in #17 went in before it): WP-40
+- **Merged to `main` (2026-11-25):** PR #22 (it combined #18 to #21; the fix in #17 went in before it) brought WP-40
   (`bosun-http`), the first slice of WP-41 (the Repeater), the branding (icons, logo, banner, `icon.ico` for Windows,
-  `scripts/bosun.sh`), `docs/competitive-analysis.md` and WP-75 to WP-86. The desktop app builds on Linux and opens on
-  Windows; the sign-in logo, the Repeater page and first-run setup in the Windows window have not been checked by eye.
-- **In flight:** `wp-42-decoder` (WP-42, Rust side: `bosun-codec`, the API, the fuzz target; its UI pages wait for the
-  Windows session's `ui-phase0` branch, which restructures `web/`, so nothing else should edit `web/` until it lands).
+  `scripts/bosun.sh`), `docs/competitive-analysis.md` and WP-75 to WP-86. PR #23 brought the Rust side of WP-42
+  (`bosun-codec`, `/decoder/*`, `/comparer/diff`, the `codec` fuzz target). The desktop app builds on Linux and opens
+  on Windows; the sign-in logo, the Repeater page and first-run setup in the Windows window have not been checked
+  by eye.
+- **In flight:** the Windows session's `ui-phase0` branch (a UI restructure of `web/`, not yet pushed; it has been
+  asked to rebase onto `main` and open a PR). Nothing else should edit `web/` until it lands.
 - **Next, in order** (see the phase plan below):
-  1. Merge `wp-42-decoder` and `ui-phase0`, then add the Decoder and Comparer pages, and finish WP-41 (the three open
+  1. Merge `ui-phase0`, then add the Decoder and Comparer pages (finishes WP-42), and finish WP-41 (the three open
      items; the CLI one needs WP-26).
   2. **Phase 3, track A (M2):** WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
      used every day). WP-38 and WP-39 are the M1 follow-ups.
@@ -89,7 +91,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 **Phases 0 to 2: done** (repository and CI, hardening, foundation). See `docs/releases.md` for what each delivered.
 
 **Phase 3: manual tools and the front ends. Release v0.2, the first public preview.**
-- Track A, M2 tools: WP-41 (finish), then WP-42 and WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
+- Track A, M2 tools: WP-41 and WP-42 (finish), then WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.

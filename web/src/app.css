@@ -50,3 +50,6 @@ table.kv td { font-family: var(--font-mono); font-size: var(--fs-data); word-bre
 .m-GET { color: var(--m-get); } .m-POST { color: var(--m-post); } .m-PUT { color: var(--m-put); }
 .m-PATCH { color: var(--m-patch); } .m-DELETE { color: var(--m-delete); }
 .m-other { color: var(--m-other); }
+
+/* The preview shown while dragging requests (made by History's drag handler, so it lives outside any component). */
+.drag-ghost { position: fixed; top: -100px; left: -100px; padding: .15rem .6rem; background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: var(--fs-sm); }

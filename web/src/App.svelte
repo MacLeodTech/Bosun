@@ -8,23 +8,37 @@
   import { workspace, builtinPresets } from './lib/workspace.svelte';
   import { panels } from './lib/panels';
   import { isPanelId } from './lib/panelids';
+  import { commands, currentCtx } from './lib/commands.svelte';
+  import { registerBuiltins } from './lib/builtin';
+  import { buildHash, parseHash } from './lib/deeplink';
   import type { MenuItem } from './lib/menu';
   import Auth from './pages/Auth.svelte';
   import Dock from './components/dock/Dock.svelte';
   import Menu from './components/Menu.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import LayoutDialog from './components/LayoutDialog.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
+  import ShortcutsHelp from './components/ShortcutsHelp.svelte';
+  import ContextMenu from './components/ContextMenu.svelte';
+  import Toasts from './components/Toasts.svelte';
 
   /** Show a panel and record it in the address, so a link or a reload opens the same one. */
   function go(p: string) {
     workspace.open(p);
-    history.replaceState(null, '', `#${p}`);
+    history.replaceState(null, '', buildHash(p, historyView.openId));
   }
 
-  const fromHash = () => {
-    const h = location.hash.slice(1);
-    return isPanelId(h) ? h : null;
-  };
+  /** Open what an address names: a panel, and a request in it. */
+  function followHash() {
+    const link = parseHash(location.hash, isPanelId);
+    if (!link.panel) return;
+    if (link.flow !== null && link.flow !== historyView.openId) {
+      historyView.select([link.flow], link.flow);
+      historyView.openId = link.flow;
+      workspace.reveal('flow', 'history');
+    }
+    workspace.open(link.panel);
+  }
 
   async function loadProject() {
     try {
@@ -39,6 +53,34 @@
     if (session.me) loadProject();
   });
 
+  // The address follows the open request: #history?flow=1234.
+  $effect(() => {
+    const id = historyView.openId;
+    if (!session.me) return;
+    const cur = parseHash(location.hash, isPanelId).panel ?? 'history';
+    const next = buildHash(cur, id);
+    if (location.hash !== next) history.replaceState(null, '', next);
+  });
+
+  /** Plain keys belong to whatever has focus; commands with a modifier work from anywhere that is not a text field. */
+  function onKey(e: KeyboardEvent) {
+    if (e.defaultPrevented || !session.me) return;
+    const t = e.target as HTMLElement | null;
+    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    // An open dialog (palette, help, layouts) owns the keyboard.
+    if (document.querySelector('dialog[open]')) return;
+    if (e.key === '?' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      shell.help = true;
+      return;
+    }
+    const ctx = currentCtx();
+    const c = commands.forEvent(e, ctx, typing);
+    if (!c) return;
+    e.preventDefault();
+    void commands.run(c.id, ctx);
+  }
+
   const layoutItems = $derived<MenuItem[]>([
     { kind: 'heading', label: 'Layouts' },
     ...builtinPresets.map((p): MenuItem => ({ label: p.label, hint: p.hint.split(',')[0], checked: workspace.applied === p.id, run: () => workspace.apply(p.id) })),
@@ -52,14 +94,10 @@
 
   onMount(() => {
     session.init();
-    // A link such as #repeater opens that panel.
-    const initial = fromHash();
-    if (initial) workspace.open(initial);
-    const onHash = () => {
-      const p = fromHash();
-      if (p) workspace.open(p);
-    };
-    window.addEventListener('hashchange', onHash);
+    const unregister = registerBuiltins();
+    // A link such as #repeater, or #history?flow=12, opens that panel and request.
+    followHash();
+    window.addEventListener('hashchange', followHash);
     const off = session.on((e) => {
       if (e.type === 'reload') {
         api.get<{ requests: boolean; responses: boolean }>('/intercept').then((s: { requests: boolean; responses: boolean }) => (shell.held = (s.requests ? 1 : 0) + (s.responses ? 1 : 0)));
@@ -73,10 +111,13 @@
     });
     return () => {
       off();
-      window.removeEventListener('hashchange', onHash);
+      unregister();
+      window.removeEventListener('hashchange', followHash);
     };
   });
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 {#if !session.ready}
   <div class="loading">Loading…</div>
@@ -95,6 +136,7 @@
         {/each}
       </nav>
       <span class="spacer"></span>
+      <button class="ghost" title="Command palette (Ctrl+K)" onclick={() => { shell.paletteStart = ''; shell.palette = true; }}>Commands <kbd>Ctrl+K</kbd></button>
       <Menu label="Layout" title="Arrange the panels" items={layoutItems} />
       <button class="ghost" title="Colour theme: system, dark or light" onclick={() => theme.cycle()}>Theme: {theme.pref}</button>
       <span class="small muted">{session.me.user.username} ({session.me.user.role})</span>
@@ -112,6 +154,10 @@
     <StatusBar />
   </div>
   <LayoutDialog />
+  <CommandPalette />
+  <ShortcutsHelp />
+  <ContextMenu />
+  <Toasts />
 {/if}
 
 <style>

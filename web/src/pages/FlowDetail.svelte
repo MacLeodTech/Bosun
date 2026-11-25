@@ -6,6 +6,9 @@
   import { historyView as v } from '../lib/historyView.svelte';
   import { session } from '../lib/session.svelte';
   import { workspace } from '../lib/workspace.svelte';
+  import { commands } from '../lib/commands.svelte';
+  import { deleteFlows } from '../lib/flowactions';
+  import { withTerm, withText } from '../lib/query';
   import { b64ToBytes, bytesToB64, bytesToText, flowUrl, fmtTime } from '../lib/bytes';
   import { bodyUrl, loadMore, loadPart, type Loaded, type PartName } from '../lib/flowbody';
   import type { FlowMeta, WsMessage } from '../lib/types';
@@ -130,21 +133,7 @@
 
   /** Hand the request to the Repeater page, which picks it up from session storage. */
   function toRepeater() {
-    const m = selected;
-    const r = req;
-    if (!m || !r) return;
-    if (r.body.length < r.bodyLen) {
-      loadError = 'This request body is too large to open in the Repeater here.';
-      return;
-    }
-    const d = bytesToText(join(r.head, r.body));
-    const inbox = JSON.parse(sessionStorage.getItem('bosun.repeater.inbox') ?? '[]');
-    inbox.push({ scheme: m.scheme, host: m.host, port: m.port, request: d.text, mode: d.mode });
-    sessionStorage.setItem('bosun.repeater.inbox', JSON.stringify(inbox));
-    // Repeater may already be mounted in the background: tell it, then bring it forward.
-    window.dispatchEvent(new Event('bosun:repeater-inbox'));
-    workspace.open('repeater');
-    history.replaceState(null, '', '#repeater');
+    if (selected) commands.run('flow.repeater', { flows: [selected.id], focus: selected.id });
   }
 
   async function saveNote() {
@@ -152,18 +141,14 @@
     await api.patch(`/flows/${selected.id}`, { note: selected.note ?? '', tags: selected.tags });
   }
 
-  async function remove() {
-    if (!selected) return;
-    const id = selected.id;
-    await api.del('/flows', { ids: [id] });
-    v.remove([id]);
+  function remove() {
+    if (selected) deleteFlows([selected.id]);
   }
 
   /** Show history entries that have this header: the Host header is the host filter, anything else a text search. */
   function filterBy(name: string, value: string) {
-    if (name.toLowerCase() === 'host') v.host = value.replace(/:\d+$/, '');
-    else v.text = `${name}: ${value}`;
-    v.applyTick++;
+    const host = value.replace(/:\d+$/, '');
+    v.setQuery(name.toLowerCase() === 'host' ? withTerm(v.query, 'host', host) : withText(v.query, `${name}: ${value}`));
     workspace.reveal('history', 'flow');
   }
 

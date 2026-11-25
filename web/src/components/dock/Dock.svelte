@@ -1,8 +1,11 @@
 <script lang="ts">
   import { css } from '../../lib/style';
   import { workspace } from '../../lib/workspace.svelte';
+  import { session } from '../../lib/session.svelte';
   import { dockDrag } from '../../lib/dockdrag.svelte';
   import { panels } from '../../lib/panels';
+  import { sendToRepeater } from '../../lib/flowactions';
+  import { toasts } from '../../lib/toasts.svelte';
   import DockNode from './DockNode.svelte';
 
   let el = $state<HTMLElement | undefined>();
@@ -10,6 +13,47 @@
     dockDrag.registerDock(el ?? null);
     return () => dockDrag.registerDock(null);
   });
+
+  /** Dragging requests over the dock: the Repeater opens where they are dropped, and gets one tab per request. */
+  const FLOW_DND = 'application/x-bosun-flow';
+  const carries = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes(FLOW_DND);
+
+  function onDragOver(e: DragEvent) {
+    if (!carries(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    dockDrag.flowOver = true;
+    dockDrag.target = dockDrag.locate(e.clientX, e.clientY, '');
+  }
+
+  function onDragLeave(e: DragEvent) {
+    if (!dockDrag.flowOver || (e.relatedTarget && el?.contains(e.relatedTarget as globalThis.Node))) return;
+    dockDrag.flowOver = false;
+    dockDrag.target = null;
+  }
+
+  function onDrop(e: DragEvent) {
+    if (!carries(e)) return;
+    e.preventDefault();
+    const t = dockDrag.target ?? dockDrag.locate(e.clientX, e.clientY, '');
+    dockDrag.flowOver = false;
+    dockDrag.target = null;
+    let ids: number[] = [];
+    try {
+      const data = JSON.parse(e.dataTransfer?.getData(FLOW_DND) ?? '{}');
+      ids = Array.isArray(data.ids) ? data.ids.filter((n: unknown): n is number => Number.isInteger(n) && (n as number) > 0).slice(0, 200) : [];
+    } catch {
+      // Not ours after all.
+    }
+    if (!ids.length) return;
+    if (!session.can('tester')) {
+      toasts.push({ text: 'Sending requests to the Repeater needs the tester role.' });
+      return;
+    }
+    // Open (or move) the Repeater where it was dropped, then hand it the requests by id.
+    workspace.openAt('repeater', t?.groupId ?? null, t?.zone === 'center' || !t ? 'center' : t.zone, t?.index);
+    void sendToRepeater(ids);
+  }
 
   // The highlight is positioned relative to the dock, so it is computed from viewport rectangles here.
   const hl = $derived.by(() => {
@@ -20,7 +64,9 @@
   });
 </script>
 
-<div class="dock" bind:this={el}>
+<!-- Requests are dropped on the dock itself; the drop point picks the pane, so there is nothing to focus. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="dock" bind:this={el} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
   {#if workspace.root}
     <DockNode node={workspace.root} />
   {:else}
@@ -34,7 +80,7 @@
       </p>
     </div>
   {/if}
-  {#if dockDrag.active && hl}
+  {#if (dockDrag.active || dockDrag.flowOver) && hl}
     <div class="drop" use:css={hl}></div>
   {/if}
 </div>

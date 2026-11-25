@@ -40,7 +40,9 @@
       <div class="heading" role="presentation">{it.label}</div>
     {:else}
       <button
+        type="button"
         role={it.checked !== undefined ? 'menuitemradio' : 'menuitem'}
+        aria-label={it.label}
         aria-checked={it.checked}
         disabled={it.disabled}
         tabindex="-1"

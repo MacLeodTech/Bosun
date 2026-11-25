@@ -344,6 +344,13 @@ Acceptance: a 256 KiB JSON body scrolls without jank, and the sandbox, CSP and "
 origin" tests (e2e) are unchanged and passing.
 
 ### Phase 3: commands and cross-tool flow (about 8 days; Repeater and Decoder integration lands with M2)
+**Status (branch `ui-phase0`):** built. `lib/commands.svelte.ts` (registry, recent commands), `lib/shortcuts.ts` (matching, conflict report, tested), `CommandPalette` (`>` commands, `#` request by number, `/` host or text, `@` panel), `ShortcutsHelp` (press `?`), `ContextMenu` on History rows and on selected text in a message, multi-select (Shift/Ctrl click, Shift+arrows, Ctrl+A) with a selection bar, the one-line `FilterBar` with chips and saved filters (`lib/query.ts`, tested), undo toasts for delete, request drag and drop onto the dock (opens the Repeater where dropped), and deep links (`#history?flow=1234`).
+
+**Where this differs from the plan, on purpose:**
+- **The filter query is parsed in the browser and sent as the existing `/flows` parameters; it is not server-side yet.** A server-side query touches `bosun-store`, `bosun-api`, `bosun-client` and `openapi.json` (which CI regenerates), which the API owner is working in. The one-line query, chips and saved filters are in place, and the client's duplicated `matches()` is now one function (`matchesFlow`); moving the parser to the server later changes nothing in the UI. `path:`, `mime:`, `tag:` and negation other than `-ext:` need that server change.
+- `Ctrl+1…9` is `Alt+1…9`, because browsers keep the Ctrl+digit keys. `Ctrl+Shift+I` is `Ctrl+Alt+I`, because it opens developer tools in browsers and the desktop webview. The help overlay's Conflicts section reports any command on a browser-reserved key.
+- No Decoder, Compare or Scanner commands: those panels do not exist yet. Their commands register through `commands.register([...])` and appear in the palette, menus and help automatically.
+- Not built: tag and note actions in the row menu, the headers view's "add to match & replace", the Compare drop slots and tag-chip drop targets (no such panels), per-user server-side history of recent commands, and the Intercept polish in section 4.7 (held-time countdown, edit diff).
 | Task | Component and spec |
 |---|---|
 | `commands.ts` and `shortcuts.ts` | Registry, key matching with chords, a conflict report, and a "Keyboard shortcuts" help overlay. |

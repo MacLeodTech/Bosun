@@ -29,6 +29,8 @@ class DockDrag {
   x = $state(0);
   y = $state(0);
   target = $state<DropTarget | null>(null);
+  /** A drag of requests (not of a tab) is over the dock: its target is drawn like a tab drag's. */
+  flowOver = $state(false);
   /** Set for a moment after a drag ends, so the click that follows the release does not activate a tab. */
   justDragged = false;
 
@@ -96,7 +98,8 @@ class DockDrag {
     window.addEventListener('keydown', key, true);
   }
 
-  private locate(x: number, y: number, tabId: string): DropTarget | null {
+  /** Where a drop at this point would go. `tabId` is the tab being dragged, or "" for something from outside the dock. */
+  locate(x: number, y: number, tabId: string): DropTarget | null {
     const root = workspace.root;
     const dock = this.dock?.getBoundingClientRect();
     if (!root || !dock || x < dock.left || x > dock.right || y < dock.top || y > dock.bottom) return null;

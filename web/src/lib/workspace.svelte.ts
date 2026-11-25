@@ -130,6 +130,53 @@ class Workspace {
     this.save();
   }
 
+  /** The visible tab of the group the user is working in. */
+  activeTabId(): string | null {
+    const g = this.root ? findGroup(this.root, this.focused) ?? groups(this.root)[0] : undefined;
+    return g?.active ?? null;
+  }
+
+  groupCount(): number {
+    return this.root ? groups(this.root).length : 0;
+  }
+
+  /** Work in the nth group (0-based, in layout order), and put keyboard focus on its tab. */
+  focusGroup(n: number) {
+    const g = this.root ? groups(this.root)[n] : undefined;
+    if (!g) return;
+    this.focused = g.id;
+    document.getElementById(`tab-${g.active}`)?.focus();
+  }
+
+  /** Move the active tab of the focused group one step in a direction (a keyboard way to dock). */
+  moveActive(dir: Dir) {
+    const id = this.activeTabId();
+    if (id) this.moveDirection(id, dir);
+  }
+
+  /**
+   * Show a panel at a place: as a tab in `groupId` (centre), or in a new split beside it (an edge), or at the window
+   * edge (`groupId` null). If the panel is already open its tab is moved there.
+   */
+  openAt(panel: string, groupId: string | null, zone: Zone, index?: number) {
+    if (!isPanelId(panel)) return;
+    const root = this.root;
+    if (!root) return this.open(panel);
+    const existing = tabs(root).find((t) => t.panel === panel);
+    if (existing) {
+      this.move(existing.id, groupId, zone, index);
+      this.select(existing.id);
+      return;
+    }
+    const target = (groupId && findGroup(root, groupId)) || groups(root)[0];
+    if (!target) return this.open(panel);
+    let next = addTab(root, tab(panel), target.id);
+    if (zone !== 'center' || groupId === null) next = moveTab(next, panel, groupId, zone, index);
+    this.set(next);
+    const g = groupOfTab(next, panel);
+    if (g) this.focused = g.id;
+  }
+
   // ---- panels
 
   focus(groupId: string) {

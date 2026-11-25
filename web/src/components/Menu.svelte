@@ -20,7 +20,7 @@
 <svelte:window onpointerdown={onWindowPointer} />
 
 <span class="host" bind:this={host}>
-  <button class="ghost" bind:this={trigger} aria-haspopup="menu" aria-expanded={open} {title} onclick={() => (open = !open)}>{label} ▾</button>
+  <button type="button" class="ghost" bind:this={trigger} aria-haspopup="menu" aria-expanded={open} {title} onclick={() => (open = !open)}>{label} ▾</button>
   {#if open}
     <div class="pop"><MenuList {items} {label} onclose={close} /></div>
   {/if}

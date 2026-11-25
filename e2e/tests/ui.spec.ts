@@ -81,15 +81,18 @@ test('history: a large response is shown a page at a time', async () => {
 test('history: the open flow and the filters survive a visit to another page', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'HTTP history' }).click();
-  await page.getByLabel('Host contains').fill('127.0.0.1');
+  const filter = page.getByLabel('Filter', { exact: true });
+  await filter.fill('host:127.0.0.1');
+  await filter.press('Enter');
   await page.locator('.row', { hasText: '/hello-history' }).click();
   await expect(page.locator('.row.active', { hasText: '/hello-history' })).toBeVisible();
   await nav.getByRole('button', { name: 'Match & replace' }).click();
   await nav.getByRole('button', { name: 'HTTP history' }).click();
-  await expect(page.getByLabel('Host contains')).toHaveValue('127.0.0.1');
+  await expect(filter).toHaveValue('host:127.0.0.1');
   await expect(page.locator('.row.active', { hasText: '/hello-history' })).toBeVisible();
   await expect(page.locator('.msg').nth(1).locator('.code')).toContainText('hello from /hello-history');
-  await page.getByLabel('Host contains').fill('');
+  await filter.fill('');
+  await filter.press('Enter');
 });
 
 test('history: the keyboard moves the selection', async () => {
@@ -410,11 +413,11 @@ test('viewer: the edited request shows what changed, and a header can filter the
   const req = page.locator('.msg').first();
   await req.getByRole('button', { name: 'headers', exact: true }).click();
   await req.getByRole('button', { name: 'Filter history by X-Edited-By-Test' }).click();
-  await expect(page.getByLabel('Search requests and responses')).toHaveValue('X-Edited-By-Test: yes');
+  await expect(page.getByLabel('Filter', { exact: true })).toHaveValue(/"X-Edited-By-Test: yes"/);
   await expect(page.locator('.row', { hasText: '/echo' })).toBeVisible();
   await expect(page.locator('.row', { hasText: '/hello-history' })).toHaveCount(0);
-  await page.getByLabel('Search requests and responses').fill('');
-  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('Filter', { exact: true }).fill('');
+  await page.getByLabel('Filter', { exact: true }).press('Enter');
   await req.getByRole('button', { name: 'raw', exact: true }).click();
 });
 
@@ -427,4 +430,168 @@ test('viewer: the render view follows the UI theme and stays sandboxed', async (
   // The scheme is a <meta> placed after the doctype (before it, the page would fall into quirks mode).
   expect(doc).toMatch(/^<!doctype html><meta name="color-scheme" content="(dark|light)">/i);
   await page.locator('.msg').nth(1).getByRole('button', { name: 'raw', exact: true }).click();
+});
+
+// ---- commands, filter, selection, menus, drag and drop -----------------------------------------------------------
+
+const filterBox = () => page.getByLabel('Filter', { exact: true });
+async function applyFilter(q: string) {
+  await filterBox().fill(q);
+  await filterBox().press('Enter');
+}
+
+test('palette: Ctrl+K runs a command, opens a request by number, and Escape closes it', async () => {
+  await layoutMenu('Reset layout');
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Control+k');
+  const dlg = page.getByRole('dialog', { name: 'Command palette' });
+  await expect(dlg).toBeVisible();
+  await dlg.getByRole('combobox').fill('open sett');
+  await expect(dlg.getByRole('option').first()).toContainText('Open Settings');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('tab', { name: 'Settings' })).toHaveAttribute('aria-selected', 'true');
+
+  await page.keyboard.press('Control+k');
+  await dlg.getByRole('combobox').fill('#1');
+  await expect(dlg.getByRole('option').first()).toContainText('Open request #1');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('footer')).toContainText('Request #1');
+
+  await page.keyboard.press('Control+k');
+  await expect(dlg).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dlg).toBeHidden();
+});
+
+test('filter bar: terms become chips, a bad term is explained, and filters can be saved', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
+
+  await applyFilter('method:POST');
+  await expect(page.locator('.chip', { hasText: 'method:POST' })).toBeVisible();
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Remove method:POST' }).click();
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
+
+  await filterBox().fill('status:abc');
+  await expect(page.getByText(/status: expects/)).toBeVisible();
+
+  await applyFilter('host:127.0.0.1 status:2xx');
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'Save the applied filter as…' }).click();
+  await page.getByLabel('Name for this filter').fill('local ok');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await applyFilter('');
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'local ok', exact: true }).click();
+  await expect(filterBox()).toHaveValue('host:127.0.0.1 status:2xx');
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'Delete “local ok”' }).click();
+  await applyFilter('');
+});
+
+test('history: shift-click and Ctrl+A select several, delete can be undone, and an undone delete changes nothing', async () => {
+  for (const p of ['ms-a', 'ms-b', 'ms-c']) await viaProxy(PROXY_PORT, `${TARGET}/${p}`);
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  const row = (p: string) => page.locator('.row', { hasText: `/${p}` });
+  await row('ms-c').click();
+  await row('ms-a').click({ modifiers: ['Shift'] });
+  await expect(page.getByRole('region', { name: 'Selection' })).toContainText('3 selected');
+
+  await page.getByRole('region', { name: 'Selection' }).getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(row('ms-a')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(row('ms-a')).toBeVisible();
+  await expect(row('ms-c')).toBeVisible();
+
+  // Ctrl+A in the list selects every row; Escape drops back to one.
+  await page.getByRole('listbox', { name: 'HTTP history' }).focus();
+  await page.keyboard.press('Control+a');
+  await expect(page.getByRole('region', { name: 'Selection' })).toContainText('selected');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('region', { name: 'Selection' })).toHaveCount(0);
+
+  // Let a delete run its course: after the undo window the flows are gone from the server too.
+  await row('ms-b').click();
+  await page.getByRole('listbox', { name: 'HTTP history' }).focus();
+  await page.keyboard.press('Delete');
+  await expect(row('ms-b')).toHaveCount(0);
+  await expect(page.getByText('Deleted 1 request.')).toBeHidden({ timeout: 9000 });
+  await page.reload();
+  await signedIn();
+  await expect(row('ms-b')).toHaveCount(0);
+  await expect(row('ms-a')).toBeVisible();
+});
+
+test('context menu: a row offers its actions, Escape closes it, and Send to Repeater fills the Repeater', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  const r = page.locator('.row', { hasText: '/hello-history' });
+  await r.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'Request actions' });
+  await expect(menu).toBeVisible();
+  for (const name of ['Repeater', 'URL', 'as cURL', 'Add host to scope', 'Delete']) await expect(menu.getByRole('menuitem', { name, exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+
+  await r.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Repeater', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Repeater' })).toHaveAttribute('aria-selected', 'true');
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await expect(rp.getByLabel('Host', { exact: true })).toHaveValue('127.0.0.1');
+  await expect(rp.getByLabel('Request')).toHaveValue(/GET \/hello-history/);
+});
+
+test('shortcuts: Ctrl+R sends to the Repeater without reloading, and ? lists every shortcut and any conflict', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await page.locator('.row', { hasText: '/hello-history' }).click();
+  await page.evaluate(() => ((window as unknown as { __mark: number }).__mark = 1));
+  await page.getByRole('listbox', { name: 'HTTP history' }).focus();
+  await page.keyboard.press('Control+r');
+  await expect(page.getByRole('tab', { name: 'Repeater' })).toHaveAttribute('aria-selected', 'true');
+  expect(await page.evaluate(() => (window as unknown as { __mark?: number }).__mark)).toBe(1);
+
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('?');
+  const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(help).toBeVisible();
+  await expect(help).toContainText('Command palette');
+  await expect(help).toContainText('Send to Repeater');
+  await expect(help.getByRole('heading', { name: 'Conflicts' })).toBeVisible();
+  await expect(help).toContainText('None');
+  await page.keyboard.press('Escape');
+  await expect(help).toBeHidden();
+});
+
+test('drag and drop: dropping requests on a pane opens the Repeater there with one tab each', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  const src = page.locator('.row', { hasText: '/hello-history' }).first();
+  const target = await page.locator('#pane-flow').boundingBox();
+  expect(target).toBeTruthy();
+  await src.dragTo(page.locator('#pane-flow'), { targetPosition: { x: target!.width / 2, y: target!.height - 10 } });
+  await expect(page.getByRole('tablist')).toHaveCount(3);
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await expect(rp.getByLabel('Request')).toHaveValue(/GET \/hello-history/);
+});
+
+test('deep link: the address names the open request and a reload brings it back', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  await page.locator('.row', { hasText: '/hello-history' }).first().click();
+  await expect.poll(() => page.url()).toMatch(/#history\?flow=\d+$/);
+  const id = /flow=(\d+)/.exec(page.url())![1];
+  await page.reload();
+  await signedIn();
+  await expect(page.locator('footer')).toContainText(`Request #${id}`);
+  await expect(page.locator('.msg').nth(1).locator('.code')).toContainText('hello from /hello-history');
 });

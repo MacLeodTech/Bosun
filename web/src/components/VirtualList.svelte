@@ -13,6 +13,9 @@
     key,
     activeIndex = -1,
     onSelect,
+    onSelectAll,
+    onDelete,
+    multi = false,
     onActivate,
     onTop,
     label = 'List',
@@ -26,8 +29,14 @@
     key?: (item: T) => string | number;
     /** The active row, or -1. */
     activeIndex?: number;
-    /** The user moved to this row with the keyboard. */
-    onSelect?: (index: number) => void;
+    /** The user moved to this row with the keyboard. `extend` is true when Shift was held (grow the selection). */
+    onSelect?: (index: number, extend: boolean) => void;
+    /** Ctrl+A, when the list allows several selected rows. */
+    onSelectAll?: () => void;
+    /** The Delete key. */
+    onDelete?: () => void;
+    /** Rows can be selected together: tells assistive technology, and enables Shift+arrows and Ctrl+A. */
+    multi?: boolean;
     /** Enter on the active row. */
     onActivate?: (index: number) => void;
     /** The list was scrolled back to the top. */
@@ -74,7 +83,17 @@
   });
 
   function onKey(e: KeyboardEvent) {
+    if (multi && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      onSelectAll?.();
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Delete' && onDelete) {
+      e.preventDefault();
+      onDelete();
+      return;
+    }
     const page = Math.max(1, Math.floor(viewport / rowHeight) - 1);
     const cur = activeIndex < 0 ? -1 : activeIndex;
     let next: number | null = null;
@@ -96,7 +115,7 @@
     e.preventDefault();
     if (!items.length) return;
     next = Math.min(items.length - 1, Math.max(0, next));
-    if (next !== activeIndex) onSelect?.(next);
+    if (next !== activeIndex) onSelect?.(next, multi && e.shiftKey);
     if (e.key === 'End') onNearEnd?.();
   }
 </script>
@@ -107,6 +126,7 @@
   role="listbox"
   tabindex="0"
   aria-label={label}
+  aria-multiselectable={multi || undefined}
   aria-activedescendant={activeIndex >= 0 ? `${idPrefix}-row-${activeIndex}` : undefined}
   onscroll={onScroll}
   onkeydown={onKey}

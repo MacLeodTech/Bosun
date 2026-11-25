@@ -5,6 +5,9 @@
   import { tick } from 'svelte';
   import type { Line } from '../lib/highlight';
   import { css } from '../lib/style';
+  import { contextMenu } from '../lib/contextmenu.svelte';
+  import { searchHistory } from '../lib/flowactions';
+  import { toasts } from '../lib/toasts.svelte';
 
   let { lines, label, wrap = true }: { lines: Line[]; label: string; wrap?: boolean } = $props();
 
@@ -130,6 +133,23 @@
     }
   }
 
+  /** Right-click on selected text: copy it, or look for it in History. */
+  function onContext(e: MouseEvent) {
+    const sel = getSelection()?.toString().trim() ?? '';
+    if (!sel) return;
+    e.preventDefault();
+    const oneLine = !/\n/.test(sel) && sel.length <= 200;
+    contextMenu.show(
+      [
+        { label: 'Copy', run: () => void navigator.clipboard.writeText(sel).then(() => toasts.push({ text: 'Copied.' }), () => toasts.push({ text: 'Copying was blocked by the browser.' })) },
+        ...(oneLine ? [{ label: `Search History for “${sel.length > 30 ? sel.slice(0, 29) + '…' : sel}”`, run: () => searchHistory(sel) }] : []),
+      ],
+      e.clientX,
+      e.clientY,
+      'Selected text',
+    );
+  }
+
   export function find() {
     return openFind();
   }
@@ -157,6 +177,7 @@
     bind:clientHeight={height}
     onscroll={(e) => (top = e.currentTarget.scrollTop)}
     onkeydown={onKey}
+    oncontextmenu={onContext}
     use:css={{ '--row': `${ROW}px`, '--gw': gutter }}
   >
     <div class="sizer" use:css={{ '--total': windowed ? `${lines.length * ROW}px` : 'auto' }}>

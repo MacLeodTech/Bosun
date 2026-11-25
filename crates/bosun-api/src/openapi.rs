@@ -18,6 +18,7 @@ use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntr
 
 use crate::handlers::FlowOverview;
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
+use crate::repeater::{RepeaterSettings, SendBody, SendReply};
 use bosun_proxy::rules::RuleSpec as MatchRule;
 use bosun_scope::ScopeSpec;
 
@@ -307,13 +308,20 @@ fn audit_log() {}
 #[utoipa::path(get, path = "/events", operation_id = "events", tag = "events", description = "WebSocket event stream. ?since=N&epoch=E resumes after event N of that engine run (see ProxyEvent). Needs the viewer role or above.", params(("since" = Option<i64>, Query), ("epoch" = Option<String>, Query)), responses((status = 101, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn events() {}
 
+#[utoipa::path(post, path = "/repeater/send", operation_id = "repeater_send", tag = "repeater", description = "Send a raw request once or many times (sequentially, in parallel, or as an HTTP/2 single-packet batch). Every send passes the scope gate and is recorded as a flow with source repeater. A send that is refused or fails comes back as a result with an error, not as an HTTP error. Needs the tester role or above.", request_body = SendBody, responses((status = 200, description = "OK", body = SendReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn repeater_send() {}
+#[utoipa::path(get, path = "/repeater/settings", operation_id = "get_repeater_settings", tag = "repeater", description = "Whether the Repeater may send out of scope.", responses((status = 200, description = "OK", body = RepeaterSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_repeater_settings() {}
+#[utoipa::path(put, path = "/repeater/settings", operation_id = "put_repeater_settings", tag = "repeater", description = "Allow or refuse out-of-scope sends from the Repeater (audited; goes back to refuse when a project is opened). Needs the tester role or above.", request_body = RepeaterSettings, responses((status = 200, description = "OK", body = RepeaterSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_repeater_settings() {}
+
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, repeater_send, get_repeater_settings, put_repeater_settings, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
     components(schemas(ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
-    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "accounts"), (name = "projects"), (name = "events"))
+    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
 
@@ -355,6 +363,9 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/intercept/forward-all"),
     ("get", "/proxy"),
     ("put", "/tools/stop"),
+    ("post", "/repeater/send"),
+    ("get", "/repeater/settings"),
+    ("put", "/repeater/settings"),
     ("get", "/ca"),
     ("get", "/ca/cert.pem"),
     ("post", "/browser/launch"),

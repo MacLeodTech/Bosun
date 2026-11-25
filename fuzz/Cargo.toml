@@ -13,6 +13,7 @@ bosun-model = { path = "../crates/bosun-model" }
 bosun-scope = { path = "../crates/bosun-scope" }
 bosun-store = { path = "../crates/bosun-store" }
 bosun-proxy = { path = "../crates/bosun-proxy" }
+bosun-http = { path = "../crates/bosun-http" }
 
 # Not part of the main workspace: it needs nightly and is built only by `cargo fuzz`.
 [workspace]
@@ -55,6 +56,13 @@ bench = false
 [[bin]]
 name = "import_project"
 path = "fuzz_targets/import_project.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "raw_framing"
+path = "fuzz_targets/raw_framing.rs"
 test = false
 doc = false
 bench = false

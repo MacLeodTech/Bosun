@@ -390,6 +390,38 @@ impl Client {
         self.json(self.req(Method::GET, "/proxy")).await
     }
 
+    /// Send a raw request through the Repeater. `body` is the `SendBody` of the API (see `docs/openapi.json`):
+    /// target, base64 request, and optionally protocol, count and mode. Returns the reply with one result per send.
+    pub async fn repeater_send(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/repeater/send").json(body))
+            .await
+    }
+
+    /// Whether the Repeater may send out of scope.
+    pub async fn repeater_settings(&self) -> Result<bool> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            allow_out_of_scope: bool,
+        }
+        let r: R = self.json(self.req(Method::GET, "/repeater/settings")).await?;
+        Ok(r.allow_out_of_scope)
+    }
+
+    /// Allow or refuse out-of-scope sends from the Repeater. Returns the new state.
+    pub async fn put_repeater_settings(&self, allow_out_of_scope: bool) -> Result<bool> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            allow_out_of_scope: bool,
+        }
+        let r: R = self
+            .json(
+                self.req(Method::PUT, "/repeater/settings")
+                    .json(&json!({ "allow_out_of_scope": allow_out_of_scope })),
+            )
+            .await?;
+        Ok(r.allow_out_of_scope)
+    }
+
     /// The kill switch for all tool traffic. Returns the new state.
     pub async fn set_stopped(&self, stopped: bool) -> Result<bool> {
         #[derive(serde::Deserialize)]

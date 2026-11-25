@@ -9,10 +9,11 @@
   import Target from './pages/Target.svelte';
   import Settings from './pages/Settings.svelte';
   import Projects from './pages/Projects.svelte';
+  import Repeater from './pages/Repeater.svelte';
 
-  type Page = 'intercept' | 'history' | 'rules' | 'target' | 'projects' | 'settings';
+  type Page = 'intercept' | 'history' | 'repeater' | 'rules' | 'target' | 'projects' | 'settings';
   const pages: [Page, string][] = [
-    ['intercept', 'Intercept'], ['history', 'HTTP history'], ['rules', 'Match & replace'], ['target', 'Target'], ['projects', 'Projects'], ['settings', 'Settings'],
+    ['intercept', 'Intercept'], ['history', 'HTTP history'], ['repeater', 'Repeater'], ['rules', 'Match & replace'], ['target', 'Target'], ['projects', 'Projects'], ['settings', 'Settings'],
   ];
   const fromHash = (): Page => {
     const h = location.hash.slice(1) as Page;
@@ -45,7 +46,9 @@
 
   onMount(() => {
     session.init();
-    return session.on((e) => {
+    const onHash = () => { page = fromHash(); };
+    window.addEventListener('hashchange', onHash);
+    const off = session.on((e) => {
       if (e.type === 'reload') {
         api.get<{ requests: boolean; responses: boolean }>('/intercept').then((s: { requests: boolean; responses: boolean }) => (held = (s.requests ? 1 : 0) + (s.responses ? 1 : 0)));
       } else if (e.type === 'project_switched') {
@@ -55,6 +58,10 @@
       } else if (e.type === 'intercept_state') held = (e.requests ? 1 : 0) + (e.responses ? 1 : 0);
       else if (e.type === 'recorder_failed') lost = { n: (lost?.n ?? 0) + e.lost, error: e.error };
     });
+    return () => {
+      off();
+      window.removeEventListener('hashchange', onHash);
+    };
   });
 </script>
 
@@ -65,7 +72,7 @@
 {:else}
   <div class="app">
     <header>
-      <span class="brand">Bosun</span>
+      <span class="brand"><img src="/apple-touch-icon.png" alt="" width="24" height="24" />Bosun</span>
       <nav>
         {#each pages as [p, label] (p)}
           <button class:active={page === p} onclick={() => go(p)}>
@@ -89,6 +96,7 @@
       {#key generation}
         {#if page === 'intercept'}<Intercept />
         {:else if page === 'history'}<History />
+        {:else if page === 'repeater'}<Repeater />
         {:else if page === 'rules'}<Rules />
         {:else if page === 'target'}<Target />
         {:else if page === 'projects'}<Projects />
@@ -101,7 +109,8 @@
 <style>
   .app { display: flex; flex-direction: column; height: 100vh; }
   header { display: flex; align-items: center; gap: .75rem; padding: .3rem .75rem; background: var(--bg2); border-bottom: 1px solid var(--line); }
-  .brand { font-weight: 700; color: var(--accent); letter-spacing: .02em; }
+  .brand { display: inline-flex; align-items: center; gap: .45rem; font-weight: 700; color: var(--accent); letter-spacing: .02em; }
+  .brand img { border-radius: 5px; }
   nav { display: flex; gap: .15rem; }
   nav button { border: 0; background: none; padding: .35rem .7rem; }
   nav button.active { background: var(--sel); }

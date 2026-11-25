@@ -121,6 +121,22 @@
     if (f.status === 101) wsMessages = await api.get<WsMessage[]>(`/flows/${f.id}/ws`);
   }
 
+  /** Hand the request to the Repeater page, which picks it up from session storage. */
+  function toRepeater() {
+    const m = selected;
+    const r = req;
+    if (!m || !r) return;
+    if (r.body.length < r.bodyLen) {
+      loadError = 'This request body is too large to open in the Repeater here.';
+      return;
+    }
+    const d = bytesToText(join(r.head, r.body));
+    const inbox = JSON.parse(sessionStorage.getItem('bosun.repeater.inbox') ?? '[]');
+    inbox.push({ scheme: m.scheme, host: m.host, port: m.port, request: d.text, mode: d.mode });
+    sessionStorage.setItem('bosun.repeater.inbox', JSON.stringify(inbox));
+    location.hash = '#repeater';
+  }
+
   async function saveNote() {
     if (!selected) return;
     await api.patch(`/flows/${selected.id}`, { note: selected.note ?? '', tags: selected.tags });
@@ -211,6 +227,7 @@
         <span class="url" title={flowUrl(selected)}>{flowUrl(selected)}</span>
         <span class="spacer"></span>
         <button onclick={copyUrl}>Copy URL</button>
+        {#if session.can('tester')}<button onclick={toRepeater} title="Open this request in the Repeater">Send to Repeater</button>{/if}
         {#if session.can('tester')}<button onclick={remove}>Delete</button>{/if}
       </div>
       {#if selected.error}<p class="error pad">{selected.error}</p>{/if}

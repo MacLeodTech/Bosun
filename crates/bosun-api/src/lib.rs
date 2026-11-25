@@ -13,6 +13,7 @@ pub mod events;
 pub mod handlers;
 pub mod openapi;
 pub mod projects;
+pub mod repeater;
 pub mod security;
 pub mod sso;
 pub mod web;
@@ -164,6 +165,8 @@ pub struct Inner {
     pub projects: projects::Manager,
     pub proxy: Proxy,
     pub gate: Gate,
+    /// The Repeater's sender. It shares the proxy's memory budget, upstream proxy and loop guard.
+    pub repeater: bosun_http::Engine,
     pub ca: Arc<CertificateAuthority>,
     pub events: EventSender,
     pub limiter: auth::Limiter,
@@ -301,6 +304,8 @@ impl AppState {
         let inner = Inner {
             app: d.app,
             projects: projects::Manager::new(d.projects_dir, d.project_path.as_deref(), MAX_PROJECT_UPLOAD),
+            repeater: bosun_http::Engine::new(d.gate.clone(), d.proxy.budget())
+                .with_connector(d.proxy.tool_connector()),
             proxy: d.proxy,
             gate: d.gate,
             ca: d.ca,
@@ -393,6 +398,11 @@ pub fn router(st: AppState) -> Router {
         .route("/projects/{name}/rename", post(projects::rename))
         .route("/projects/{name}/export", get(projects::export))
         .route("/projects/{name}/backup", post(projects::backup))
+        .route("/repeater/send", post(repeater::send))
+        .route(
+            "/repeater/settings",
+            get(repeater::get_settings).put(repeater::put_settings),
+        )
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

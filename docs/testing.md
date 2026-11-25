@@ -21,7 +21,7 @@ file together with the fix.
 
 The suite starts the `bosun` binary (`BOSUN_BIN` overrides the path) with a throw-away data directory and a small
 stand-in "hostile" site (`e2e/target.ts`), then drives the UI in Chromium: first-run setup, sign-in, scope editing,
-live history, intercept edit/forward/drop, and the check that the render view cannot run a hostile page's script. The
+live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out-of-scope refusal), and the check that the render view cannot run a hostile page's script. The
 ports are 18080 (proxy), 18090 (UI) and 18099 (target); override with `BOSUN_E2E_PROXY_PORT`, `BOSUN_E2E_UI_PORT`
 and `BOSUN_E2E_TARGET_PORT`. A failed CI run keeps the Playwright traces as an artifact.
 
@@ -35,6 +35,7 @@ assertion is what fails first.
 | Target | What it feeds |
 |---|---|
 | `http_messages` | raw requests and responses (parse, serialise, parse again must agree) |
+| `raw_framing` | the raw engine's parsers: HTTP/1.1 to HTTP/2 conversion, chunked scanner (same answer however reads are split), `Content-Length` rewrite (idempotent), WebSocket and HTTP/2 frames (round trip), HPACK blocks (no panic), redirect resolution |
 | `ws_frames` | a WebSocket byte stream cut into arbitrary pieces |
 | `decode_body` | stored, compressed bodies (the decompression limit and the size check must hold) |
 | `scope_rules` | scope host patterns and path regexes (compile and match) |

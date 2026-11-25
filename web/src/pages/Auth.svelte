@@ -45,7 +45,7 @@
 
 <div class="auth">
   <form onsubmit={submit}>
-    <h1>Bosun</h1>
+    <h1><img src="/branding.jpg" alt="Bosun: fast web security proxy and scanner" /></h1>
     {#if session.setupRequired}
       <p class="muted">First run: create the admin account. The setup code is printed by <code>bosun serve</code>.</p>
       <label>Setup code <input bind:value={code} autocomplete="off" required /></label>
@@ -71,7 +71,8 @@
 <style>
   .auth { display: grid; place-items: center; height: 100vh; }
   form { display: flex; flex-direction: column; gap: .7rem; width: 22rem; padding: 2rem; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; }
-  h1 { margin: 0 0 .5rem; color: var(--accent); }
+  h1 { margin: 0 0 .5rem; line-height: 0; }
+  h1 img { width: 100%; height: auto; border-radius: 6px; }
   .sso { text-align: center; padding: .5rem; border: 1px solid var(--line); border-radius: 6px; }
   label { display: flex; flex-direction: column; gap: .25rem; }
 </style>

@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/bosun_branding.jpg" alt="Bosun: fast web security proxy and scanner" width="640"></p>
+
 # Bosun
 
 A free, fast, low-memory intercepting proxy and dynamic application security testing (DAST) toolkit, written in

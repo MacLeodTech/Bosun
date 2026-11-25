@@ -9,6 +9,8 @@ use bosun::{Config, Engine, Paths, doctor};
 use bosun_store::{AppDb, Role};
 use clap::{Parser, Subcommand};
 
+mod banner;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "bosun",
@@ -247,6 +249,7 @@ fn read_password() -> Result<String> {
 
 async fn serve(cfg: Config) -> Result<()> {
     let engine = Engine::start(&cfg).await?;
+    banner::print();
     eprintln!();
     eprintln!("  Bosun {}", env!("CARGO_PKG_VERSION"));
     eprintln!("  proxy     http://{}", engine.proxy_addr);

@@ -4,6 +4,7 @@
   import { session } from '../lib/session.svelte';
   import { b64ToBytes, bytesToB64, bytesToText, textToBytes, type TextMode } from '../lib/bytes';
   import { diffLines, type Op } from '../lib/diff';
+  import DiffView from '../components/DiffView.svelte';
   import type { RepeaterSendBody, RepeaterSendReply, RepeaterSendResult } from '../lib/types';
 
   type Mode = 'sequential' | 'parallel' | 'single_packet';
@@ -16,6 +17,7 @@
 
   const KEY = 'bosun.repeater.tabs';
   const INBOX = 'bosun.repeater.inbox';
+  const INBOX_EVENT = 'bosun:repeater-inbox';
   const canSend = $derived(session.can('tester'));
 
   let tabs = $state<Tab[]>([]);
@@ -42,20 +44,31 @@
     try { sessionStorage.setItem(KEY, JSON.stringify({ tabs: slim, active, next })); } catch { /* full or blocked */ }
   });
 
-  onMount(async () => {
+  onMount(() => {
+    // The panel stays mounted in the background, so requests sent from History arrive as an event, not a mount.
+    window.addEventListener(INBOX_EVENT, takeInbox);
+    start();
+    return () => window.removeEventListener(INBOX_EVENT, takeInbox);
+  });
+
+  async function start() {
     try {
       const saved = JSON.parse(sessionStorage.getItem(KEY) ?? 'null');
       if (saved?.tabs?.length) { tabs = saved.tabs; active = saved.active; next = saved.next; }
     } catch { /* start fresh */ }
-    // Requests sent here from the history page.
+    takeInbox();
+    if (!tabs.length) { const t = blank(); tabs = [t]; active = t.id; }
+    try { allowOut = (await api.get<{ allow_out_of_scope: boolean }>('/repeater/settings')).allow_out_of_scope; } catch { /* viewer without access */ }
+  }
+
+  /** Requests sent here from the history page. */
+  function takeInbox() {
     try {
       const inbox = JSON.parse(sessionStorage.getItem(INBOX) ?? '[]') as Partial<Tab>[];
       sessionStorage.removeItem(INBOX);
       for (const i of inbox) { const t = { ...blank(), ...i }; tabs = [...tabs, t]; active = t.id; }
     } catch { /* ignore */ }
-    if (!tabs.length) { const t = blank(); tabs = [t]; active = t.id; }
-    try { allowOut = (await api.get<{ allow_out_of_scope: boolean }>('/repeater/settings')).allow_out_of_scope; } catch { /* viewer without access */ }
-  });
+  }
 
   function addTab() { const t = blank(); tabs = [...tabs, t]; active = t.id; }
   function closeTab(id: number) {
@@ -188,9 +201,8 @@
             <div class="small muted pad">dns {r.timings.dns_ms} · connect {r.timings.connect_ms}{#if r.timings.tls_ms != null} · tls {r.timings.tls_ms}{/if}{#if r.timings.first_byte_ms != null} · first byte {r.timings.first_byte_ms}{/if} · total {r.timings.total_ms} ms</div>
           {/if}
         {/each}
-        {#if diff}
-          <pre class="code out">{#each diff as d, i (i)}<span class={d.kind}>{d.kind === 'add' ? '+ ' : d.kind === 'del' ? '- ' : '  '}{d.text}
-</span>{/each}</pre>
+        {#if diff && prev}
+          <div class="out diffbox"><DiffView a={prev.text[0] ?? ''} b={sent.text[0] ?? ''} label="Difference from the previous send" /></div>
         {:else}
           <pre class="code out">{sent.text[0] ?? ''}</pre>
         {/if}
@@ -200,6 +212,7 @@
 {/if}
 
 <style>
+  .diffbox { display: flex; flex-direction: column; min-height: 8rem; max-height: 60vh; border-top: 1px solid var(--border-subtle); }
   .tabs button { display: inline-flex; gap: .4rem; align-items: center; }
   .x { opacity: .6; }
   .x:hover { opacity: 1; color: var(--bad); }
@@ -212,7 +225,4 @@
   .pad { padding: .25rem .5rem; }
   .chip { margin-left: .4rem; padding: 0 .35rem; border: 1px solid var(--line); border-radius: 8px; }
   .bad { color: var(--bad); }
-  .add { background: color-mix(in srgb, var(--ok) 25%, transparent); display: block; }
-  .del { background: color-mix(in srgb, var(--bad) 25%, transparent); display: block; }
-  .same { display: block; }
 </style>

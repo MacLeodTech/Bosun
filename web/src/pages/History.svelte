@@ -1,39 +1,62 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  // The request list. Opening a request is the flow-detail panel's job: this panel only sets `historyView.openId`.
+  import { onMount, untrack } from 'svelte';
   import { api, qs } from '../lib/api';
+  import { css } from '../lib/style';
+  import { commands, currentCtx } from '../lib/commands.svelte';
+  import { contextMenu } from '../lib/contextmenu.svelte';
+  import { deleteFlows } from '../lib/flowactions';
+  import { historyView as v } from '../lib/historyView.svelte';
+  import { tidyMenu, type MenuItem } from '../lib/menu';
+  import { usePanel } from '../lib/panelctx';
+  import { matchesFlow, parseQuery } from '../lib/query';
   import { session } from '../lib/session.svelte';
-  import { b64ToBytes, bytesToB64, bytesToText, flowUrl, fmtSize, fmtTime } from '../lib/bytes';
-  import { bodyUrl, loadMore, loadPart, type Loaded, type PartName } from '../lib/flowbody';
-  import type { FlowMeta, FlowSummary, WsMessage } from '../lib/types';
+  import { format } from '../lib/shortcuts';
+  import { workspace } from '../lib/workspace.svelte';
+  import { flowUrl, fmtSize, fmtTime } from '../lib/bytes';
+  import type { FlowSummary } from '../lib/types';
   import VirtualList from '../components/VirtualList.svelte';
-  import MessageView from '../components/MessageView.svelte';
+  import FilterBar from '../components/FilterBar.svelte';
 
-  let flows = $state<FlowSummary[]>([]);
-  let selected = $state<FlowMeta | null>(null);
-  let req = $state<Loaded | null>(null);
-  let resp = $state<Loaded | null>(null);
-  let loadError = $state('');
-  let wsMessages = $state<WsMessage[]>([]);
-  let detailTab = $state<'messages' | 'original' | 'ws'>('messages');
-  let pending = $state(0);
+  /** Row height in px: the one source for the list maths and the row CSS (--row-h). */
+  const ROW_H = 22;
+  /** The MIME type a dragged selection carries: flow ids only, never message bodies. */
+  const FLOW_DND = 'application/x-bosun-flow';
+
+  const panel = usePanel();
+  // Rows are only ever replaced, never edited in place, so no deep proxy: with 100,000 rows a proxy per row is slow.
+  let flows = $state.raw<FlowSummary[]>([]);
   let loadingMore = false;
   let exhausted = false;
 
-  let text = $state('');
-  let host = $state('');
-  let methods = $state('');
-  let statusMin = $state<number | undefined>();
-  let statusMax = $state<number | undefined>();
-  let inScopeOnly = $state(false);
-  let hideExt = $state('png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,css');
-  const simpleFilter = $derived(!text);
+  const parsed = $derived(parseQuery(v.query));
+  const filter = $derived(parsed.filter);
+  /** What the list shows: the loaded flows, minus any in the undo window of a delete. */
+  const shown = $derived(v.pending.length ? flows.filter((f) => !v.pending.includes(f.id)) : flows);
+  const selSet = $derived(new Set(v.selected));
+
+  // Live tail. New flows are shown at once only when that moves nothing under the user: the list is at the top, the
+  // pointer is not over it, and the tail is not paused. Otherwise they wait here and "N new" shows them.
+  let held = $state.raw<FlowSummary[]>([]);
+  /** New flows that can't be matched on this side (a text search is active), so showing them means reloading. */
+  let unmatched = $state(0);
+  let paused = $state(false);
+  let hovering = false;
+  let list = $state<{ scrollToTop(): void; atTop(): boolean } | undefined>();
+  let bar = $state<{ focus(): void } | undefined>();
+  let root = $state<HTMLElement | undefined>();
+  const waiting = $derived(held.length + unmatched);
+  const simpleFilter = $derived(!filter.text);
+  const activeIndex = $derived(v.selectedId === null ? -1 : shown.findIndex((f) => f.id === v.selectedId));
+  const canEdit = $derived(session.can('tester'));
 
   function params(extra: Record<string, number | undefined> = {}) {
-    return qs({ text, host, methods, status_min: statusMin, status_max: statusMax, in_scope_only: inScopeOnly, hide_ext: hideExt, limit: 500, ...extra });
+    return qs({ text: filter.text, host: filter.host, methods: filter.methods, status_min: filter.statusMin, status_max: filter.statusMax, in_scope_only: filter.inScopeOnly, hide_ext: filter.hideExt, limit: 500, ...extra });
   }
 
   async function reload() {
-    pending = 0;
+    held = [];
+    unmatched = 0;
     exhausted = false;
     flows = await api.get<FlowSummary[]>(`/flows${params()}`);
   }
@@ -50,108 +73,148 @@
     }
   }
 
-  function matches(f: FlowSummary): boolean {
-    if (host && !f.host.includes(host.toLowerCase())) return false;
-    if (methods && !methods.toUpperCase().split(',').map((m) => m.trim()).includes(f.method)) return false;
-    if (statusMin !== undefined && (f.status ?? 0) < statusMin) return false;
-    if (statusMax !== undefined && (f.status ?? 0) > statusMax) return false;
-    if (inScopeOnly && !f.in_scope) return false;
-    const ext = f.path.split('?')[0]!.split('.').pop()?.toLowerCase() ?? '';
-    if (hideExt && hideExt.split(',').map((e) => e.trim().toLowerCase()).includes(ext)) return false;
-    return true;
-  }
+  const canFollow = () => !paused && !hovering && (list?.atTop() ?? true);
 
-  // Which stored messages the two panes show: the current ones, or what the client and server first sent.
-  function parts(tab: 'messages' | 'original'): [PartName, PartName] {
-    if (tab === 'messages' || !selected) return ['request', 'response'];
-    return [selected.original_request ? 'original-request' : 'request', selected.original_response ? 'original-response' : 'response'];
-  }
-
-  let opening = 0;
-  async function loadPanes() {
-    const m = selected;
-    if (!m) return;
-    const ticket = ++opening;
-    loadError = '';
-    try {
-      const tab = detailTab === 'original' ? 'original' : 'messages';
-      const [rp, sp] = parts(tab);
-      const info = (p: PartName) => (p === 'request' ? m.request : p === 'response' ? m.response : p === 'original-request' ? m.original_request : m.original_response);
-      const [a, b] = await Promise.all([
-        loadPart(m, rp, info(rp)!),
-        info(sp) ? loadPart(m, sp, info(sp)!) : Promise.resolve(null),
-      ]);
-      if (ticket !== opening) return;
-      req = a;
-      resp = b;
-    } catch (e) {
-      if (ticket === opening) loadError = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  async function loadNext(which: 'req' | 'resp', decoded: boolean) {
-    const m = selected;
-    const cur = which === 'req' ? req : resp;
-    if (!m || !cur) return;
-    const [rp, sp] = parts(detailTab === 'original' ? 'original' : 'messages');
-    try {
-      const next = await loadMore(m, which === 'req' ? rp : sp, cur, decoded);
-      if (which === 'req') req = next;
-      else resp = next;
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  const toB64 = (l: Loaded | null) => (l ? bytesToB64(join(l.head, l.body)) : null);
-  function join(a: Uint8Array, b: Uint8Array): Uint8Array {
-    const out = new Uint8Array(a.length + b.length);
-    out.set(a, 0);
-    out.set(b, a.length);
-    return out;
-  }
-
-  async function open(f: FlowSummary) {
-    selected = await api.get<FlowMeta>(`/flows/${f.id}`);
-    detailTab = 'messages';
-    wsMessages = [];
-    req = null;
-    resp = null;
-    await loadPanes();
-    if (f.status === 101) wsMessages = await api.get<WsMessage[]>(`/flows/${f.id}/ws`);
-  }
-
-  /** Hand the request to the Repeater page, which picks it up from session storage. */
-  function toRepeater() {
-    const m = selected;
-    const r = req;
-    if (!m || !r) return;
-    if (r.body.length < r.bodyLen) {
-      loadError = 'This request body is too large to open in the Repeater here.';
+  /** Show what has been waiting. */
+  function flush() {
+    if (unmatched) {
+      reload();
       return;
     }
-    const d = bytesToText(join(r.head, r.body));
-    const inbox = JSON.parse(sessionStorage.getItem('bosun.repeater.inbox') ?? '[]');
-    inbox.push({ scheme: m.scheme, host: m.host, port: m.port, request: d.text, mode: d.mode });
-    sessionStorage.setItem('bosun.repeater.inbox', JSON.stringify(inbox));
-    location.hash = '#repeater';
+    if (held.length) flows = [...held, ...flows];
+    held = [];
   }
 
-  async function saveNote() {
-    if (!selected) return;
-    await api.patch(`/flows/${selected.id}`, { note: selected.note ?? '', tags: selected.tags });
+  function follow() {
+    if (waiting && canFollow()) flush();
   }
 
-  async function remove() {
-    if (!selected) return;
-    const id = selected.id;
-    await api.del('/flows', { ids: [id] });
-    flows = flows.filter((f) => f.id !== id);
-    selected = null;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Open a flow in the detail panel. */
+  function open(f: { id: number }) {
+    clearTimeout(openTimer);
+    v.select([f.id], f.id);
+    v.openId = f.id;
+    // Opening a request on purpose brings the detail panel up if it was closed.
+    workspace.reveal('flow', 'history');
   }
 
-  async function copyUrl() {
-    if (selected) await navigator.clipboard.writeText(flowUrl(selected));
+  /** Select everything from the anchor to row `i`. */
+  function selectRange(i: number) {
+    const a = shown.findIndex((f) => f.id === (v.anchorId ?? v.selectedId));
+    const from = a < 0 ? i : a;
+    const [lo, hi] = from < i ? [from, i] : [i, from];
+    v.selected = shown.slice(lo, hi + 1).map((f) => f.id);
+    v.selectedId = shown[i]!.id;
+  }
+
+  /** Arrow-key movement: highlight at once, load the detail once the user stops for a moment. */
+  function moveTo(i: number, extend: boolean) {
+    const f = shown[i];
+    if (!f) return;
+    if (extend) {
+      selectRange(i);
+      return;
+    }
+    v.select([f.id], f.id);
+    clearTimeout(openTimer);
+    openTimer = setTimeout(() => (v.openId = f.id), 90);
+  }
+
+  function onRowClick(e: MouseEvent, f: FlowSummary, i: number) {
+    if (e.shiftKey) selectRange(i);
+    else if (e.ctrlKey || e.metaKey) {
+      const had = selSet.has(f.id);
+      v.selected = had ? v.selected.filter((x) => x !== f.id) : [...v.selected, f.id];
+      v.selectedId = had ? (v.selected[v.selected.length - 1] ?? null) : f.id;
+      v.anchorId = f.id;
+    } else open(f);
+  }
+
+  function selectAll() {
+    v.selected = shown.map((f) => f.id);
+    v.selectedId ??= shown[0]?.id ?? null;
+  }
+
+  function deleteSelected() {
+    if (canEdit) deleteFlows(v.ids);
+  }
+
+  // A flow was deleted for good elsewhere (the detail panel, or an undo window that passed).
+  let seenRemoval = untrack(() => v.removedTick);
+  $effect(() => {
+    const tick = v.removedTick;
+    untrack(() => {
+      if (tick === seenRemoval) return;
+      seenRemoval = tick;
+      flows = flows.filter((f) => !v.removedIds.includes(f.id));
+    });
+  });
+
+  // The filter was applied (typed, a chip removed, or set from outside such as the headers view).
+  let seenApply = untrack(() => v.applyTick);
+  $effect(() => {
+    const tick = v.applyTick;
+    untrack(() => {
+      if (tick === seenApply) return;
+      seenApply = tick;
+      reload();
+    });
+  });
+
+  // ---- context menu
+
+  function menuFor(): MenuItem[] {
+    const ctx = currentCtx();
+    const c = (id: string, label?: string): MenuItem | null => {
+      const cmd = commands.find(id);
+      if (!cmd || !commands.isEnabled(cmd, ctx)) return null;
+      return { label: label ?? cmd.title, hint: cmd.keys ? format(cmd.keys) : undefined, run: () => void commands.run(id, ctx) };
+    };
+    return tidyMenu([
+      { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'),
+      { kind: 'sep' }, { kind: 'heading', label: 'Copy' },
+      c('flow.copy-url', 'URL'), c('flow.copy-curl', 'as cURL'), c('flow.copy-request', 'Request'), c('flow.copy-response', 'Response'),
+      { kind: 'sep' }, { kind: 'heading', label: 'Scope' }, c('flow.scope.include', 'Add host to scope'), c('flow.scope.exclude', 'Exclude host from scope'),
+      { kind: 'sep' }, c('flow.delete', 'Delete'),
+    ]);
+  }
+
+  function onContext(e: MouseEvent) {
+    const rowEl = (e.target as HTMLElement).closest<HTMLElement>('[role="option"]');
+    let x = e.clientX;
+    let y = e.clientY;
+    if (rowEl) {
+      const f = shown[Number(rowEl.id.replace('hist-row-', ''))];
+      if (f && !selSet.has(f.id)) v.select([f.id], f.id);
+    } else {
+      // The menu key or Shift+F10 on the focused list: open it at the active row.
+      const at = document.getElementById(`hist-row-${activeIndex}`)?.getBoundingClientRect() ?? root?.getBoundingClientRect();
+      if (!at || v.ids.length === 0) return;
+      x = at.left + 24;
+      y = at.bottom;
+    }
+    e.preventDefault();
+    contextMenu.show(menuFor(), x, y, 'Request actions');
+  }
+
+  // ---- drag: a selection carries its ids and nothing else
+
+  function onDragStart(e: DragEvent, f: FlowSummary) {
+    if (!selSet.has(f.id)) v.select([f.id], f.id);
+    const ids = v.ids;
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    dt.setData(FLOW_DND, JSON.stringify({ ids }));
+    dt.setData('text/plain', ids.map((i) => `#${i}`).join(' '));
+    dt.effectAllowed = 'copy';
+    const ghost = document.createElement('div');
+    ghost.className = 'drag-ghost';
+    ghost.textContent = `${ids.length} request${ids.length === 1 ? '' : 's'}`;
+    document.body.appendChild(ghost);
+    dt.setDragImage(ghost, 0, 0);
+    setTimeout(() => ghost.remove(), 0);
   }
 
   function statusClass(s: number | null): string {
@@ -159,141 +222,170 @@
     return s >= 500 ? 'st-5' : s >= 400 ? 'st-4' : s >= 300 ? 'st-3' : 'st-2';
   }
 
+  const knownMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+  const methodClass = (m: string) => `m-${knownMethods.includes(m) ? m : 'other'}`;
+
+  /** The host as shown in a row: the port only when it is not the scheme's default. */
+  function hostLabel(f: FlowSummary): string {
+    const def = (f.scheme === 'https' && f.port === 443) || (f.scheme === 'http' && f.port === 80);
+    return def ? f.host : `${f.host}:${f.port}`;
+  }
+
+  /** One glyph per thing worth noticing on a row; the tooltip spells them out. */
+  function marks(f: FlowSummary): { glyphs: string; title: string } {
+    const g: string[] = [];
+    const t: string[] = [];
+    if (f.edited) { g.push('✎'); t.push('edited'); }
+    if (f.status === 101) { g.push('⇄'); t.push('WebSocket'); }
+    if (f.note) { g.push('¶'); t.push('has a note'); }
+    if (f.tags?.length) { g.push('#'); t.push(`tags: ${f.tags.join(', ')}`); }
+    return { glyphs: g.join(''), title: t.join(', ') };
+  }
+
+  function onWindowKey(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    // The panel stays mounted while hidden, so only react when this panel is the one on screen.
+    if (!panel.visible || !root) return;
+    if (e.key === '/') {
+      e.preventDefault();
+      bar?.focus();
+    } else if (e.key === ' ' && t?.getAttribute('role') === 'listbox' && root.contains(t)) {
+      e.preventDefault();
+      paused = !paused;
+      follow();
+    } else if (e.key === 'Escape' && v.selected.length > 1 && root.contains(t)) {
+      v.select(v.selectedId !== null ? [v.selectedId] : []);
+    }
+  }
+
   onMount(() => {
     reload();
-    return session.on((e) => {
+    const off = session.on((e) => {
       if (e.type === 'reload') {
         reload();
         return;
       }
       if (e.type !== 'flow') return;
       if (simpleFilter) {
-        if (matches(e.flow)) flows = [e.flow, ...flows];
+        if (!matchesFlow(filter, e.flow)) return;
+        if (held.length < 5000) held = [e.flow, ...held];
+        follow();
       } else {
-        pending++;
+        unmatched++;
       }
     });
+    return () => {
+      off();
+      clearTimeout(openTimer);
+    };
   });
 </script>
 
-<form class="toolbar" onsubmit={(e) => { e.preventDefault(); reload(); }}>
-  <input class="grow" placeholder="Search requests and responses" bind:value={text} />
-  <input placeholder="host" bind:value={host} size="14" />
-  <input placeholder="GET,POST" bind:value={methods} size="9" />
-  <input type="number" placeholder="min" bind:value={statusMin} class="num" />
-  <input type="number" placeholder="max" bind:value={statusMax} class="num" />
-  <input placeholder="hide extensions" bind:value={hideExt} size="16" title="Comma-separated extensions to hide" />
-  <label><input type="checkbox" bind:checked={inScopeOnly} /> in scope</label>
-  <button class="primary">Filter</button>
-  {#if pending}<button type="button" onclick={reload}>{pending} new</button>{/if}
-</form>
+<svelte:window onkeydown={onWindowKey} />
 
-<div class="layout">
-  <div class="table">
-    <div class="row head">
-      <span class="c-id">#</span><span class="c-m">Method</span><span class="c-host">Host</span><span class="c-path">Path</span>
-      <span class="c-st">Status</span><span class="c-len">Length</span><span class="c-mime">MIME</span><span class="c-t">Time</span>
+<div class="hist" bind:this={root}>
+  <FilterBar bind:this={bar}>
+    {#if waiting}<button type="button" onclick={() => { flush(); list?.scrollToTop(); }}>{waiting} new</button>{/if}
+    <button type="button" class:active={paused} aria-pressed={paused} title="Hold new requests back so the list stays still (Space)" onclick={() => { paused = !paused; follow(); }}>
+      {paused ? 'Paused' : 'Following'}
+    </button>
+  </FilterBar>
+
+  {#if v.selected.length > 1}
+    <div class="selbar" role="region" aria-label="Selection">
+      <strong class="tnum">{v.selected.length} selected</strong>
+      {#if canEdit}<button onclick={() => commands.run('flow.repeater')}>Send to Repeater</button>{/if}
+      <button onclick={() => commands.run('flow.copy-url')}>Copy URLs</button>
+      {#if canEdit}<button class="danger" onclick={deleteSelected}>Delete</button>{/if}
+      <span class="spacer"></span>
+      <button class="ghost" onclick={() => v.select(v.selectedId !== null ? [v.selectedId] : [])}>Clear selection</button>
     </div>
-    <div class="body">
-      <VirtualList items={flows} onNearEnd={more}>
-        {#snippet row(f: FlowSummary)}
-          <button class="row" class:active={selected?.id === f.id} class:oos={!f.in_scope} onclick={() => open(f)}>
-            <span class="c-id">{f.id}</span>
-            <span class="c-m">{f.method}</span>
-            <span class="c-host">{f.scheme}://{f.host}{(f.scheme === 'https' && f.port === 443) || (f.scheme === 'http' && f.port === 80) ? '' : ':' + f.port}</span>
+  {/if}
+
+  <div class="table" use:css={{ '--row-h': `${ROW_H}px` }}>
+    <div class="head-wrap">
+      <div class="row head">
+        <span class="c-id">#</span><span class="c-m">Method</span><span class="c-mk" title="Marks: edited, WebSocket, note, tags"></span><span class="c-host">Host</span><span class="c-path">Path</span>
+        <span class="c-st">Status</span><span class="c-len">Length</span><span class="c-mime">MIME</span><span class="c-t">Time</span>
+      </div>
+    </div>
+    <div class="body" role="presentation" onpointerenter={() => (hovering = true)} onpointerleave={() => { hovering = false; follow(); }} oncontextmenu={onContext}>
+      <VirtualList
+        bind:this={list}
+        items={shown}
+        rowHeight={ROW_H}
+        key={(f) => f.id}
+        label="HTTP history"
+        idPrefix="hist"
+        multi
+        {activeIndex}
+        onNearEnd={more}
+        onTop={follow}
+        onSelect={moveTo}
+        onSelectAll={selectAll}
+        onDelete={deleteSelected}
+        onActivate={(i) => open(shown[i]!)}
+      >
+        {#snippet row(f: FlowSummary, i: number)}
+          {@const mk = marks(f)}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div
+            class="row"
+            id="hist-row-{i}"
+            role="option"
+            aria-selected={selSet.has(f.id)}
+            class:active={selSet.has(f.id)}
+            class:focus={v.selectedId === f.id}
+            class:oos={!f.in_scope}
+            title={flowUrl(f)}
+            draggable="true"
+            ondragstart={(e) => onDragStart(e, f)}
+            onclick={(e) => onRowClick(e, f, i)}
+            tabindex="-1"
+          >
+            <span class="c-id tnum">{f.id}</span>
+            <span class="c-m {methodClass(f.method)}">{f.method}</span>
+            <span class="c-mk" title={mk.title}>{mk.glyphs}</span>
+            <span class="c-host">{hostLabel(f)}</span>
             <span class="c-path">{f.path}</span>
-            <span class="c-st {statusClass(f.status ?? null)}">{f.error ? 'error' : (f.status ?? '…')}</span>
-            <span class="c-len">{fmtSize(f.response_len ?? 0)}</span>
+            <span class="c-st tnum {statusClass(f.status ?? null)}">{f.error ? '✕ error' : (f.status ?? '…')}</span>
+            <span class="c-len tnum">{fmtSize(f.response_len ?? 0)}</span>
             <span class="c-mime">{f.mime ?? ''}</span>
-            <span class="c-t">{fmtTime(f.started_ms)}</span>
-          </button>
+            <span class="c-t tnum">{fmtTime(f.started_ms)}</span>
+          </div>
         {/snippet}
       </VirtualList>
     </div>
   </div>
-
-  {#if selected}
-    <div class="detail">
-      <div class="toolbar">
-        <div class="seg">
-          <button class:active={detailTab === 'messages'} onclick={() => { detailTab = 'messages'; loadPanes(); }}>Request / Response</button>
-          {#if selected.original_request || selected.original_response}
-            <button class:active={detailTab === 'original'} onclick={() => { detailTab = 'original'; loadPanes(); }}>Original (before edits)</button>
-          {/if}
-          {#if selected.status === 101}
-            <button class:active={detailTab === 'ws'} onclick={() => (detailTab = 'ws')}>WebSocket ({wsMessages.length})</button>
-          {/if}
-        </div>
-        <span class="url" title={flowUrl(selected)}>{flowUrl(selected)}</span>
-        <span class="spacer"></span>
-        <button onclick={copyUrl}>Copy URL</button>
-        {#if session.can('tester')}<button onclick={toRepeater} title="Open this request in the Repeater">Send to Repeater</button>{/if}
-        {#if session.can('tester')}<button onclick={remove}>Delete</button>{/if}
-      </div>
-      {#if selected.error}<p class="error pad">{selected.error}</p>{/if}
-      {#if detailTab === 'ws'}
-        <div class="ws">
-          {#each wsMessages as m (m.id)}
-            <div class="wsm" class:out={m.direction === 'client_to_server'}>
-              <span class="small muted">{fmtTime(m.time_ms)} {m.direction === 'client_to_server' ? '→' : '←'} op {m.opcode}{m.truncated ? ' (truncated)' : ''}</span>
-              <pre>{bytesToText(b64ToBytes(m.payload)).text}</pre>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="pair">
-          {#key `${selected.id}-${detailTab}`}
-            {@const names = parts(detailTab === 'original' ? 'original' : 'messages')}
-            <MessageView
-              title="Request"
-              raw={toB64(req)}
-              rawRemaining={req ? req.bodyLen - req.body.length : 0}
-              onMore={(d) => loadNext('req', d)}
-              downloadHref={bodyUrl(selected.id, names[0])}
-            />
-            <MessageView
-              title={selected.response_truncated ? 'Response (truncated)' : 'Response'}
-              raw={toB64(resp)}
-              decodedBody={resp?.decoded ? bytesToB64(resp.decoded) : null}
-              rawRemaining={resp ? resp.bodyLen - resp.body.length : 0}
-              decodedMore={resp?.decodedMore ?? false}
-              onMore={(d) => loadNext('resp', d)}
-              downloadHref={resp ? bodyUrl(selected.id, names[1]) : ''}
-            />
-          {/key}
-        </div>
-      {/if}
-      {#if resp?.note}<p class="small muted pad">{resp.note}</p>{/if}
-      {#if loadError}<p class="error pad">{loadError}</p>{/if}
-      {#if session.can('tester')}
-        <div class="toolbar">
-          <input class="grow" placeholder="Note" bind:value={selected.note} onchange={saveNote} />
-        </div>
-      {/if}
-    </div>
-  {/if}
 </div>
 
 <style>
-  .layout { display: grid; grid-template-rows: minmax(8rem, 1fr) minmax(12rem, 1.4fr); flex: 1; min-height: 0; }
-  .layout:has(.detail) { grid-template-rows: minmax(8rem, 1fr) minmax(12rem, 1.4fr); }
-  .table { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--line); }
+  .hist { display: flex; flex-direction: column; flex: 1; min-height: 0; container-type: inline-size; }
+  .table { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .body { flex: 1; min-height: 0; }
-  .row { display: grid; grid-template-columns: 4.5rem 4.5rem 16rem 1fr 4rem 5.5rem 9rem 7rem; gap: .5rem; align-items: center; height: 24px; width: 100%; padding: 0 .5rem; border: 0; border-radius: 0; text-align: left; background: transparent; }
+  .selbar { display: flex; align-items: center; gap: .4rem; padding: .2rem .5rem; background: var(--surface-sel); border-bottom: 1px solid var(--border-subtle); }
+  /* The header reserves the same scrollbar gutter as the list below it, so their columns always line up. */
+  .head-wrap { overflow-y: hidden; scrollbar-gutter: stable; background: var(--surface-1); border-bottom: 1px solid var(--border-subtle); }
+  .row { display: grid; grid-template-columns: 3rem 4.6rem 2.4rem 13rem 1fr 4.6rem 6.2rem 6rem 7.8rem; gap: .5rem; align-items: center; height: var(--row-h); width: 100%; padding: 0 .5rem; text-align: left; font-family: var(--font-mono); font-size: var(--fs-data); cursor: default; }
   .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .row.head { font-weight: 600; background: var(--bg2); border-bottom: 1px solid var(--line); }
-  .row:not(.head):hover { background: var(--hover); }
-  .row.active { background: var(--sel); }
-  .row.oos { color: var(--muted); }
-  .st-2 { color: var(--ok); } .st-3 { color: var(--info); } .st-4 { color: var(--warn); } .st-5, .st-none { color: var(--bad); }
-  .detail { display: flex; flex-direction: column; min-height: 0; }
-  .pair { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
-  .pair > :global(*) { border-right: 1px solid var(--line); }
-  .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-  .num { width: 4.5rem; }
-  .ws { overflow: auto; flex: 1; padding: .5rem; }
-  .wsm { border-left: 3px solid var(--info); padding-left: .5rem; margin-bottom: .4rem; }
-  .wsm.out { border-color: var(--accent); }
-  .wsm pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
-  .pad { padding: 0 .5rem; }
+  .row.head { font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+  .row:not(.head):hover { background: var(--surface-2); }
+  .row.active { background: var(--surface-sel); }
+  .row.focus { box-shadow: inset 2px 0 0 var(--accent); }
+  .row.oos { color: var(--text-2); }
+  /* In a narrow panel the least useful columns go first, so the path keeps room. */
+  @container (max-width: 940px) {
+    .row { grid-template-columns: 3rem 4.6rem 2.4rem 11rem 1fr 4.6rem 6.2rem 7.8rem; }
+    .c-mime { display: none; }
+  }
+  @container (max-width: 720px) {
+    .row { grid-template-columns: 3rem 4.6rem 2.4rem 9rem 1fr 4.6rem 7.8rem; }
+    .c-len { display: none; }
+  }
+  .c-mk { color: var(--text-2); letter-spacing: .1em; }
+  .c-m { font-weight: 600; }
+  .st-2 { color: var(--st-2xx); } .st-3 { color: var(--st-3xx); }
+  .st-4 { color: var(--st-4xx); font-weight: 600; } .st-5, .st-none { color: var(--st-5xx); font-weight: 600; }
 </style>

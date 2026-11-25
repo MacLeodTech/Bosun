@@ -7,6 +7,7 @@ Everything below runs in CI (`.github/workflows/ci.yml`). Run the same things lo
 | Unit and integration tests | `crates/*/src`, `crates/*/tests` | `cargo test` |
 | Property tests (`proptest`) | the `properties` module inside the unit tests of `bosun-scope`, `bosun-model` and `bosun-proxy` (`ws.rs`) | `cargo test` |
 | End-to-end (Playwright) | `e2e/` | `cargo build -p bosun`, then `cd e2e && npm ci && npx playwright install chromium && npm test` |
+| Layout model, tokeniser, pretty-printer, diff (`node --test`) | `web/tests/*.test.ts` | `cd web && npm test` |
 | Fuzzing (`cargo-fuzz`) | `fuzz/` | `cd fuzz && cargo +nightly fuzz run <target> -- -max_total_time=30` |
 
 ## Property tests
@@ -17,13 +18,28 @@ same message; bare LF equals CRLF), and the WebSocket frame parser (any chunking
 limit holds). When proptest finds a failing case it writes `proptest-regressions/` next to the crate: commit that
 file together with the fix.
 
+## Front-end unit tests
+
+`web/tests/` holds plain node tests (no framework) for the pure code: the dock layout model (`layout.ts`), the syntax
+tokeniser (`highlight.ts`), the pretty-printer (`pretty.ts`) and the diff (`diff.ts`). They are property-style: seeded
+random walks over every layout operation, and random and pathological input for the tokeniser, which must never throw,
+must give back exactly the text it was given, and must stay linear. The tokeniser parses untrusted input, but it is
+TypeScript, so these tests stand in for a `cargo-fuzz` target; a Rust port would need a real fuzz target.
+
 ## End-to-end
 
 The suite starts the `bosun` binary (`BOSUN_BIN` overrides the path) with a throw-away data directory and a small
 stand-in "hostile" site (`e2e/target.ts`), then drives the UI in Chromium: first-run setup, sign-in, scope editing,
-live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out-of-scope refusal), and the check that the render view cannot run a hostile page's script. The
+live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out-of-scope refusal), the viewer (a 256 KiB-class JSON body is pretty-printed, windowed, searchable and scrolls, the Changes diff, header filters, the render view's colour scheme), pop-out windows (a panel moves out, follows the selection and returns), the dock (layout survives a reload, a corrupt layout falls back, keyboard and mouse docking, a background panel ignores keys, saved and imported layouts), and the check that the render view cannot run a hostile page's script. The
 ports are 18080 (proxy), 18090 (UI) and 18099 (target); override with `BOSUN_E2E_PROXY_PORT`, `BOSUN_E2E_UI_PORT`
 and `BOSUN_E2E_TARGET_PORT`. A failed CI run keeps the Playwright traces as an artifact.
+
+The suite also audits accessibility in both themes (names, ARIA references, duplicate ids) and drives the dock, palette,
+menus and list by keyboard alone. Performance at 100,000 rows is not a CI test (it takes minutes); the method used for
+Phase 5 was: send 100,000 requests through the proxy in batches of 500 with a pause (a faster burst is not fully
+recorded), open History, load every page, then time scrolling, key presses, select all, a filter and live tail with a
+`PerformanceObserver` for long tasks. Keep `flows` and the selection arrays `$state.raw`: a deep proxy per row is what
+made the first measurement slow.
 
 The render-sandbox test has two layers on purpose. The `sandbox=""` attribute assertion guards the sandbox itself.
 The call-back assertion guards the outcome (no script, event handler or `javascript:` link of the page runs); the UI's

@@ -45,3 +45,11 @@ shared without sharing accounts.
 - No inline script or style anywhere (the CSP forbids both). Dynamic sizes are set through the CSSOM.
 - Target content is shown as text; the render view is a sandboxed `srcdoc` iframe without scripts.
 - Bytes travel as base64 and are shown as UTF-8 when valid, Latin-1 otherwise, so edits never alter untouched bytes.
+- The UI is a dock of panels (`web/src/lib/layout.ts`, `workspace.svelte.ts`, `components/dock/`). The layout is a tree
+  of splits and tab groups; `layout.ts` is pure and tested (`npm test` in `web/`). Panels stay mounted while their tab
+  is in the background, so a panel must not act on window-level input unless `usePanel().visible` is true.
+- Why our own dock and not `dockview-core` (spike, 2026-11-25, by reading the package, not by a browser run): the
+  npm package ships no stylesheet, so the whole `.dv-*` class set would still have to be written and kept in step
+  with a library that is about 400 KB minified; its pop-out path copies stylesheets by injecting `<style>` elements,
+  which `style-src 'self'` blocks; and our pop-out design (a second app instance per window, sharing the session) does
+  not use its pop-out at all. The engine is about 600 lines with property-style tests.

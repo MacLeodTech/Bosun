@@ -57,7 +57,7 @@
   <section class="map">
     <div class="toolbar">
       <strong>Site map</strong>
-      <input placeholder="filter hosts" bind:value={filter} />
+      <input placeholder="filter hosts" aria-label="Filter hosts" bind:value={filter} />
       <span class="spacer"></span>
       <button onclick={load}>Refresh</button>
     </div>
@@ -109,15 +109,15 @@
             {#each scope[kind] as r, i (i)}
               <tr>
                 <td>
-                  <select bind:value={r.scheme} disabled={!canEdit}>
+                  <select bind:value={r.scheme} disabled={!canEdit} aria-label="{label} rule {i + 1}: scheme">
                     <option value={null}>any</option><option value="http">http</option><option value="https">https</option>
                   </select>
                 </td>
-                <td><input bind:value={r.host} disabled={!canEdit} class="mono" /></td>
-                <td><input type="number" bind:value={r.port} disabled={!canEdit} class="num" /></td>
-                <td><input bind:value={r.path} disabled={!canEdit} class="mono" /></td>
-                <td><input type="checkbox" bind:checked={r.allow_private} disabled={!canEdit} aria-label="Allow local addresses" /></td>
-                <td>{#if canEdit}<button onclick={() => (scope[kind] = scope[kind].filter((_, j) => j !== i))}>Remove</button>{/if}</td>
+                <td><input bind:value={r.host} disabled={!canEdit} class="mono" aria-label="{label} rule {i + 1}: host" /></td>
+                <td><input type="number" bind:value={r.port} disabled={!canEdit} class="num" aria-label="{label} rule {i + 1}: port" /></td>
+                <td><input bind:value={r.path} disabled={!canEdit} class="mono" aria-label="{label} rule {i + 1}: path regex" /></td>
+                <td><input type="checkbox" bind:checked={r.allow_private} disabled={!canEdit} aria-label="{label} rule {i + 1}: allow local addresses" /></td>
+                <td>{#if canEdit}<button aria-label="Remove {kind} rule {i + 1}" onclick={() => (scope[kind] = scope[kind].filter((_, j) => j !== i))}>Remove</button>{/if}</td>
               </tr>
             {/each}
           </tbody>

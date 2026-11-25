@@ -34,6 +34,11 @@ web UI work. Repeater, Intruder, Sequencer, the scanner and the OAST server are 
 
 ## Quick start
 
+### Build script
+
+`scripts/bosun.sh` wraps the steps below: `deps` (Linux packages), `build`, `run [engine|desktop]`, `install`,
+`container`, `up`/`down` and `check`. Run `scripts/bosun.sh help`.
+
 ### Local
 
 ```sh

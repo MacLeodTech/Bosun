@@ -393,7 +393,8 @@ impl Client {
     /// Send a raw request through the Repeater. `body` is the `SendBody` of the API (see `docs/openapi.json`):
     /// target, base64 request, and optionally protocol, count and mode. Returns the reply with one result per send.
     pub async fn repeater_send(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
-        self.json(self.req(Method::POST, "/repeater/send").json(body)).await
+        self.json(self.req(Method::POST, "/repeater/send").json(body))
+            .await
     }
 
     /// Whether the Repeater may send out of scope.

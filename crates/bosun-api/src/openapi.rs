@@ -17,8 +17,8 @@ use bosun_proxy::{ProxyEvent, ProxyStats};
 use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
 
 use crate::handlers::FlowOverview;
-use crate::repeater::{RepeaterSettings, SendBody, SendReply};
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
+use crate::repeater::{RepeaterSettings, SendBody, SendReply};
 use bosun_proxy::rules::RuleSpec as MatchRule;
 use bosun_scope::ScopeSpec;
 

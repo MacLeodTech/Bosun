@@ -184,7 +184,10 @@ impl H2Request {
     pub fn from_http1(raw: &[u8], scheme: &str) -> Result<Self, String> {
         let mut storage = [httparse::EMPTY_HEADER; 128];
         let mut req = httparse::Request::new(&mut storage);
-        let n = match req.parse(raw).map_err(|e| format!("not an HTTP/1.1 request: {e}"))? {
+        let n = match req
+            .parse(raw)
+            .map_err(|e| format!("not an HTTP/1.1 request: {e}"))?
+        {
             httparse::Status::Complete(n) => n,
             httparse::Status::Partial => return Err("the request head is not complete".into()),
         };
@@ -196,7 +199,9 @@ impl H2Request {
             match name.as_str() {
                 "host" => authority = String::from_utf8_lossy(h.value).into_owned(),
                 "connection" | "keep-alive" | "proxy-connection" | "upgrade" => {}
-                "transfer-encoding" => return Err("a chunked body cannot be sent over HTTP/2 as written".into()),
+                "transfer-encoding" => {
+                    return Err("a chunked body cannot be sent over HTTP/2 as written".into());
+                }
                 _ => rest.push((name.into_bytes(), h.value.to_vec())),
             }
         }
@@ -861,14 +866,28 @@ mod from_http1_tests {
         let h: Vec<(String, String)> = r
             .headers
             .iter()
-            .map(|(n, v)| (String::from_utf8_lossy(n).into(), String::from_utf8_lossy(v).into()))
+            .map(|(n, v)| {
+                (
+                    String::from_utf8_lossy(n).into(),
+                    String::from_utf8_lossy(v).into(),
+                )
+            })
             .collect();
         assert_eq!(h[0], (":method".into(), "POST".into()));
         assert_eq!(h[2], (":authority".into(), "x.test:8443".into()));
         assert_eq!(h[3], (":path".into(), "/a?b=1".into()));
-        assert_eq!(h[4..].iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["x-a", "x-a", "content-length"]);
+        assert_eq!(
+            h[4..].iter().map(|x| x.0.as_str()).collect::<Vec<_>>(),
+            ["x-a", "x-a", "content-length"]
+        );
         assert_eq!(r.body, b"abc");
-        assert!(H2Request::from_http1(b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n", "http").is_err());
+        assert!(
+            H2Request::from_http1(
+                b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n",
+                "http"
+            )
+            .is_err()
+        );
         assert!(H2Request::from_http1(b"GET / HTTP/1.1\r\n\r\n", "http").is_err());
         assert!(H2Request::from_http1(b"GET / HT", "http").is_err());
     }

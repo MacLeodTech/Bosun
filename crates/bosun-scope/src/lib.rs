@@ -359,7 +359,11 @@ impl Gate {
     }
 
     pub fn repeater_policy(&self) -> OutOfScopePolicy {
-        *self.inner.repeater_policy.read().unwrap_or_else(|e| e.into_inner())
+        *self
+            .inner
+            .repeater_policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn set_repeater_policy(&self, p: OutOfScopePolicy) {

@@ -112,7 +112,11 @@ async fn http1_connections_are_reused_when_asked_and_not_otherwise() {
 #[tokio::test]
 async fn a_connection_is_not_kept_when_the_exchange_does_not_leave_it_clean() {
     // The server says it is closing.
-    let (addr, accepted) = keepalive_server(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok", 0).await;
+    let (addr, accepted) = keepalive_server(
+        b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+        0,
+    )
+    .await;
     let e = engine(None);
     for _ in 0..2 {
         e.send(&target(addr), GET, &reuse()).await.unwrap();
@@ -121,9 +125,13 @@ async fn a_connection_is_not_kept_when_the_exchange_does_not_leave_it_clean() {
     // The request says it is closing.
     let (addr, accepted) = keepalive_server(OK, 0).await;
     for _ in 0..2 {
-        e.send(&target(addr), b"GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", &reuse())
-            .await
-            .unwrap();
+        e.send(
+            &target(addr),
+            b"GET / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n",
+            &reuse(),
+        )
+        .await
+        .unwrap();
     }
     assert_eq!(accepted.load(Ordering::SeqCst), 2);
     // A close-delimited body has no end but the close.
@@ -232,7 +240,12 @@ async fn h2_server(stats: Arc<Stats>, goaway_after: usize) -> SocketAddr {
                         }
                         let mut guard = Guard(st.clone(), false);
                         let path = req.uri().path().to_string();
-                        let body = req.into_body().collect().await.map(|b| b.to_bytes().len()).unwrap_or(0);
+                        let body = req
+                            .into_body()
+                            .collect()
+                            .await
+                            .map(|b| b.to_bytes().len())
+                            .unwrap_or(0);
                         let out: Vec<u8> = match path.as_str() {
                             "/slow" => {
                                 tokio::time::sleep(Duration::from_millis(300)).await;
@@ -296,7 +309,10 @@ async fn many_requests_share_one_connection_and_run_at_the_same_time() {
     for i in 0..20 {
         let (e, t) = (e.clone(), t.clone());
         tasks.push(tokio::spawn(async move {
-            let ex = e.send_h2_request(&t, &req(&format!("/slow?{i}")), &SendOptions::default()).await.unwrap();
+            let ex = e
+                .send_h2_request(&t, &req(&format!("/slow?{i}")), &SendOptions::default())
+                .await
+                .unwrap();
             (ex.status, body_of(&ex))
         }));
     }
@@ -304,11 +320,22 @@ async fn many_requests_share_one_connection_and_run_at_the_same_time() {
         assert_eq!(t.await.unwrap(), (Some(200), b"slow".to_vec()));
     }
     assert_eq!(stats.accepted.load(Ordering::SeqCst), 1, "one connection");
-    assert!(stats.max_inflight.load(Ordering::SeqCst) > 5, "{}", stats.max_inflight.load(Ordering::SeqCst));
-    assert!(started.elapsed() < Duration::from_millis(2500), "20 x 300 ms ran in parallel: {:?}", started.elapsed());
+    assert!(
+        stats.max_inflight.load(Ordering::SeqCst) > 5,
+        "{}",
+        stats.max_inflight.load(Ordering::SeqCst)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "20 x 300 ms ran in parallel: {:?}",
+        started.elapsed()
+    );
     assert_eq!(e.pooled().1, 1);
     // A later request finds the connection still there.
-    let ex = e.send_h2_request(&t, &req("/again"), &SendOptions::default()).await.unwrap();
+    let ex = e
+        .send_h2_request(&t, &req("/again"), &SendOptions::default())
+        .await
+        .unwrap();
     assert!(ex.reused && body_of(&ex) == b"/again");
     assert_eq!(ex.h2.unwrap().frames_out.len(), 1);
 }
@@ -319,7 +346,10 @@ async fn a_batch_goes_out_together_and_comes_back_in_order() {
     let addr = h2_server(stats.clone(), 0).await;
     let e = engine(None);
     let reqs: Vec<H2Request> = (0..6).map(|i| req(&format!("/r{i}"))).collect();
-    let out = e.send_h2_batch(&target(addr), &reqs, &SendOptions::default()).await.unwrap();
+    let out = e
+        .send_h2_batch(&target(addr), &reqs, &SendOptions::default())
+        .await
+        .unwrap();
     assert_eq!(out.len(), 6);
     for (i, ex) in out.iter().enumerate() {
         assert_eq!(body_of(ex), format!("/r{i}").into_bytes());
@@ -336,7 +366,10 @@ async fn bodies_larger_than_the_window_are_sent_and_large_responses_are_received
     let e = engine(None);
     let mut up = H2Request::new("POST", "http", "127.0.0.1", "/len", &[]);
     up.body = vec![7u8; 700_000];
-    let ex = e.send_h2_request(&target(addr), &up, &SendOptions::default()).await.unwrap();
+    let ex = e
+        .send_h2_request(&target(addr), &up, &SendOptions::default())
+        .await
+        .unwrap();
     assert_eq!(ex.error, None);
     assert_eq!(body_of(&ex), b"700000");
     // Six responses of 4 MB at once is more than the connection window, so it has to be raised as data is read.
@@ -347,7 +380,9 @@ async fn bodies_larger_than_the_window_are_sent_and_large_responses_are_received
     let mut tasks = Vec::new();
     for _ in 0..6 {
         let (e, t, o) = (e.clone(), target(addr), opts.clone());
-        tasks.push(tokio::spawn(async move { e.send_h2_request(&t, &req("/big"), &o).await.unwrap() }));
+        tasks.push(tokio::spawn(async move {
+            e.send_h2_request(&t, &req("/big"), &o).await.unwrap()
+        }));
     }
     for t in tasks {
         let ex = t.await.unwrap();
@@ -365,10 +400,16 @@ async fn a_response_over_the_limit_is_cut_off_and_the_connection_goes_on() {
         max_response: 100_000,
         ..Default::default()
     };
-    let ex = e.send_h2_request(&target(addr), &req("/big"), &opts).await.unwrap();
+    let ex = e
+        .send_h2_request(&target(addr), &req("/big"), &opts)
+        .await
+        .unwrap();
     assert!(ex.truncated);
     assert!(body_of(&ex).len() <= 100_000);
-    let ex = e.send_h2_request(&target(addr), &req("/after"), &SendOptions::default()).await.unwrap();
+    let ex = e
+        .send_h2_request(&target(addr), &req("/after"), &SendOptions::default())
+        .await
+        .unwrap();
     assert_eq!(body_of(&ex), b"/after");
     assert_eq!(stats.accepted.load(Ordering::SeqCst), 1);
 }
@@ -384,7 +425,11 @@ async fn giving_up_on_a_request_cancels_its_stream_and_leaves_the_others() {
         ..Default::default()
     };
     let hung = e.send_h2_request(&t, &req("/hang"), &opts).await.unwrap();
-    assert!(hung.error.as_deref().unwrap().contains("timed out"), "{:?}", hung.error);
+    assert!(
+        hung.error.as_deref().unwrap().contains("timed out"),
+        "{:?}",
+        hung.error
+    );
     // The server was told to stop (its handler future was dropped).
     for _ in 0..40 {
         if stats.cancelled.load(Ordering::SeqCst) > 0 {
@@ -393,7 +438,10 @@ async fn giving_up_on_a_request_cancels_its_stream_and_leaves_the_others() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(stats.cancelled.load(Ordering::SeqCst), 1);
-    let ok = e.send_h2_request(&t, &req("/fine"), &SendOptions::default()).await.unwrap();
+    let ok = e
+        .send_h2_request(&t, &req("/fine"), &SendOptions::default())
+        .await
+        .unwrap();
     assert_eq!(body_of(&ok), b"/fine");
     assert_eq!(stats.accepted.load(Ordering::SeqCst), 1);
 }
@@ -404,10 +452,16 @@ async fn after_goaway_the_next_request_opens_a_new_connection() {
     let addr = h2_server(stats.clone(), 1).await;
     let e = engine(None);
     let t = target(addr);
-    let first = e.send_h2_request(&t, &req("/one"), &SendOptions::default()).await.unwrap();
+    let first = e
+        .send_h2_request(&t, &req("/one"), &SendOptions::default())
+        .await
+        .unwrap();
     assert_eq!(body_of(&first), b"/one");
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let second = e.send_h2_request(&t, &req("/two"), &SendOptions::default()).await.unwrap();
+    let second = e
+        .send_h2_request(&t, &req("/two"), &SendOptions::default())
+        .await
+        .unwrap();
     assert_eq!((second.error.clone(), body_of(&second)), (None, b"/two".to_vec()));
     assert!(!second.reused);
     assert_eq!(stats.accepted.load(Ordering::SeqCst), 2);
@@ -419,7 +473,11 @@ async fn the_gate_is_asked_about_every_path_of_a_batch_before_anything_is_sent()
     let addr = h2_server(stats.clone(), 0).await;
     let e = engine(Some("^/ok"));
     let r = e
-        .send_h2_batch(&target(addr), &[req("/ok/1"), req("/secret")], &SendOptions::default())
+        .send_h2_batch(
+            &target(addr),
+            &[req("/ok/1"), req("/secret")],
+            &SendOptions::default(),
+        )
         .await;
     assert!(matches!(r, Err(SendError::Refused(_))), "{r:?}");
     assert_eq!(stats.accepted.load(Ordering::SeqCst), 0);

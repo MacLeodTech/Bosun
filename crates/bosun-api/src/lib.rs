@@ -304,7 +304,8 @@ impl AppState {
         let inner = Inner {
             app: d.app,
             projects: projects::Manager::new(d.projects_dir, d.project_path.as_deref(), MAX_PROJECT_UPLOAD),
-            repeater: bosun_http::Engine::new(d.gate.clone(), d.proxy.budget()).with_connector(d.proxy.tool_connector()),
+            repeater: bosun_http::Engine::new(d.gate.clone(), d.proxy.budget())
+                .with_connector(d.proxy.tool_connector()),
             proxy: d.proxy,
             gate: d.gate,
             ca: d.ca,
@@ -398,7 +399,10 @@ pub fn router(st: AppState) -> Router {
         .route("/projects/{name}/export", get(projects::export))
         .route("/projects/{name}/backup", post(projects::backup))
         .route("/repeater/send", post(repeater::send))
-        .route("/repeater/settings", get(repeater::get_settings).put(repeater::put_settings))
+        .route(
+            "/repeater/settings",
+            get(repeater::get_settings).put(repeater::put_settings),
+        )
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

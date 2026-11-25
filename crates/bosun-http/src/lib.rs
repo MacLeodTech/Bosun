@@ -334,10 +334,11 @@ impl Engine {
                 let host = &c.pinned.host;
                 let name = tls::server_name(host).map_err(|e| SendError::Tls(host.clone(), e))?;
                 let t1 = Instant::now();
-                let conn = tokio::time::timeout(opts.connect_timeout, TlsConnector::from(cfg).connect(name, tcp))
-                    .await
-                    .map_err(|_| SendError::Tls(host.clone(), "timed out".into()))?
-                    .map_err(|e| SendError::Tls(host.clone(), e.to_string()))?;
+                let conn =
+                    tokio::time::timeout(opts.connect_timeout, TlsConnector::from(cfg).connect(name, tcp))
+                        .await
+                        .map_err(|_| SendError::Tls(host.clone(), "timed out".into()))?
+                        .map_err(|e| SendError::Tls(host.clone(), e.to_string()))?;
                 ex.timings.tls_ms = Some(t1.elapsed().as_millis() as u64);
                 ex.tls = Some(tls::info(conn.get_ref().1));
                 Box::new(conn)
@@ -360,7 +361,9 @@ impl Engine {
     ) -> Result<(TcpStream, Registration, SocketAddr), String> {
         let mut last = "no addresses".to_string();
         for a in addrs {
-            match tokio::time::timeout(timeout, self.connector.connect_tcp(&a.ip().to_string(), a.port())).await {
+            match tokio::time::timeout(timeout, self.connector.connect_tcp(&a.ip().to_string(), a.port()))
+                .await
+            {
                 Ok(Ok((s, reg))) => {
                     let _ = s.set_nodelay(true);
                     return Ok((s, reg, *a));
@@ -396,16 +399,25 @@ impl Engine {
         let mut attempt = 0;
         loop {
             let reuse = opts.reuse && !wants_close && attempt == 0;
-            let mut o = self.open(&checked, target, request.clone(), opts, false, reuse).await?;
+            let mut o = self
+                .open(&checked, target, request.clone(), opts, false, reuse)
+                .await?;
             let deadline = checked.started + opts.total_timeout;
             let r = self
-                .exchange(&mut o.io, &mut o.ex, method.eq_ignore_ascii_case("HEAD"), opts, deadline)
+                .exchange(
+                    &mut o.io,
+                    &mut o.ex,
+                    method.eq_ignore_ascii_case("HEAD"),
+                    opts,
+                    deadline,
+                )
                 .await;
             // A pooled connection the server closed while it sat idle fails before any response byte. For a
             // request that is safe to repeat, try once more on a new connection.
             let stale = o.ex.reused
                 && idempotent
-                && (matches!(r, Err(SendError::Write(_))) || (o.ex.response.is_empty() && o.ex.error.is_some()));
+                && (matches!(r, Err(SendError::Write(_)))
+                    || (o.ex.response.is_empty() && o.ex.error.is_some()));
             if stale && attempt == 0 {
                 attempt += 1;
                 continue;
@@ -438,11 +450,20 @@ impl Engine {
         let mut seen = std::collections::HashSet::new();
         let (mut target, mut raw) = (target.clone(), raw.to_vec());
         while chain.len() <= max_redirects as usize {
-            let last = chain.last().map(|e| (e.status, e.response.clone())).unwrap_or_default();
-            let Some(status @ (301 | 302 | 303 | 307 | 308)) = last.0 else { break };
-            let Some(loc) = response_header(&last.1, "location") else { break };
+            let last = chain
+                .last()
+                .map(|e| (e.status, e.response.clone()))
+                .unwrap_or_default();
+            let Some(status @ (301 | 302 | 303 | 307 | 308)) = last.0 else {
+                break;
+            };
+            let Some(loc) = response_header(&last.1, "location") else {
+                break;
+            };
             let (method, req_target, _) = request_line(&raw);
-            let Some(url) = redirect::resolve(&target, &req_target, &loc) else { break };
+            let Some(url) = redirect::resolve(&target, &req_target, &loc) else {
+                break;
+            };
             if !seen.insert(url.clone()) {
                 if let Some(e) = chain.last_mut() {
                     e.error = Some(format!("redirect loop at {}", url.path));

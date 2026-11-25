@@ -22,11 +22,11 @@ use bosun_proxy::upstream::Registration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::h2::{
-    self, H2Details, H2Request, HeaderCollector, Headers, PREFACE, data_payload, encode_block, flag, parse_frame,
-    pseudo, ty,
-};
 use crate::h2::Frame;
+use crate::h2::{
+    self, H2Details, H2Request, HeaderCollector, Headers, PREFACE, data_payload, encode_block, flag,
+    parse_frame, pseudo, ty,
+};
 use crate::{Engine, Exchange, Io, SendError, SendOptions, TlsInfo, gate_path, pool};
 
 /// How much a stream may receive before we raise its window, and the window we start with.
@@ -79,7 +79,9 @@ pub struct Conn {
 
 impl std::fmt::Debug for Conn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Conn").field("peer", &self.peer).finish_non_exhaustive()
+        f.debug_struct("Conn")
+            .field("peer", &self.peer)
+            .finish_non_exhaustive()
     }
 }
 
@@ -121,10 +123,7 @@ impl Conn {
         let (ev_tx, ev_rx) = mpsc::channel(256);
         let alive = Arc::new(AtomicBool::new(true));
         tokio::spawn(reader(rd, ev_tx));
-        tokio::spawn(
-            Driver::new(wr, budget, alive.clone())
-                .run(cmd_rx, ev_rx, reg),
-        );
+        tokio::spawn(Driver::new(wr, budget, alive.clone()).run(cmd_rx, ev_rx, reg));
         Ok(Arc::new(Self {
             tx: cmd_tx,
             alive,
@@ -166,7 +165,9 @@ async fn reader(mut rd: ReadHalf<Box<dyn Io>>, tx: mpsc::Sender<Event>) {
                 Ok(None) => break,
                 Err(len) => {
                     let _ = tx
-                        .send(Event::Closed(Some(format!("a frame of {len} bytes is over the limit"))))
+                        .send(Event::Closed(Some(format!(
+                            "a frame of {len} bytes is over the limit"
+                        ))))
                         .await;
                     return;
                 }
@@ -234,7 +235,12 @@ impl Driver {
         }
     }
 
-    async fn run(mut self, mut cmds: mpsc::Receiver<Cmd>, mut events: mpsc::Receiver<Event>, _reg: Registration) {
+    async fn run(
+        mut self,
+        mut cmds: mpsc::Receiver<Cmd>,
+        mut events: mpsc::Receiver<Event>,
+        _reg: Registration,
+    ) {
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         let mut cmds_open = true;
         loop {
@@ -294,7 +300,9 @@ impl Driver {
 
     fn start_pending(&mut self) {
         while self.streams.len() < self.peer_max_streams && self.next_id <= 0x7fff_fff0 {
-            let Some(job) = self.pending.pop_front() else { break };
+            let Some(job) = self.pending.pop_front() else {
+                break;
+            };
             let id = self.next_id;
             self.next_id += 2;
             let Some(res) = self.budget.reserve(32 * 1024) else {
@@ -316,7 +324,11 @@ impl Driver {
                     frames_out.push(Frame::new(ty::HEADERS, end_stream, id, first.to_vec()));
                 }
                 while let Some(c) = chunks.next() {
-                    let f = if chunks.peek().is_none() { flag::END_HEADERS } else { 0 };
+                    let f = if chunks.peek().is_none() {
+                        flag::END_HEADERS
+                    } else {
+                        0
+                    };
                     frames_out.push(Frame::new(ty::CONTINUATION, f, id, c.to_vec()));
                 }
             }
@@ -402,7 +414,10 @@ impl Driver {
                 self.put(&reply);
             }
             ty::WINDOW_UPDATE if f.payload.len() == 4 => {
-                let inc = i64::from(u32::from_be_bytes([f.payload[0], f.payload[1], f.payload[2], f.payload[3]]) & 0x7fff_ffff);
+                let inc = i64::from(
+                    u32::from_be_bytes([f.payload[0], f.payload[1], f.payload[2], f.payload[3]])
+                        & 0x7fff_ffff,
+                );
                 if sid == 0 {
                     self.conn_send += inc;
                 } else if let Some(st) = self.streams.get_mut(&sid) {
@@ -410,11 +425,13 @@ impl Driver {
                 }
             }
             ty::GOAWAY if f.payload.len() >= 8 => {
-                let last = u32::from_be_bytes([f.payload[0], f.payload[1], f.payload[2], f.payload[3]]) & 0x7fff_ffff;
+                let last = u32::from_be_bytes([f.payload[0], f.payload[1], f.payload[2], f.payload[3]])
+                    & 0x7fff_ffff;
                 let code = u32::from_be_bytes([f.payload[4], f.payload[5], f.payload[6], f.payload[7]]);
                 self.goaway = Some((last, code));
                 self.alive.store(false, Ordering::SeqCst);
-                let msg = format!("the server sent GOAWAY (error code {code}) before processing this request");
+                let msg =
+                    format!("the server sent GOAWAY (error code {code}) before processing this request");
                 for job in std::mem::take(&mut self.pending) {
                     let _ = job.reply.send(Outcome {
                         error: Some(msg.clone()),
@@ -468,9 +485,13 @@ impl Driver {
     }
 
     fn on_block(&mut self, b: h2::Block) {
-        let Some(st) = self.streams.get_mut(&b.stream) else { return };
-        let status = pseudo(&b.headers, ":status").and_then(|s| std::str::from_utf8(s).ok()?.parse::<u16>().ok());
-        st.first_byte.get_or_insert_with(|| st.started.elapsed().as_millis() as u64);
+        let Some(st) = self.streams.get_mut(&b.stream) else {
+            return;
+        };
+        let status =
+            pseudo(&b.headers, ":status").and_then(|s| std::str::from_utf8(s).ok()?.parse::<u16>().ok());
+        st.first_byte
+            .get_or_insert_with(|| st.started.elapsed().as_millis() as u64);
         match status {
             // Informational: the real response comes later.
             Some(s) if (100..200).contains(&s) => return,
@@ -493,7 +514,8 @@ impl Driver {
         let mut done = false;
         let mut update = None;
         if let Some(st) = self.streams.get_mut(&sid) {
-            st.first_byte.get_or_insert_with(|| st.started.elapsed().as_millis() as u64);
+            st.first_byte
+                .get_or_insert_with(|| st.started.elapsed().as_millis() as u64);
             let data = data_payload(f);
             if st.body.len() + data.len() > st.max_response {
                 let room = st.max_response - st.body.len();
@@ -501,7 +523,9 @@ impl Driver {
                 st.truncated = true;
                 cancel = true;
             } else if st.res.bytes() < (st.body.len() + data.len()) * COPY_FACTOR
-                && !st.res.grow((32 * 1024).max(data.len()) * COPY_FACTOR, &self.budget)
+                && !st
+                    .res
+                    .grow((32 * 1024).max(data.len()) * COPY_FACTOR, &self.budget)
             {
                 st.truncated = true;
                 cancel = true;
@@ -520,7 +544,11 @@ impl Driver {
         }
         if cancel {
             self.put(&Frame::rst_stream(sid, 0x8));
-            self.finish(sid, Some("the response is over the limit and was cut off".into()), |_| {});
+            self.finish(
+                sid,
+                Some("the response is over the limit and was cut off".into()),
+                |_| {},
+            );
         } else if done {
             self.finish(sid, None, |_| {});
         }
@@ -532,7 +560,9 @@ impl Driver {
 
     /// Remove a stream and give its caller the result.
     fn finish(&mut self, id: u32, error: Option<String>, tweak: impl FnOnce(&mut Outcome)) {
-        let Some(st) = self.streams.remove(&id) else { return };
+        let Some(st) = self.streams.remove(&id) else {
+            return;
+        };
         // The response ended before we finished sending: stop the upload.
         if st.sent < st.to_send.len() {
             self.put(&Frame::rst_stream(id, 0x8));
@@ -599,7 +629,9 @@ impl Engine {
         req: &H2Request,
         opts: &SendOptions,
     ) -> Result<Exchange, SendError> {
-        let mut v = self.send_h2_batch(target, std::slice::from_ref(req), opts).await?;
+        let mut v = self
+            .send_h2_batch(target, std::slice::from_ref(req), opts)
+            .await?;
         v.pop().ok_or(SendError::BadRequest("no request"))
     }
 
@@ -619,7 +651,11 @@ impl Engine {
         let paths: Vec<String> = {
             let mut p: Vec<String> = reqs
                 .iter()
-                .map(|r| gate_path(&String::from_utf8_lossy(pseudo(&r.headers, ":path").unwrap_or(b"/"))))
+                .map(|r| {
+                    gate_path(&String::from_utf8_lossy(
+                        pseudo(&r.headers, ":path").unwrap_or(b"/"),
+                    ))
+                })
                 .collect();
             p.sort();
             p.dedup();
@@ -628,8 +664,13 @@ impl Engine {
         let checked = self.check(target, &paths[0], opts).await?;
         for extra in paths.iter().skip(1) {
             let gate = self.gate().clone();
-            let (source, scheme, host, port, path) =
-                (opts.source, target.scheme, target.host.clone(), target.port, extra.clone());
+            let (source, scheme, host, port, path) = (
+                opts.source,
+                target.scheme,
+                target.host.clone(),
+                target.port,
+                extra.clone(),
+            );
             tokio::task::spawn_blocking(move || gate.check(source, scheme, &host, port, &path))
                 .await
                 .map_err(|e| SendError::Connect(target.host.clone(), e.to_string()))??;
@@ -639,7 +680,8 @@ impl Engine {
         let mut results: Vec<Option<Exchange>> = (0..reqs.len()).map(|_| None).collect();
         let mut todo: Vec<usize> = (0..reqs.len()).collect();
         for attempt in 0..2 {
-            let (conn, reused, connect_ms, tls_ms) = self.h2_conn(&key, &checked, target, opts, attempt > 0).await?;
+            let (conn, reused, connect_ms, tls_ms) =
+                self.h2_conn(&key, &checked, target, opts, attempt > 0).await?;
             let mut jobs = Vec::new();
             let mut waits = Vec::new();
             for &i in &todo {
@@ -746,7 +788,10 @@ impl Engine {
         if let Some(t) = &o.ex.tls
             && t.alpn.as_deref() != Some("h2")
         {
-            return Err(SendError::Tls(target.host.clone(), "the server did not negotiate h2".into()));
+            return Err(SendError::Tls(
+                target.host.clone(),
+                "the server did not negotiate h2".into(),
+            ));
         }
         let (connect_ms, tls_ms) = (o.ex.timings.connect_ms, o.ex.timings.tls_ms);
         let conn = Conn::start(o.io, o._reg, o.ex.peer, o.ex.tls, self.budget.clone()).await?;

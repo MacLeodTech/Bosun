@@ -204,7 +204,10 @@ pub async fn send(State(st): State<AppState>, caller: Caller, Json(b): Json<Send
         ));
     }
     if b.follow_redirects && b.protocol == Protocol::H2 {
-        return Err(reject(StatusCode::BAD_REQUEST, "redirects are followed over HTTP/1.1 only"));
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "redirects are followed over HTTP/1.1 only",
+        ));
     }
     if b.host.is_empty() || b.host.len() > 255 || b.port == 0 {
         return Err(reject(StatusCode::BAD_REQUEST, "that target is not valid"));
@@ -213,7 +216,10 @@ pub async fn send(State(st): State<AppState>, caller: Caller, Json(b): Json<Send
         .decode(b.request.as_bytes())
         .map_err(|_| reject(StatusCode::BAD_REQUEST, "the request is not valid base64"))?;
     if raw.is_empty() || raw.len() > MAX_REQUEST {
-        return Err(reject(StatusCode::BAD_REQUEST, "the request is empty or over 4 MiB"));
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "the request is empty or over 4 MiB",
+        ));
     }
     let target = Target::new(b.scheme, b.host.clone(), b.port);
     let opts = SendOptions {
@@ -276,13 +282,18 @@ pub async fn send(State(st): State<AppState>, caller: Caller, Json(b): Json<Send
                 Mode::SinglePacket => {
                     let reqs = vec![req; b.count as usize];
                     match eng.send_h2_batch(&target, &reqs, &opts).await {
-                        Ok(v) => v.into_iter().enumerate().map(|(i, e)| (i as u32, Ok(e))).collect(),
+                        Ok(v) => v
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, e)| (i as u32, Ok(e)))
+                            .collect(),
                         Err(e) => vec![(0, Err(e))],
                     }
                 }
                 Mode::Parallel => {
                     futures_util::future::join_all((0..b.count).map(|i| {
-                        let (eng, target, req, opts) = (eng.clone(), target.clone(), req.clone(), opts.clone());
+                        let (eng, target, req, opts) =
+                            (eng.clone(), target.clone(), req.clone(), opts.clone());
                         async move { (i, eng.send_h2_request(&target, &req, &opts).await) }
                     }))
                     .await
@@ -341,7 +352,11 @@ pub async fn put_settings(State(st): State<AppState>, caller: Caller, Json(s): J
         OutOfScopePolicy::Refuse
     });
     caller
-        .audit(&st, "repeater.settings", &format!("allow_out_of_scope={}", s.allow_out_of_scope))
+        .audit(
+            &st,
+            "repeater.settings",
+            &format!("allow_out_of_scope={}", s.allow_out_of_scope),
+        )
         .await;
     Ok(Json(s).into_response())
 }

@@ -83,7 +83,10 @@ impl Pool {
             let mut cand = cand;
             // Alive means nothing to read yet. An end of stream, an error or unexpected data means it is not.
             let mut b = [0u8; 1];
-            if tokio::time::timeout(Duration::ZERO, cand.io.read(&mut b)).await.is_err() {
+            if tokio::time::timeout(Duration::ZERO, cand.io.read(&mut b))
+                .await
+                .is_err()
+            {
                 return Some(cand);
             }
         }
@@ -127,13 +130,22 @@ impl Pool {
     }
 
     pub fn counts(&self) -> (usize, usize) {
-        let idle = self.idle.lock().unwrap_or_else(|e| e.into_inner()).values().map(Vec::len).sum();
+        let idle = self
+            .idle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .map(Vec::len)
+            .sum();
         let h2 = self
             .h2
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .values()
-            .filter(|s| s.try_lock().is_ok_and(|g| g.as_ref().is_some_and(|c| c.is_alive())))
+            .filter(|s| {
+                s.try_lock()
+                    .is_ok_and(|g| g.as_ref().is_some_and(|c| c.is_alive()))
+            })
             .count();
         (idle, h2)
     }
@@ -155,8 +167,12 @@ mod tests {
 
     #[test]
     fn a_close_request_is_recognised() {
-        assert!(request_closes(b"GET / HTTP/1.1\r\nHost: a\r\nconnection: Keep-Alive, close\r\n\r\n"));
-        assert!(!request_closes(b"GET / HTTP/1.1\r\nHost: a\r\nX-Connection: close\r\n\r\n"));
+        assert!(request_closes(
+            b"GET / HTTP/1.1\r\nHost: a\r\nconnection: Keep-Alive, close\r\n\r\n"
+        ));
+        assert!(!request_closes(
+            b"GET / HTTP/1.1\r\nHost: a\r\nX-Connection: close\r\n\r\n"
+        ));
         assert!(!request_closes(b"GET /close HTTP/1.1\r\nHost: a\r\n\r\n"));
     }
 }

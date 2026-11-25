@@ -50,7 +50,14 @@ async fn a_send_goes_through_the_gate_and_is_recorded() {
     let port = origin().await;
     let post = |b: Value| {
         let (c, csrf, url) = (c.clone(), csrf.clone(), s.url("/repeater/send"));
-        async move { c.post(url).header("x-csrf-token", csrf).json(&b).send().await.unwrap() }
+        async move {
+            c.post(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+        }
     };
 
     // Nothing is in scope yet: refused, nothing recorded.
@@ -74,19 +81,16 @@ async fn a_send_goes_through_the_gate_and_is_recorded() {
     assert_eq!(rs.len(), 3);
     for r in rs {
         assert_eq!(r["status"], 200, "{v}");
-        assert!(B64.decode(r["response"].as_str().unwrap()).unwrap().ends_with(b"hello"));
+        assert!(
+            B64.decode(r["response"].as_str().unwrap())
+                .unwrap()
+                .ends_with(b"hello")
+        );
         assert_eq!(r["in_scope"], true);
     }
     s.state.inner.proxy.flush();
     assert_eq!(s.project.flow_count().unwrap(), 3);
-    let f: Value = c
-        .get(s.url("/flows"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let f: Value = c.get(s.url("/flows")).send().await.unwrap().json().await.unwrap();
     assert!(f.to_string().contains("repeater"), "{f}");
 
     // The kill switch stops it.
@@ -146,7 +150,15 @@ async fn bad_requests_are_rejected_and_viewers_cannot_send() {
     let (c, csrf) = s.admin().await;
     let send = |b: Value| {
         let (c, csrf, url) = (c.clone(), csrf.clone(), s.url("/repeater/send"));
-        async move { c.post(url).header("x-csrf-token", csrf).json(&b).send().await.unwrap().status() }
+        async move {
+            c.post(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }
     };
     let ok = body(1, 1, "sequential");
     let with = |k: &str, v: Value| {
@@ -156,10 +168,17 @@ async fn bad_requests_are_rejected_and_viewers_cannot_send() {
     };
     assert_eq!(send(with("count", json!(0))).await, StatusCode::BAD_REQUEST);
     assert_eq!(send(with("count", json!(101))).await, StatusCode::BAD_REQUEST);
-    assert_eq!(send(with("request", json!("not base64!"))).await, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        send(with("request", json!("not base64!"))).await,
+        StatusCode::BAD_REQUEST
+    );
     assert_eq!(send(with("request", json!(""))).await, StatusCode::BAD_REQUEST);
     assert_eq!(send(with("port", json!(0))).await, StatusCode::BAD_REQUEST);
-    assert_eq!(send(with("mode", json!("single_packet"))).await, StatusCode::BAD_REQUEST, "needs h2");
+    assert_eq!(
+        send(with("mode", json!("single_packet"))).await,
+        StatusCode::BAD_REQUEST,
+        "needs h2"
+    );
     let mut h2 = with("protocol", json!("h2"));
     h2["follow_redirects"] = json!(true);
     assert_eq!(send(h2).await, StatusCode::BAD_REQUEST);
@@ -183,20 +202,37 @@ async fn bad_requests_are_rejected_and_viewers_cannot_send() {
         .unwrap();
     let vcsrf = v["csrf"].as_str().unwrap();
     assert_eq!(
-        viewer.get(s.url("/repeater/settings")).send().await.unwrap().status(),
+        viewer
+            .get(s.url("/repeater/settings"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
         StatusCode::OK
     );
     for (m, p, b) in [
         ("post", "/repeater/send", ok.clone()),
         ("put", "/repeater/settings", json!({ "allow_out_of_scope": true })),
     ] {
-        let rb = if m == "post" { viewer.post(s.url(p)) } else { viewer.put(s.url(p)) };
+        let rb = if m == "post" {
+            viewer.post(s.url(p))
+        } else {
+            viewer.put(s.url(p))
+        };
         let r = rb.header("x-csrf-token", vcsrf).json(&b).send().await.unwrap();
         assert_eq!(r.status(), StatusCode::FORBIDDEN, "{p}");
     }
     // And unauthenticated callers get nothing.
-    let r = client().post(s.url("/repeater/send")).json(&ok).send().await.unwrap();
-    assert!(matches!(r.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN));
+    let r = client()
+        .post(s.url("/repeater/send"))
+        .json(&ok)
+        .send()
+        .await
+        .unwrap();
+    assert!(matches!(
+        r.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ));
 }
 
 #[tokio::test]

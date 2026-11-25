@@ -226,13 +226,15 @@ This document says what is protected, from whom, and how. Code comments refer ba
   capped (very different large inputs are reported coarsely) and the work runs off the async threads. The codecs are
   in `bosun-codec` (no I/O), covered by property tests and the `codec` fuzz target. Output is data for display as text;
   the UI never renders it as HTML.
-- *The Repeater API (`/repeater/send`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
+- *The Repeater API (`/repeater/send`, `/repeater/ws`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
   the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
   unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a
   project is opened, and changing it is audited. Each send is audited (target, count, mode) and recorded as a flow
   with source `repeater`, so nothing the Repeater sends is hidden from history. The kill switch stops it. Counts
   are capped (100; 50 for a single-packet batch), and so are the request (4 MiB) and, by the engine, the
-  response. Tabs are saved in the project (`/repeater/tabs`, viewer to read, tester to write: at most 100 tabs and 8 MiB,
+  response. `/repeater/ws` takes the same role, gate, audit and recording: the handshake goes through the gate with
+  the Repeater's policy, and frames are capped (100 sent, 1 MiB each, 200 read, at most 10 s of listening) and
+  stored as the flow's messages. A connection lasts one call and is closed before it returns. Tabs are saved in the project (`/repeater/tabs`, viewer to read, tester to write: at most 100 tabs and 8 MiB,
   each an object; responses are not stored). A request can hold credentials, but so does every flow in the same file,
   and the project file is already the place those live, with its permissions, export and backup rules.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`

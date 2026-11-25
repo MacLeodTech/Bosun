@@ -10,8 +10,9 @@ use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use bosun_http::h2::H2Request;
+use bosun_http::ws::{Frame, to_ws_message};
 use bosun_http::{Exchange, SendError, SendOptions};
-use bosun_model::{FlowSource, Scheme, Target};
+use bosun_model::{Direction, FlowSource, Scheme, Target};
 use bosun_scope::OutOfScopePolicy;
 use bosun_store::Role;
 use serde::{Deserialize, Serialize};
@@ -426,4 +427,279 @@ pub async fn put_tabs(State(st): State<AppState>, caller: Caller, Json(doc): Jso
             )
         })?;
     Ok(Json(doc).into_response())
+}
+
+// ---- WebSocket sends -------------------------------------------------------------------------------------------
+
+const MAX_WS_FRAMES: usize = 100;
+const MAX_WS_FRAME: usize = 1 << 20;
+const MAX_WS_RECEIVED: usize = 200;
+const MAX_WS_LISTEN_MS: u32 = 10_000;
+/// Longest payload kept in the stored record of a frame.
+const WS_RECORD_LIMIT: usize = 1 << 20;
+
+fn yes() -> bool {
+    true
+}
+fn listen_default() -> u32 {
+    1500
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct WsFrameIn {
+    /// 0 continuation, 1 text, 2 binary, 8 close, 9 ping, 10 pong; anything from 0 to 15 is sent as given.
+    pub opcode: u8,
+    #[serde(default = "yes")]
+    pub fin: bool,
+    /// The three reserved bits as a number from 0 to 7.
+    #[serde(default)]
+    pub rsv: u8,
+    /// `random` (the default), `none` (send unmasked, which a compliant client never does) or four bytes as eight
+    /// hex digits.
+    #[serde(default)]
+    pub mask: Option<String>,
+    /// The payload, base64.
+    #[serde(default)]
+    pub payload: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct WsBody {
+    pub scheme: Scheme,
+    pub host: String,
+    pub port: u16,
+    /// The handshake, a raw HTTP/1.1 upgrade request, base64.
+    pub request: String,
+    /// Frames to send, in order, once the server has answered `101`.
+    #[serde(default)]
+    pub frames: Vec<WsFrameIn>,
+    /// How long to keep listening after the last frame, in milliseconds (at most 10000).
+    #[serde(default = "listen_default")]
+    pub listen_ms: u32,
+    #[serde(default)]
+    pub verify_tls: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WsFrameOut {
+    pub direction: Direction,
+    pub fin: bool,
+    pub rsv: u8,
+    pub opcode: u8,
+    pub masked: bool,
+    /// The payload, unmasked, base64.
+    pub payload: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WsReply {
+    /// The handshake as a recorded flow; the frames are its messages.
+    pub flow_id: Option<i64>,
+    pub status: Option<u16>,
+    /// Why there is no open connection or why listening stopped early.
+    pub error: Option<String>,
+    /// The scope gate or the kill switch stopped it; nothing was sent.
+    pub refused: bool,
+    pub in_scope: Option<bool>,
+    /// The handshake request and the server's answer, base64.
+    pub request: String,
+    pub response: String,
+    /// Frames sent and received, in the order they happened (sent ones first, then what came back).
+    pub frames: Vec<WsFrameOut>,
+    /// The server sent a close frame.
+    pub closed_by_server: bool,
+}
+
+fn parse_mask(m: &Option<String>) -> Result<Option<[u8; 4]>, String> {
+    match m.as_deref() {
+        None | Some("random") => Ok(Frame::binary(Vec::new()).mask),
+        Some("none") => Ok(None),
+        Some(h) if h.len() == 8 && h.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            let mut k = [0u8; 4];
+            for (i, b) in k.iter_mut().enumerate() {
+                *b = u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).map_err(|_| "bad mask".to_string())?;
+            }
+            Ok(Some(k))
+        }
+        _ => Err("mask must be random, none, or eight hex digits".into()),
+    }
+}
+
+fn ws_out(direction: Direction, f: &Frame) -> WsFrameOut {
+    WsFrameOut {
+        direction,
+        fin: f.fin,
+        rsv: f.rsv,
+        opcode: f.opcode,
+        masked: f.mask.is_some(),
+        payload: B64.encode(&f.payload),
+    }
+}
+
+fn ws_empty(request: &[u8], error: Option<String>, refused: bool) -> WsReply {
+    WsReply {
+        flow_id: None,
+        status: None,
+        error,
+        refused,
+        in_scope: None,
+        request: B64.encode(request),
+        response: String::new(),
+        frames: Vec::new(),
+        closed_by_server: false,
+    }
+}
+
+pub async fn ws_send(State(st): State<AppState>, caller: Caller, Json(b): Json<WsBody>) -> R {
+    caller.require(Role::Tester)?;
+    if b.host.is_empty() || b.host.len() > 255 || b.port == 0 {
+        return Err(reject(StatusCode::BAD_REQUEST, "that target is not valid"));
+    }
+    if b.frames.len() > MAX_WS_FRAMES || b.listen_ms > MAX_WS_LISTEN_MS {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "at most 100 frames, and listen for at most 10000 ms",
+        ));
+    }
+    let raw = B64
+        .decode(b.request.as_bytes())
+        .map_err(|_| reject(StatusCode::BAD_REQUEST, "the handshake is not valid base64"))?;
+    if raw.is_empty() || raw.len() > MAX_REQUEST {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "the handshake is empty or over 4 MiB",
+        ));
+    }
+    let mut frames = Vec::with_capacity(b.frames.len());
+    for f in &b.frames {
+        if f.opcode > 15 || f.rsv > 7 {
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                "opcode is 0 to 15 and rsv is 0 to 7",
+            ));
+        }
+        let payload = B64
+            .decode(f.payload.as_bytes())
+            .map_err(|_| reject(StatusCode::BAD_REQUEST, "a frame payload is not valid base64"))?;
+        if payload.len() > MAX_WS_FRAME {
+            return Err(reject(StatusCode::BAD_REQUEST, "a frame payload is over 1 MiB"));
+        }
+        let mask = parse_mask(&f.mask).map_err(|e| reject(StatusCode::BAD_REQUEST, &e))?;
+        frames.push(Frame {
+            fin: f.fin,
+            rsv: f.rsv,
+            opcode: f.opcode,
+            mask,
+            payload,
+        });
+    }
+    let target = Target::new(b.scheme, b.host.clone(), b.port);
+    let opts = SendOptions {
+        source: FlowSource::Repeater,
+        verify_tls: b.verify_tls,
+        ..SendOptions::default()
+    };
+    let eng = st.inner.repeater.clone();
+    let reply = match eng.connect_ws(&target, &raw, &opts).await {
+        Err(SendError::NotUpgraded(ex)) => {
+            // Not an upgrade: still an exchange worth recording and showing.
+            let id = st.project().next_flow_id();
+            st.inner.proxy.record(ex.to_new_flow(id, FlowSource::Repeater));
+            WsReply {
+                flow_id: Some(id),
+                status: ex.status,
+                error: Some("the server did not switch protocols".into()),
+                refused: false,
+                in_scope: Some(ex.in_scope),
+                request: B64.encode(&ex.request),
+                response: B64.encode(&ex.response),
+                frames: Vec::new(),
+                closed_by_server: false,
+            }
+        }
+        Err(e) => ws_empty(&raw, Some(e.to_string()), matches!(e, SendError::Refused(_))),
+        Ok(mut ws) => {
+            let id = st.project().next_flow_id();
+            let hs = ws.handshake().clone();
+            st.inner.proxy.record(hs.to_new_flow(id, FlowSource::Repeater));
+            let mut out = Vec::new();
+            let mut error = None;
+            for f in &frames {
+                if let Err(e) = ws.send(f).await {
+                    error = Some(e.to_string());
+                    break;
+                }
+                st.inner
+                    .proxy
+                    .record_ws(to_ws_message(id, Direction::ClientToServer, f, WS_RECORD_LIMIT));
+                out.push(ws_out(Direction::ClientToServer, f));
+            }
+            let end = std::time::Instant::now() + std::time::Duration::from_millis(u64::from(b.listen_ms));
+            let mut closed = false;
+            let mut received = 0;
+            while error.is_none() && received < MAX_WS_RECEIVED {
+                let left = end.saturating_duration_since(std::time::Instant::now());
+                match ws.recv(left).await {
+                    Ok(Some(f)) => {
+                        received += 1;
+                        st.inner.proxy.record_ws(to_ws_message(
+                            id,
+                            Direction::ServerToClient,
+                            &f,
+                            WS_RECORD_LIMIT,
+                        ));
+                        out.push(ws_out(Direction::ServerToClient, &f));
+                        if f.opcode == 0x8 {
+                            closed = true;
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        error = Some(e.to_string());
+                        break;
+                    }
+                }
+            }
+            if !closed && error.is_none() {
+                // A clean goodbye, recorded like the rest.
+                let bye = Frame::close(1000, "");
+                if ws.send(&bye).await.is_ok() {
+                    st.inner.proxy.record_ws(to_ws_message(
+                        id,
+                        Direction::ClientToServer,
+                        &bye,
+                        WS_RECORD_LIMIT,
+                    ));
+                    out.push(ws_out(Direction::ClientToServer, &bye));
+                }
+            }
+            ws.shutdown().await;
+            WsReply {
+                flow_id: Some(id),
+                status: hs.status,
+                error,
+                refused: false,
+                in_scope: Some(hs.in_scope),
+                request: B64.encode(&hs.request),
+                response: B64.encode(&hs.response),
+                frames: out,
+                closed_by_server: closed,
+            }
+        }
+    };
+    caller
+        .audit(
+            &st,
+            "repeater.ws",
+            &format!(
+                "{}://{}:{} {} frames",
+                b.scheme.as_str(),
+                b.host,
+                b.port,
+                frames.len()
+            ),
+        )
+        .await;
+    Ok(Json(reply).into_response())
 }

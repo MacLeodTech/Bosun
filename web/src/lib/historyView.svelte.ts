@@ -13,17 +13,17 @@ class HistoryView {
   /** The focused row (follows the arrow keys at once). Always one of `selected` unless nothing is selected. */
   selectedId = $state<number | null>(null);
   /** Every selected row, in the order they were picked. */
-  selected = $state<number[]>([]);
+  selected = $state.raw<number[]>([]);
   /** The end of a shift-range that stays put while the other end moves. */
   anchorId = $state<number | null>(null);
   /** The flow the detail panel loads. Trails `selectedId` while the user is still moving through the list. */
   openId = $state<number | null>(null);
   detailTab = $state<DetailTab>('messages');
   /** Flows deleted for good, for the list to drop. `removedTick` changes on each deletion. */
-  removedIds = $state<number[]>([]);
+  removedIds = $state.raw<number[]>([]);
   removedTick = $state(0);
   /** Flows hidden during the undo window of a delete; they are removed on the server only when it passes. */
-  pending = $state<number[]>([]);
+  pending = $state.raw<number[]>([]);
   /** Bumped when something outside the list changes the filter and wants it applied. */
   applyTick = $state(0);
 

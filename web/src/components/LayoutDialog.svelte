@@ -77,7 +77,7 @@
   }
 </script>
 
-<dialog bind:this={dlg} aria-labelledby="layout-title" onclose={() => (shell.layoutDialog = false)}>
+<dialog bind:this={dlg} aria-label="Layouts" onclose={() => (shell.layoutDialog = false)}>
   {#if shell.layoutDialog}
     <div class="head">
       <h2 id="layout-title">Layouts</h2>

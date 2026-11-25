@@ -359,9 +359,12 @@ test('dock: layouts can be saved, exported and imported', async () => {
 // ---- the viewer -----------------------------------------------------------------------------------------------
 
 async function openFlow(path: string) {
+  // New rows are held back while the pointer is over the list (so the list never moves under it): keep it elsewhere.
+  await page.mouse.move(2, 2);
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
-  await page.locator('.row', { hasText: path }).first().click();
+  // Match the path cell exactly: a MIME of application/json would otherwise match "/json" too.
+  await page.locator('.row', { has: page.locator('.c-path', { hasText: new RegExp(`^${path}$`) }) }).first().click();
 }
 
 test('viewer: a large JSON body is pretty-printed, windowed, searchable and scrolls quickly', async () => {
@@ -494,6 +497,7 @@ test('filter bar: terms become chips, a bad term is explained, and filters can b
 });
 
 test('history: shift-click and Ctrl+A select several, delete can be undone, and an undone delete changes nothing', async () => {
+  await page.mouse.move(2, 2);
   for (const p of ['ms-a', 'ms-b', 'ms-c']) await viaProxy(PROXY_PORT, `${TARGET}/${p}`);
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
@@ -636,4 +640,131 @@ test('pop-out: closing the window by hand also brings its panel back', async () 
   await expect(page.getByRole('tab', { name: 'Request / response' })).toHaveCount(0);
   await popup.close();
   await expect(page.getByRole('tab', { name: 'Request / response' })).toBeVisible({ timeout: 8000 });
+});
+
+// ---- accessibility ----------------------------------------------------------------------------------------------
+
+/** Structural checks that need no extra package: every control has a name, every ARIA reference resolves, no id twice. */
+async function a11yIssues(): Promise<string[]> {
+  return page.evaluate(() => {
+    const issues: string[] = [];
+    const nameOf = (el: Element): string => {
+      const aria = el.getAttribute('aria-label')?.trim();
+      if (aria) return aria;
+      const by = el.getAttribute('aria-labelledby');
+      if (by) {
+        const t = by.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim();
+        if (t) return t;
+      }
+      if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) {
+        const l = el.labels ? [...el.labels].map((x) => x.textContent ?? '').join(' ').trim() : '';
+        if (l) return l;
+      }
+      if (el instanceof HTMLImageElement) return el.alt;
+      return (el.textContent ?? '').trim() || (el.getAttribute('title') ?? '').trim();
+    };
+    const shown = (el: Element) => !!(el as HTMLElement).offsetParent || getComputedStyle(el).position === 'fixed' || !!el.closest('dialog[open]');
+    const sel = 'button, a[href], input:not([type=hidden]), select, textarea, [role=tab], [role=option], [role=menuitem], [role=menuitemradio], [role=separator][tabindex], [role=textbox], [role=combobox], [role=listbox], [role=tabpanel], [role=tablist], [role=menu], dialog[open]';
+    for (const el of document.querySelectorAll(sel)) {
+      if (el.closest('[hidden]') || !shown(el)) continue;
+      if (!nameOf(el)) issues.push(`no accessible name: <${el.tagName.toLowerCase()} class="${el.getAttribute('class') ?? ''}" role="${el.getAttribute('role') ?? ''}">`);
+    }
+    const seen = new Map<string, number>();
+    document.querySelectorAll('[id]').forEach((e) => seen.set(e.id, (seen.get(e.id) ?? 0) + 1));
+    for (const [id, n] of seen) if (n > 1) issues.push(`duplicate id: ${id}`);
+    for (const el of document.querySelectorAll('[aria-controls],[aria-labelledby],[aria-activedescendant]')) {
+      for (const attr of ['aria-controls', 'aria-labelledby', 'aria-activedescendant']) {
+        for (const id of (el.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
+          if (!document.getElementById(id)) issues.push(`${attr} points at a missing #${id} on <${el.tagName.toLowerCase()}>`);
+        }
+      }
+    }
+    for (const img of document.querySelectorAll('img')) if (!img.hasAttribute('alt')) issues.push('image without alt');
+    // A focusable thing inside something aria-hidden is unreachable to a screen reader but not to the keyboard.
+    for (const el of document.querySelectorAll('[aria-hidden="true"] :is(button, a[href], input, select, textarea, [tabindex="0"])')) issues.push(`focusable inside aria-hidden: <${el.tagName.toLowerCase()}>`);
+    return issues;
+  });
+}
+
+for (const theme of ['dark', 'light'] as const) {
+  test(`accessibility (${theme}): controls have names, references resolve, dialogs and menus are labelled`, async () => {
+    await page.evaluate((t) => localStorage.setItem('bosun.theme', t), theme);
+    await page.reload();
+    await signedIn();
+    await layoutMenu('Reset layout');
+    await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+    await applyFilter('host:127.0.0.1');
+    await page.locator('.row', { hasText: '/hello-history' }).first().click();
+    await expect(page.locator('.msg').nth(1).locator('.code')).toContainText('hello from');
+
+    expect(await a11yIssues(), 'main view').toEqual([]);
+
+    await page.locator('.row', { hasText: '/hello-history' }).first().click({ button: 'right' });
+    await expect(page.getByRole('menu', { name: 'Request actions' })).toBeVisible();
+    expect(await a11yIssues(), 'context menu').toEqual([]);
+    await page.keyboard.press('Escape');
+
+    await page.getByRole('button', { name: 'Layout' }).click();
+    await expect(page.getByRole('menu', { name: 'Layout' })).toBeVisible();
+    expect(await a11yIssues(), 'layout menu').toEqual([]);
+    await page.keyboard.press('Escape');
+
+    for (const [open, dialog] of [['Control+k', 'Command palette'], ['?', 'Keyboard shortcuts']] as const) {
+      await page.locator('body').click({ position: { x: 3, y: 3 } });
+      await page.keyboard.press(open);
+      await expect(page.getByRole('dialog', { name: dialog })).toBeVisible();
+      expect(await a11yIssues(), dialog).toEqual([]);
+      await page.keyboard.press('Escape');
+    }
+
+    await layoutMenu('Save or manage layouts…');
+    await expect(page.getByRole('dialog', { name: 'Layouts' })).toBeVisible();
+    expect(await a11yIssues(), 'layouts dialog').toEqual([]);
+    await page.keyboard.press('Escape');
+
+    for (const panel of ['Intercept', 'Repeater', 'Match & replace', 'Target', 'Projects', 'Settings']) {
+      await page.getByRole('navigation').getByRole('button', { name: panel }).click();
+      expect(await a11yIssues(), panel).toEqual([]);
+    }
+    await page.evaluate(() => localStorage.removeItem('bosun.theme'));
+  });
+}
+
+test('keyboard only: panes, tabs, the palette and the history list can be driven without a mouse', async () => {
+  await layoutMenu('Reset layout');
+  await page.locator('body').click({ position: { x: 3, y: 3 } });
+  // Alt+1 puts focus on the first pane's active tab (Settings, just opened); the arrows move between its tabs.
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  await page.keyboard.press('Alt+1');
+  await expect(page.getByRole('tab', { name: 'Settings' })).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('tab', { name: 'HTTP history' })).toBeFocused();
+  await expect(page.getByRole('tab', { name: 'HTTP history' })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('End');
+  await expect(page.getByRole('tab', { name: 'Settings' })).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('tab', { name: 'HTTP history' })).toBeFocused();
+
+  // The list: / focuses the filter, Escape leaves it.
+  await page.getByRole('listbox', { name: 'HTTP history' }).focus();
+  await page.keyboard.press('/');
+  await expect(filterBox()).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(filterBox()).not.toBeFocused();
+
+  // The palette returns focus to where it was.
+  await page.getByRole('listbox', { name: 'HTTP history' }).focus();
+  await page.keyboard.press('Control+k');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox', { name: 'HTTP history' })).toBeFocused();
+
+  // A menu opens from the keyboard, Escape closes it and focus comes back to its button.
+  const layoutBtn = page.getByRole('button', { name: 'Layout' });
+  await layoutBtn.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menu', { name: 'Layout' })).toBeVisible();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'Layout' })).toBeHidden();
+  await expect(layoutBtn).toBeFocused();
 });

@@ -73,7 +73,9 @@ class Windows {
 
   /** Call from an effect that reads the selection: tells the other windows when it changes here. */
   broadcastSelection() {
-    const m: Msg = { type: 'select', from: SELF, selected: [...v.selected], selectedId: v.selectedId, openId: v.openId };
+    // A huge selection (select all over a big history) is not worth sending: the others get just the focused row.
+    const selected = v.selected.length > 5000 ? (v.selectedId !== null ? [v.selectedId] : []) : [...v.selected];
+    const m: Msg = { type: 'select', from: SELF, selected, selectedId: v.selectedId, openId: v.openId };
     const sig = JSON.stringify([m.selected, m.selectedId, m.openId]);
     if (this.applying || sig === this.lastSelect) return;
     this.lastSelect = sig;
@@ -101,7 +103,8 @@ class Windows {
           if (!k.greeted) {
             // A window that has just opened knows nothing yet: tell it what is selected here.
             k.greeted = true;
-            this.send({ type: 'select', from: SELF, selected: [...v.selected], selectedId: v.selectedId, openId: v.openId });
+            this.lastSelect = '';
+            this.broadcastSelection();
           }
         }
       } else if (m.type === 'return') this.absorb(m.id);

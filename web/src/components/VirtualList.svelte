@@ -127,7 +127,7 @@
   tabindex="0"
   aria-label={label}
   aria-multiselectable={multi || undefined}
-  aria-activedescendant={activeIndex >= 0 ? `${idPrefix}-row-${activeIndex}` : undefined}
+  aria-activedescendant={activeIndex >= start && activeIndex < end ? `${idPrefix}-row-${activeIndex}` : undefined}
   onscroll={onScroll}
   onkeydown={onKey}
   bind:clientHeight={viewport}

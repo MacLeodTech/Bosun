@@ -24,7 +24,8 @@
   const FLOW_DND = 'application/x-bosun-flow';
 
   const panel = usePanel();
-  let flows = $state<FlowSummary[]>([]);
+  // Rows are only ever replaced, never edited in place, so no deep proxy: with 100,000 rows a proxy per row is slow.
+  let flows = $state.raw<FlowSummary[]>([]);
   let loadingMore = false;
   let exhausted = false;
 
@@ -36,7 +37,7 @@
 
   // Live tail. New flows are shown at once only when that moves nothing under the user: the list is at the top, the
   // pointer is not over it, and the tail is not paused. Otherwise they wait here and "N new" shows them.
-  let held = $state<FlowSummary[]>([]);
+  let held = $state.raw<FlowSummary[]>([]);
   /** New flows that can't be matched on this side (a text search is active), so showing them means reloading. */
   let unmatched = $state(0);
   let paused = $state(false);
@@ -361,19 +362,28 @@
 </div>
 
 <style>
-  .hist { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .hist { display: flex; flex-direction: column; flex: 1; min-height: 0; container-type: inline-size; }
   .table { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .body { flex: 1; min-height: 0; }
   .selbar { display: flex; align-items: center; gap: .4rem; padding: .2rem .5rem; background: var(--surface-sel); border-bottom: 1px solid var(--border-subtle); }
   /* The header reserves the same scrollbar gutter as the list below it, so their columns always line up. */
   .head-wrap { overflow-y: hidden; scrollbar-gutter: stable; background: var(--surface-1); border-bottom: 1px solid var(--border-subtle); }
-  .row { display: grid; grid-template-columns: 3.5rem 4rem 2.6rem 14rem 1fr 4.8rem 5rem 5.5rem 6.5rem; gap: .5rem; align-items: center; height: var(--row-h); width: 100%; padding: 0 .5rem; text-align: left; font-family: var(--font-mono); font-size: var(--fs-data); cursor: default; }
+  .row { display: grid; grid-template-columns: 3rem 4.6rem 2.4rem 13rem 1fr 4.6rem 6.2rem 6rem 7.8rem; gap: .5rem; align-items: center; height: var(--row-h); width: 100%; padding: 0 .5rem; text-align: left; font-family: var(--font-mono); font-size: var(--fs-data); cursor: default; }
   .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row.head { font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
   .row:not(.head):hover { background: var(--surface-2); }
   .row.active { background: var(--surface-sel); }
   .row.focus { box-shadow: inset 2px 0 0 var(--accent); }
   .row.oos { color: var(--text-2); }
+  /* In a narrow panel the least useful columns go first, so the path keeps room. */
+  @container (max-width: 940px) {
+    .row { grid-template-columns: 3rem 4.6rem 2.4rem 11rem 1fr 4.6rem 6.2rem 7.8rem; }
+    .c-mime { display: none; }
+  }
+  @container (max-width: 720px) {
+    .row { grid-template-columns: 3rem 4.6rem 2.4rem 9rem 1fr 4.6rem 7.8rem; }
+    .c-len { display: none; }
+  }
   .c-mk { color: var(--text-2); letter-spacing: .1em; }
   .c-m { font-weight: 600; }
   .st-2 { color: var(--st-2xx); } .st-3 { color: var(--st-3xx); }

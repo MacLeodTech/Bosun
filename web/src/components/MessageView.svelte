@@ -6,6 +6,7 @@
   import { b64ToBytes, bytesToText, fmtSize, hexDump, splitMessage, textToBytes, bytesToB64, type TextMode } from '../lib/bytes';
   import { contentTypeOf, detectLang, highlight, splitText, MAX_HIGHLIGHT } from '../lib/highlight';
   import { pretty } from '../lib/pretty';
+  import { buildCurl } from '../lib/curl';
   import CodeView from './CodeView.svelte';
 
   let {
@@ -73,7 +74,8 @@
   const lines = $derived.by(() => {
     const body = view === 'pretty' && prettyBody ? prettyBody : split.body;
     const head = highlight(split.head, 'http');
-    return split.sep ? [...head, [], ...highlight(body, lang)] : head;
+    // The blank line between head and body is shown; an empty body adds nothing after it.
+    return split.sep ? (body ? [...head, [], ...highlight(body, lang)] : [...head, []]) : head;
   });
   const shownText = $derived(view === 'pretty' && prettyBody ? `${split.head}\r\n\r\n${prettyBody}` : text.text);
 
@@ -117,24 +119,8 @@
     setTimeout(() => (note = ''), 2500);
   }
 
-  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
   /** A cURL command for this request. Only for text bodies of a size a command line can hold. */
-  const curl = $derived.by((): string | null => {
-    if (role !== 'request' || !scheme || !raw) return null;
-    const first = split.head.split(/\r?\n/)[0] ?? '';
-    const m = /^(\S+)\s+(\S+)/.exec(first);
-    if (!m) return null;
-    const hs = headers as string[][];
-    const host = hs.find(([k]) => k!.toLowerCase() === 'host')?.[1];
-    if (!host) return null;
-    if (text.mode !== 'utf8' || split.body.length > 64 * 1024) return null;
-    const url = m[2]!.startsWith('/') ? `${scheme}://${host}${m[2]}` : m[2]!;
-    const skip = new Set(['host', 'content-length', 'connection', 'accept-encoding']);
-    const parts: string[] = [`curl -i -X ${m[1]} ${q(url)}`];
-    for (const [k, v] of hs) if (!skip.has(k!.toLowerCase())) parts.push(`-H ${q(`${k}: ${v}`)}`);
-    if (split.body) parts.push(`--data-binary ${q(split.body)}`);
-    return parts.join(' \\\n  ');
-  });
+  const curl = $derived(role === 'request' && raw ? buildCurl(split.head, split.body, scheme, text.mode !== 'utf8') : null);
 
   const modes = $derived((['raw', ...(prettyBody ? ['pretty'] : []), 'headers', 'hex', 'render'] as MessageViewMode[]));
 </script>

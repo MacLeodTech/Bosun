@@ -88,7 +88,7 @@
       class="grow"
       aria-label="Filter"
       aria-describedby={draft.errors.length ? 'filter-errors' : undefined}
-      placeholder="host:example.com method:POST status:4xx scope:in -ext:css  or text to search   ( / )"
+      placeholder="host: method: status: scope: -ext: or text   ( / )"
       bind:value={v.draft}
       bind:this={box}
       onkeydown={onKey}

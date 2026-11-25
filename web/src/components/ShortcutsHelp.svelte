@@ -27,8 +27,10 @@
     const m = new Map<string, { title: string; keys: string }[]>();
     for (const c of commands.all) {
       if (!c.keys) continue;
+      // Alt+1 to Alt+9 are one idea; list them once.
+      if (c.id.startsWith('pane.focus.') && c.id !== 'pane.focus.1') continue;
       const g = m.get(c.group) ?? [];
-      g.push({ title: c.title, keys: c.keys });
+      g.push(c.id === 'pane.focus.1' ? { title: 'Focus pane 1 to 9', keys: 'Alt+1…9' } : { title: c.title, keys: c.keys });
       m.set(c.group, g);
     }
     return [...m.entries()];
@@ -37,7 +39,7 @@
   const problems = $derived(report.duplicates.length + report.reserved.length + report.invalid.length);
 </script>
 
-<dialog bind:this={dlg} aria-labelledby="help-title" onclose={() => (shell.help = false)}>
+<dialog bind:this={dlg} aria-label="Keyboard shortcuts" onclose={() => (shell.help = false)}>
   {#if shell.help}
     <div class="head">
       <h2 id="help-title">Keyboard shortcuts</h2>

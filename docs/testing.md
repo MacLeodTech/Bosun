@@ -34,6 +34,13 @@ live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out
 ports are 18080 (proxy), 18090 (UI) and 18099 (target); override with `BOSUN_E2E_PROXY_PORT`, `BOSUN_E2E_UI_PORT`
 and `BOSUN_E2E_TARGET_PORT`. A failed CI run keeps the Playwright traces as an artifact.
 
+The suite also audits accessibility in both themes (names, ARIA references, duplicate ids) and drives the dock, palette,
+menus and list by keyboard alone. Performance at 100,000 rows is not a CI test (it takes minutes); the method used for
+Phase 5 was: send 100,000 requests through the proxy in batches of 500 with a pause (a faster burst is not fully
+recorded), open History, load every page, then time scrolling, key presses, select all, a filter and live tail with a
+`PerformanceObserver` for long tasks. Keep `flows` and the selection arrays `$state.raw`: a deep proxy per row is what
+made the first measurement slow.
+
 The render-sandbox test has two layers on purpose. The `sandbox=""` attribute assertion guards the sandbox itself.
 The call-back assertion guards the outcome (no script, event handler or `javascript:` link of the page runs); the UI's
 CSP, which the `srcdoc` inherits, would stop inline script even if the sandbox were weakened, so the attribute

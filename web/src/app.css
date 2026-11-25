@@ -53,3 +53,5 @@ table.kv td { font-family: var(--font-mono); font-size: var(--fs-data); word-bre
 
 /* The preview shown while dragging requests (made by History's drag handler, so it lives outside any component). */
 .drag-ghost { position: fixed; top: -100px; left: -100px; padding: .15rem .6rem; background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: var(--fs-sm); }
+/* A key hint inside a filled button takes the button's own text colour, so it never disappears into the fill. */
+button.primary kbd { color: inherit; border-color: color-mix(in srgb, currentColor 55%, transparent); }

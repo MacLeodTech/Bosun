@@ -66,7 +66,13 @@
     }
   }
 
-  async function loadNext(which: 'req' | 'resp', decoded: boolean) {
+  /** "Load more" clicks run one after another: each starts from what the one before it loaded, so none is lost or repeated. */
+  let moreQueue: Promise<void> = Promise.resolve();
+  function loadNext(which: 'req' | 'resp', decoded: boolean) {
+    moreQueue = moreQueue.then(() => loadNextNow(which, decoded));
+  }
+
+  async function loadNextNow(which: 'req' | 'resp', decoded: boolean) {
     const m = selected;
     const cur = which === 'req' ? req : resp;
     if (!m || !cur) return;

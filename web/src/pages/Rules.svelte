@@ -46,17 +46,17 @@
     <tbody>
       {#each rules as r, i (i)}
         <tr>
-          <td><input type="checkbox" bind:checked={r.enabled} disabled={!canEdit} /></td>
+          <td><input type="checkbox" bind:checked={r.enabled} disabled={!canEdit} aria-label="Rule {i + 1}: enabled" /></td>
           <td>
-            <select bind:value={r.target} disabled={!canEdit}>
+            <select bind:value={r.target} disabled={!canEdit} aria-label="Rule {i + 1}: where it applies">
               {#each targets as [v, l] (v)}<option value={v}>{l}</option>{/each}
             </select>
           </td>
-          <td><input bind:value={r.match} disabled={!canEdit} class="mono" /></td>
-          <td><input bind:value={r.replace} disabled={!canEdit} class="mono" /></td>
-          <td><input type="checkbox" bind:checked={r.regex} disabled={!canEdit} /></td>
-          <td><input bind:value={r.comment} disabled={!canEdit} /></td>
-          <td>{#if canEdit}<button onclick={() => (rules = rules.filter((_, j) => j !== i))}>Remove</button>{/if}</td>
+          <td><input bind:value={r.match} disabled={!canEdit} class="mono" aria-label="Rule {i + 1}: match" /></td>
+          <td><input bind:value={r.replace} disabled={!canEdit} class="mono" aria-label="Rule {i + 1}: replace with" /></td>
+          <td><input type="checkbox" bind:checked={r.regex} disabled={!canEdit} aria-label="Rule {i + 1}: match is a regular expression" /></td>
+          <td><input bind:value={r.comment} disabled={!canEdit} aria-label="Rule {i + 1}: comment" /></td>
+          <td>{#if canEdit}<button aria-label="Remove rule {i + 1}" onclick={() => (rules = rules.filter((_, j) => j !== i))}>Remove</button>{/if}</td>
         </tr>
       {:else}
         <tr><td colspan="7" class="muted">No rules.</td></tr>

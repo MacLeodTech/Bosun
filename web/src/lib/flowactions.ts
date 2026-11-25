@@ -9,7 +9,7 @@ import { historyView as v } from './historyView.svelte';
 import { toasts } from './toasts.svelte';
 import { withText } from './query';
 import { workspace } from './workspace.svelte';
-import type { FlowMeta, FlowSummary, ScopeRule, ScopeSpec } from './types';
+import type { FlowMeta, ScopeRule, ScopeSpec } from './types';
 
 /** More than this at once is almost certainly a slip, and each one is a request to the server. */
 const MAX_BULK = 20;
@@ -147,6 +147,3 @@ export function searchHistory(text: string) {
   v.setQuery(withText(v.query, text));
   workspace.open('history');
 }
-
-/** The summary the history list holds for a flow, for menus that need its host or path. */
-export type Summary = Pick<FlowSummary, 'id' | 'host' | 'method' | 'path' | 'scheme' | 'port'>;

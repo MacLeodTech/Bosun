@@ -7,6 +7,7 @@ Everything below runs in CI (`.github/workflows/ci.yml`). Run the same things lo
 | Unit and integration tests | `crates/*/src`, `crates/*/tests` | `cargo test` |
 | Property tests (`proptest`) | the `properties` module inside the unit tests of `bosun-scope`, `bosun-model` and `bosun-proxy` (`ws.rs`) | `cargo test` |
 | End-to-end (Playwright) | `e2e/` | `cargo build -p bosun`, then `cd e2e && npm ci && npx playwright install chromium && npm test` |
+| Layout model (`node --test`) | `web/tests/layout.test.ts` | `cd web && npm test` |
 | Fuzzing (`cargo-fuzz`) | `fuzz/` | `cd fuzz && cargo +nightly fuzz run <target> -- -max_total_time=30` |
 
 ## Property tests
@@ -21,7 +22,7 @@ file together with the fix.
 
 The suite starts the `bosun` binary (`BOSUN_BIN` overrides the path) with a throw-away data directory and a small
 stand-in "hostile" site (`e2e/target.ts`), then drives the UI in Chromium: first-run setup, sign-in, scope editing,
-live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out-of-scope refusal), and the check that the render view cannot run a hostile page's script. The
+live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out-of-scope refusal), the dock (layout survives a reload, a corrupt layout falls back, keyboard and mouse docking, a background panel ignores keys, saved and imported layouts), and the check that the render view cannot run a hostile page's script. The
 ports are 18080 (proxy), 18090 (UI) and 18099 (target); override with `BOSUN_E2E_PROXY_PORT`, `BOSUN_E2E_UI_PORT`
 and `BOSUN_E2E_TARGET_PORT`. A failed CI run keeps the Playwright traces as an artifact.
 

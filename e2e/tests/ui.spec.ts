@@ -171,26 +171,28 @@ test('intercept: dropping a request answers the client with an error', async () 
 test('repeater: send by hand, again with a change, diff the two, and the sends are recorded', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'Repeater' }).click();
-  await page.getByLabel('Scheme').selectOption('http');
-  await page.getByLabel('Host', { exact: true }).fill('127.0.0.1');
-  await page.getByLabel('Port').fill(String(TARGET_PORT));
-  await page.getByLabel('Request').fill('GET /rp-one HTTP/1.1\nHost: 127.0.0.1\n\n');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.locator('pre.out')).toContainText('hello from /rp-one');
-  await expect(page.getByText('send 1 of 1')).toBeVisible();
+  // Panels stay mounted in the background, so labels are only unique within one panel.
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByLabel('Scheme').selectOption('http');
+  await rp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await rp.getByLabel('Port').fill(String(TARGET_PORT));
+  await rp.getByLabel('Request').fill('GET /rp-one HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(rp.locator('pre.out')).toContainText('hello from /rp-one');
+  await expect(rp.getByText('send 1 of 1')).toBeVisible();
 
-  await page.getByLabel('Request').fill('GET /rp-two HTTP/1.1\nHost: 127.0.0.1\n\n');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.locator('pre.out')).toContainText('hello from /rp-two');
-  await page.getByLabel('Diff with previous').check();
-  await expect(page.locator('pre.out .del', { hasText: 'hello from /rp-one' })).toBeVisible();
-  await expect(page.locator('pre.out .add', { hasText: 'hello from /rp-two' })).toBeVisible();
+  await rp.getByLabel('Request').fill('GET /rp-two HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(rp.locator('pre.out')).toContainText('hello from /rp-two');
+  await rp.getByLabel('Diff with previous').check();
+  await expect(rp.locator('pre.out .del', { hasText: 'hello from /rp-one' })).toBeVisible();
+  await expect(rp.locator('pre.out .add', { hasText: 'hello from /rp-two' })).toBeVisible();
 
   // Many at once: a group shows how many different answers it produced.
-  await page.getByLabel('Count').fill('5');
-  await page.getByLabel('Mode').selectOption('parallel');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('5 results, 1 different');
+  await rp.getByLabel('Count').fill('5');
+  await rp.getByLabel('Mode').selectOption('parallel');
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(rp.getByRole('status')).toContainText('5 results, 1 different');
 
   // The sends are in the history as the Repeater's.
   await nav.getByRole('button', { name: 'HTTP history' }).click();
@@ -198,11 +200,11 @@ test('repeater: send by hand, again with a change, diff the two, and the sends a
 
   // Out-of-scope targets are refused until the setting is turned on.
   await nav.getByRole('button', { name: 'Repeater' }).click();
-  await page.getByLabel('Host', { exact: true }).fill('localhost');
-  await page.getByLabel('Count').fill('1');
-  await page.getByLabel('Mode').selectOption('sequential');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByText('refused')).toBeVisible();
+  await rp.getByLabel('Host', { exact: true }).fill('localhost');
+  await rp.getByLabel('Count').fill('1');
+  await rp.getByLabel('Mode').selectOption('sequential');
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(rp.getByText('refused')).toBeVisible();
 });
 
 test('projects: a new project starts empty, and the first one comes back with its history', async () => {
@@ -224,4 +226,129 @@ test('projects: a new project starts empty, and the first one comes back with it
   await expect(page.getByText('Open: default')).toBeVisible();
   await nav.getByRole('button', { name: 'HTTP history' }).click();
   await expect(page.locator('.row', { hasText: '/hello-history' }).first()).toBeVisible();
+});
+
+// ---- the dock -------------------------------------------------------------------------------------------------
+
+async function layoutMenu(item: string) {
+  await page.getByRole('button', { name: 'Layout', exact: false }).filter({ hasText: 'Layout' }).first().click();
+  await page.getByRole('menuitem', { name: item }).or(page.getByRole('menuitemradio', { name: item })).first().click();
+}
+
+test('dock: a layout survives a reload, and a corrupt one falls back with a notice', async () => {
+  await layoutMenu('Reset layout');
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Target' }).click();
+  await expect(page.getByRole('tab', { name: 'Target' })).toHaveAttribute('aria-selected', 'true');
+  await layoutMenu('Intercept');
+  // The Intercept preset has the queue on top and History below.
+  await expect(page.getByRole('tablist')).toHaveCount(3);
+  await page.reload();
+  await signedIn();
+  await expect(page.getByRole('tablist')).toHaveCount(3);
+  await expect(page.getByRole('tab', { name: 'Intercept' })).toBeVisible();
+
+  // Opening #target at startup schedules a debounced save; let it land so it cannot overwrite what is injected next.
+  await page.waitForTimeout(400);
+  await page.evaluate(() => localStorage.setItem('bosun.workspace.v1', JSON.stringify({ version: 1, root: { kind: 'split', id: 'x', dir: 'row', sizes: [1, 1], children: [{ kind: 'bogus' }] } })));
+  await page.reload();
+  await signedIn();
+  await expect(page.getByRole('tab', { name: 'HTTP history' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Request / response' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'saved layout was not valid' })).toBeVisible();
+});
+
+test('dock: the keyboard moves a tab into a split of its own and resizes the divider', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  const tab = page.getByRole('tab', { name: 'Settings' });
+  await expect(page.getByRole('tablist')).toHaveCount(2);
+  await tab.focus();
+  await page.keyboard.press('Alt+Shift+ArrowDown');
+  await expect(page.getByRole('tablist')).toHaveCount(3);
+  await expect(page.getByRole('tab', { name: 'Settings' })).toBeFocused();
+
+  const sep = page.getByRole('separator', { name: 'Resize panels' }).first();
+  await sep.focus();
+  const before = Number(await sep.getAttribute('aria-valuenow'));
+  await page.keyboard.press('Shift+ArrowDown');
+  await expect.poll(async () => Number(await sep.getAttribute('aria-valuenow'))).toBeGreaterThan(before);
+  await page.keyboard.press('Enter');
+  await expect(sep).toHaveAttribute('aria-valuenow', '50');
+});
+
+test('dock: dragging a tab onto the lower edge of a pane splits it, and Escape cancels a drag', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'Match & replace' }).click();
+  await expect(page.getByRole('tablist')).toHaveCount(2);
+
+  const tab = await page.getByRole('tab', { name: 'Match & replace' }).boundingBox();
+  const target = await page.locator('#pane-flow').boundingBox();
+  expect(tab && target).toBeTruthy();
+  const drag = async (release: () => Promise<void>) => {
+    await page.mouse.move(tab!.x + tab!.width / 2, tab!.y + tab!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(tab!.x + tab!.width / 2 + 20, tab!.y + 30, { steps: 4 });
+    await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height - 12, { steps: 8 });
+    await release();
+  };
+  // Escape: nothing moves.
+  await drag(async () => {
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+  });
+  await expect(page.getByRole('tablist')).toHaveCount(2);
+  // Drop: the pane under the pointer splits and the tab lands in the new half.
+  await drag(() => page.mouse.up());
+  await expect(page.getByRole('tablist')).toHaveCount(3);
+  await expect(page.getByRole('tab', { name: 'Match & replace' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('dock: a panel in the background ignores keys meant for the one on screen', async () => {
+  await layoutMenu('Reset layout');
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Intercept' }).click();
+  await setIntercept(true);
+  const pending = viaProxy(PROXY_PORT, `${TARGET}/background-keys`);
+  const item = page.locator('.list li button', { hasText: '/background-keys' });
+  await expect(item).toBeVisible();
+
+  // History is in front now; Intercept is mounted but hidden. D would drop the request if it listened.
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.getByRole('tab', { name: 'Intercept' })).toHaveAttribute('aria-selected', 'false');
+  await page.getByRole('listbox', { name: 'HTTP history' }).focus();
+  await page.keyboard.press('d');
+  await page.keyboard.press('Shift+F');
+  await page.waitForTimeout(400);
+
+  await nav.getByRole('button', { name: 'Intercept' }).click();
+  await expect(item).toBeVisible();
+  await page.getByRole('button', { name: 'Forward', exact: true }).click();
+  expect((await pending).status).toBe(200);
+  await setIntercept(false);
+});
+
+test('dock: layouts can be saved, exported and imported', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'Target' }).click();
+  await layoutMenu('Save or manage layouts…');
+  const dlg = page.getByRole('dialog', { name: 'Layouts' });
+  await dlg.getByLabel('Name for the current layout').fill('mine');
+  await dlg.getByRole('button', { name: 'Save current layout' }).click();
+  await expect(dlg.getByText('Saved “mine”.')).toBeVisible();
+  await dlg.getByRole('button', { name: 'Delete' }).click();
+  await expect(dlg.getByText('Nothing saved yet.')).toBeVisible();
+
+  await dlg.getByLabel('Paste layouts to import').fill('{"nope":1}');
+  await dlg.getByRole('button', { name: 'Import pasted text' }).click();
+  await expect(dlg.getByRole('status')).toContainText('not a Bosun layout file');
+  const good = { version: 1, presets: { imported: { kind: 'group', id: 'g1', active: 'repeater', tabs: [{ id: 'repeater', panel: 'repeater' }] } } };
+  await dlg.getByLabel('Paste layouts to import').fill(JSON.stringify(good));
+  await dlg.getByRole('button', { name: 'Import pasted text' }).click();
+  await expect(dlg.getByRole('status')).toContainText('Imported 1 layout');
+  await dlg.getByRole('button', { name: 'Apply' }).last().click();
+  await expect(page.getByRole('tablist')).toHaveCount(1);
+  await expect(page.getByRole('tab', { name: 'Repeater' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await layoutMenu('Reset layout');
 });

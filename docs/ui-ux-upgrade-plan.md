@@ -316,6 +316,7 @@ Acceptance: `npm run check` and `npm run build` pass, e2e still green, and a Pla
 flow, switch tab, come back, selection and filters are intact".
 
 ### Phase 1: workspace engine (about 8 to 10 days, after the dock-library spike)
+**Status (branch `ui-phase0`):** built. The spike ruled `dockview-core` out (reasons in `docs/architecture.md`), so the engine is our own: `lib/layout.ts` (pure model, 14 tests including a seeded random walk), `workspace.svelte.ts` (store, persistence, presets), `components/dock/`. Differences from the table: History is now two panels (list and **Request / response**) so Triage can place them side by side; a panel that is moved to another group remounts (its state lives in stores); the status bar shows project, intercept, open request and connection, but not yet the scope or flow counts.
 | Task | Component and spec |
 |---|---|
 | Spike | 2 days: `dockview-core` under the CSP with Svelte 5. Decision recorded in `docs/architecture.md`. |

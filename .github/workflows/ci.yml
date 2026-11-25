@@ -108,6 +108,9 @@ jobs:
       - name: Type check
         working-directory: web
         run: npm run check
+      - name: Layout model tests
+        working-directory: web
+        run: npm test
       - name: Build
         working-directory: web
         run: npm run build

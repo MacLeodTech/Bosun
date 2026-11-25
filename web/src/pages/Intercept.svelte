@@ -2,9 +2,11 @@
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
+  import { usePanel } from '../lib/panelctx';
   import type { InterceptItem, InterceptSettings, InterceptSummary } from '../lib/types';
   import MessageView from '../components/MessageView.svelte';
 
+  const panel = usePanel();
   let settings = $state<InterceptSettings>({ requests: false, responses: false, in_scope_only: true });
   let queue = $state<InterceptSummary[]>([]);
   let current = $state<InterceptItem | null>(null);
@@ -50,7 +52,8 @@
   // F forwards, D drops, Shift+F forwards everything held, Ctrl+Enter forwards from inside the editor. Plain letters
   // are ignored while typing in a field.
   function onKey(e: KeyboardEvent) {
-    if (!canEdit) return;
+    // The panel stays mounted in the background: a hidden Intercept must never act on a key meant for another panel.
+    if (!canEdit || !panel.visible) return;
     const t = e.target as HTMLElement | null;
     const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {

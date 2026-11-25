@@ -16,6 +16,7 @@
 
   const KEY = 'bosun.repeater.tabs';
   const INBOX = 'bosun.repeater.inbox';
+  const INBOX_EVENT = 'bosun:repeater-inbox';
   const canSend = $derived(session.can('tester'));
 
   let tabs = $state<Tab[]>([]);
@@ -42,20 +43,31 @@
     try { sessionStorage.setItem(KEY, JSON.stringify({ tabs: slim, active, next })); } catch { /* full or blocked */ }
   });
 
-  onMount(async () => {
+  onMount(() => {
+    // The panel stays mounted in the background, so requests sent from History arrive as an event, not a mount.
+    window.addEventListener(INBOX_EVENT, takeInbox);
+    start();
+    return () => window.removeEventListener(INBOX_EVENT, takeInbox);
+  });
+
+  async function start() {
     try {
       const saved = JSON.parse(sessionStorage.getItem(KEY) ?? 'null');
       if (saved?.tabs?.length) { tabs = saved.tabs; active = saved.active; next = saved.next; }
     } catch { /* start fresh */ }
-    // Requests sent here from the history page.
+    takeInbox();
+    if (!tabs.length) { const t = blank(); tabs = [t]; active = t.id; }
+    try { allowOut = (await api.get<{ allow_out_of_scope: boolean }>('/repeater/settings')).allow_out_of_scope; } catch { /* viewer without access */ }
+  }
+
+  /** Requests sent here from the history page. */
+  function takeInbox() {
     try {
       const inbox = JSON.parse(sessionStorage.getItem(INBOX) ?? '[]') as Partial<Tab>[];
       sessionStorage.removeItem(INBOX);
       for (const i of inbox) { const t = { ...blank(), ...i }; tabs = [...tabs, t]; active = t.id; }
     } catch { /* ignore */ }
-    if (!tabs.length) { const t = blank(); tabs = [t]; active = t.id; }
-    try { allowOut = (await api.get<{ allow_out_of_scope: boolean }>('/repeater/settings')).allow_out_of_scope; } catch { /* viewer without access */ }
-  });
+  }
 
   function addTab() { const t = blank(); tabs = [...tabs, t]; active = t.id; }
   function closeTab(id: number) {

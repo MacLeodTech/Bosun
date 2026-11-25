@@ -674,7 +674,7 @@ async fn many_large_bodies_stay_under_the_memory_budget() {
     let st = h.proxy.stats();
     assert_eq!(st.memory_used, 0, "everything is released afterwards: {st:?}");
     assert!(st.memory_refused >= busy);
-    // Too big for the per-message limit is still 413.
+    // A small body goes through once the budget is free again.
     let r = c
         .post(format!("http://{up}/"))
         .body(vec![b'x'; 10])
@@ -682,6 +682,135 @@ async fn many_large_bodies_stay_under_the_memory_budget() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
+}
+
+/// Send a POST whose body is far over `max_request_body` in chunks, as a slow uploader would, and return what the
+/// proxy answered. The client must always be able to read the refusal: a proxy that answers and closes while the
+/// upload is still arriving resets the connection, and some clients (Windows ones in particular) then lose the
+/// response.
+async fn upload_and_read_answer(h: &Harness, up: SocketAddr, body_len: usize) -> String {
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    let head = format!(
+        "POST http://{up}/ HTTP/1.1\r\nHost: {up}\r\nContent-Length: {body_len}\r\nContent-Type: application/octet-stream\r\n\r\n"
+    );
+    s.write_all(head.as_bytes()).await.unwrap();
+    let chunk = vec![b'x'; 16 * 1024];
+    let mut sent = 0;
+    while sent < body_len {
+        let n = chunk.len().min(body_len - sent);
+        // Once the proxy has answered it may stop reading; a write error after that is fine, the answer is
+        // already on its way.
+        if s.write_all(&chunk[..n]).await.is_err() {
+            break;
+        }
+        sent += n;
+        tokio::task::yield_now().await;
+    }
+    // The connection stays open after the refusal, so read one response, not until it closes.
+    tokio::time::timeout(Duration::from_secs(10), read_response(&mut s))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_refused_upload_is_answered_and_the_client_can_read_the_answer() {
+    let up = slow_upstream().await;
+    // Over the per-message limit: 413.
+    let h = start(
+        ProxyConfig {
+            max_request_body: 1024,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    for _ in 0..20 {
+        let answer = upload_and_read_answer(&h, up, 2 * 1024 * 1024).await;
+        assert!(answer.starts_with("HTTP/1.1 413"), "got: {answer:?}");
+    }
+    // Over the memory budget: 503.
+    let h = start(
+        ProxyConfig {
+            memory_budget_mib: Some(1),
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    for _ in 0..20 {
+        let answer = upload_and_read_answer(&h, up, 2 * 1024 * 1024).await;
+        assert!(answer.starts_with("HTTP/1.1 503"), "got: {answer:?}");
+    }
+    h.proxy.flush();
+    assert_eq!(
+        h.proxy.stats().memory_used,
+        0,
+        "everything is released afterwards"
+    );
+}
+
+/// Read one HTTP/1.1 response (head and a Content-Length body) from a stream; None if the connection ended first.
+async fn read_response(s: &mut TcpStream) -> Option<String> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while !buf.ends_with(b"\r\n\r\n") {
+        if s.read(&mut byte).await.ok()? == 0 {
+            return None;
+        }
+        buf.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&buf).into_owned();
+    let len = head
+        .lines()
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse::<usize>().unwrap())
+        })
+        .unwrap_or(0);
+    let mut body = vec![0u8; len];
+    s.read_exact(&mut body).await.ok()?;
+    Some(head + &String::from_utf8_lossy(&body))
+}
+
+#[tokio::test]
+async fn after_a_refused_upload_the_connection_still_works() {
+    // The proxy reads the rest of a refused body (up to a limit), so the client has finished its upload and the
+    // connection can carry the next request. If it answered and closed with the upload unread, this second request
+    // would find the connection gone, and a client could lose the refusal itself.
+    let up = upstream_http().await;
+    let h = start(
+        ProxyConfig {
+            max_request_body: 1024,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    let body = vec![b'x'; 256 * 1024];
+    let head = format!(
+        "POST http://{up}/ HTTP/1.1\r\nHost: {up}\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    s.write_all(head.as_bytes()).await.unwrap();
+    s.write_all(&body).await.unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(10), read_response(&mut s))
+        .await
+        .unwrap()
+        .expect("the refusal is delivered");
+    assert!(first.starts_with("HTTP/1.1 413"), "got: {first:?}");
+
+    s.write_all(format!("GET http://{up}/ HTTP/1.1\r\nHost: {up}\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let second = tokio::time::timeout(Duration::from_secs(10), read_response(&mut s))
+        .await
+        .unwrap()
+        .expect("the connection is still open after the refusal");
+    assert!(second.starts_with("HTTP/1.1 200"), "got: {second:?}");
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 <script lang="ts">
   // Shows one HTTP message. Target content is hostile: it is only ever shown as text, or rendered in a fully
   // sandboxed iframe (no scripts, opaque origin, and it inherits this page's CSP).
+  import { prefs, type PaneRole, type MessageViewMode } from '../lib/prefs.svelte';
   import { b64ToBytes, bytesToText, fmtSize, hexDump, splitMessage, textToBytes, bytesToB64, type TextMode } from '../lib/bytes';
 
   let {
@@ -13,6 +14,7 @@
     decodedMore = false,
     onMore,
     downloadHref = '',
+    role,
   }: {
     raw: string | null;
     decodedBody?: string | null;
@@ -27,10 +29,16 @@
     onMore?: (decoded: boolean) => void;
     /** Where the whole body can be downloaded from. */
     downloadHref?: string;
+    /** Which kind of pane this is; its view (raw, headers, ...) is remembered per kind. */
+    role?: PaneRole;
   } = $props();
 
-  type View = 'raw' | 'headers' | 'hex' | 'render';
-  let view = $state<View>('raw');
+  let localView = $state<MessageViewMode>('raw');
+  const view = $derived(editable ? 'raw' : role ? prefs.view[role] : localView);
+  function setView(v: MessageViewMode) {
+    if (role) prefs.setView(role, v);
+    else localView = v;
+  }
   let showDecoded = $state(true);
 
   const bytes = $derived(raw ? b64ToBytes(raw) : new Uint8Array());
@@ -70,7 +78,7 @@
     {#if title}<strong>{title}</strong>{/if}
     <div class="seg">
       {#each ['raw', 'headers', 'hex', 'render'] as const as v (v)}
-        <button class:active={view === v} onclick={() => (view = v)} disabled={editable && v !== 'raw'}>{v}</button>
+        <button class:active={view === v} onclick={() => setView(v)} disabled={editable && v !== 'raw'}>{v}</button>
       {/each}
     </div>
     {#if decoded && !editable}

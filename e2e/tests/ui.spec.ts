@@ -78,6 +78,34 @@ test('history: a large response is shown a page at a time', async () => {
   await expect(resp.getByRole('link', { name: 'download body' })).toHaveAttribute('href', /\/response\/body$/);
 });
 
+test('history: the open flow and the filters survive a visit to another page', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await page.getByLabel('Host contains').fill('127.0.0.1');
+  await page.locator('.row', { hasText: '/hello-history' }).click();
+  await expect(page.locator('.row.active', { hasText: '/hello-history' })).toBeVisible();
+  await nav.getByRole('button', { name: 'Match & replace' }).click();
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.getByLabel('Host contains')).toHaveValue('127.0.0.1');
+  await expect(page.locator('.row.active', { hasText: '/hello-history' })).toBeVisible();
+  await expect(page.locator('.msg').nth(1).locator('pre.code')).toContainText('hello from /hello-history');
+  await page.getByLabel('Host contains').fill('');
+});
+
+test('history: the keyboard moves the selection', async () => {
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  // /big came after /hello-history, so it is the row above it (newest first).
+  await page.locator('.row', { hasText: '/hello-history' }).click();
+  const here = await page.locator('.row.active').getAttribute('id');
+  await page.getByRole('listbox', { name: 'HTTP history' }).focus();
+  await page.keyboard.press('k');
+  await expect(page.locator('.row.active')).toHaveCount(1);
+  await expect(page.locator('.row.active')).not.toHaveAttribute('id', here!);
+  await expect(page.locator('.row.active', { hasText: '/big' })).toBeVisible();
+  await page.keyboard.press('j');
+  await expect(page.locator('.row.active')).toHaveAttribute('id', here!);
+});
+
 test('the render view cannot run script from a hostile page', async () => {
   await viaProxy(PROXY_PORT, `${TARGET}/evil`);
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();

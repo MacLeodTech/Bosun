@@ -42,6 +42,36 @@
     await select(queue[0]?.id);
   }
 
+  async function forwardAll() {
+    await api.post('/intercept/forward-all');
+    await refresh();
+  }
+
+  // F forwards, D drops, Shift+F forwards everything held, Ctrl+Enter forwards from inside the editor. Plain letters
+  // are ignored while typing in a field.
+  function onKey(e: KeyboardEvent) {
+    if (!canEdit) return;
+    const t = e.target as HTMLElement | null;
+    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      if (current) decide('forward');
+      return;
+    }
+    if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'f' && e.shiftKey) {
+      e.preventDefault();
+      if (queue.length) forwardAll();
+    } else if (k === 'f') {
+      e.preventDefault();
+      if (current) decide('forward');
+    } else if (k === 'd') {
+      e.preventDefault();
+      if (current) decide('drop');
+    }
+  }
+
   onMount(() => {
     api.get<InterceptSettings>('/intercept').then((s) => (settings = s));
     refresh();
@@ -62,15 +92,13 @@
   });
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <div class="toolbar">
   <label><input type="checkbox" checked={settings.requests} disabled={!canEdit} onchange={(e) => save({ ...settings, requests: e.currentTarget.checked })} /> Intercept requests</label>
   <label><input type="checkbox" checked={settings.responses} disabled={!canEdit} onchange={(e) => save({ ...settings, responses: e.currentTarget.checked })} /> Intercept responses</label>
   <label><input type="checkbox" checked={settings.in_scope_only} disabled={!canEdit} onchange={(e) => save({ ...settings, in_scope_only: e.currentTarget.checked })} /> Only in-scope</label>
   <label>Auto-forward after <input type="number" min="0" max="3600" class="num" value={settings.timeout_secs ?? 0} disabled={!canEdit} onchange={(e) => save({ ...settings, timeout_secs: Number(e.currentTarget.value) || null })} /> s (0 = hold)</label>
-  <span class="spacer"></span>
-  <button class="primary" disabled={!current || !canEdit} onclick={() => decide('forward')}>Forward</button>
-  <button disabled={!current || !canEdit} onclick={() => decide('drop')}>Drop</button>
-  <button disabled={!queue.length || !canEdit} onclick={() => api.post('/intercept/forward-all').then(refresh)}>Forward all ({queue.length})</button>
 </div>
 {#if error}<p class="error">{error}</p>{/if}
 <div class="split">
@@ -86,9 +114,15 @@
     {/each}
   </ul>
   <div class="pane">
+    <div class="toolbar actions">
+      <button class="primary" aria-label="Forward" aria-keyshortcuts="F" disabled={!current || !canEdit} onclick={() => decide('forward')}>Forward <kbd>F</kbd></button>
+      <button aria-label="Drop" aria-keyshortcuts="D" disabled={!current || !canEdit} onclick={() => decide('drop')}>Drop <kbd>D</kbd></button>
+      <span class="spacer"></span>
+      <button aria-label="Forward all ({queue.length})" aria-keyshortcuts="Shift+F" disabled={!queue.length || !canEdit} onclick={forwardAll}>Forward all ({queue.length}) <kbd>Shift+F</kbd></button>
+    </div>
     {#if current}
       {#key current.id}
-        <MessageView raw={current.raw} editable={canEdit} onEdit={(b) => (edited = b)} title={`${current.phase} #${current.flow_id}`} />
+        <MessageView role="intercept" raw={current.raw} editable={canEdit} onEdit={(b) => (edited = b)} title={`${current.phase} #${current.flow_id}`} />
       {/key}
     {/if}
   </div>
@@ -96,8 +130,10 @@
 
 <style>
   .split { display: grid; grid-template-columns: minmax(16rem, 1fr) 3fr; flex: 1; min-height: 0; }
-  .list { list-style: none; margin: 0; padding: 0; overflow: auto; border-right: 1px solid var(--line); }
-  .list button { width: 100%; text-align: left; border: 0; border-radius: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list { list-style: none; margin: 0; padding: 0; overflow: auto; border-right: 1px solid var(--border-subtle); }
+  .list button { width: 100%; text-align: left; border-radius: 0; background: transparent; font-family: var(--font-mono); font-size: var(--fs-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pane { min-height: 0; display: flex; flex-direction: column; }
   .pad { padding: 1rem; }
+  .list button:hover:not(:disabled) { background: var(--surface-2); border-color: transparent; }
+  .list button.active { background: var(--surface-sel); }
 </style>

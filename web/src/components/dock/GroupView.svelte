@@ -5,6 +5,9 @@
   import type { Group } from '../../lib/layout';
   import { workspace } from '../../lib/workspace.svelte';
   import { dockDrag } from '../../lib/dockdrag.svelte';
+  import { contextMenu } from '../../lib/contextmenu.svelte';
+  import { windows } from '../../lib/windows.svelte';
+  import type { MenuItem } from '../../lib/menu';
   import { panelById } from '../../lib/panels';
   import PanelHost from './PanelHost.svelte';
 
@@ -51,6 +54,29 @@
     refocus(next);
   }
 
+  function tabMenu(id: string): MenuItem[] {
+    return [
+      { label: 'Close', run: () => workspace.close(id) },
+      { kind: 'sep' },
+      { label: 'Move left', run: () => workspace.moveDirection(id, 'left'), hint: 'Alt+Shift+←' },
+      { label: 'Move right', run: () => workspace.moveDirection(id, 'right'), hint: 'Alt+Shift+→' },
+      { label: 'Move up', run: () => workspace.moveDirection(id, 'up'), hint: 'Alt+Shift+↑' },
+      { label: 'Move down', run: () => workspace.moveDirection(id, 'down'), hint: 'Alt+Shift+↓' },
+      { kind: 'sep' },
+      { label: maximized ? 'Restore pane size' : 'Maximise pane', run: () => workspace.toggleMaximize(group.id) },
+      ...(windows.isPopout ? [] : [{ kind: 'sep' } as MenuItem, { label: 'Move to a new window', run: () => windows.popOut(id) }]),
+    ];
+  }
+
+  function onTabContext(e: MouseEvent, id: string) {
+    e.preventDefault();
+    workspace.select(id);
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    // From the keyboard the event has no pointer position: open under the tab.
+    const fromKey = e.clientX === 0 && e.clientY === 0;
+    contextMenu.show(tabMenu(id), fromKey ? r.left : e.clientX, fromKey ? r.bottom : e.clientY, 'Tab actions');
+  }
+
   function onClick(id: string) {
     if (dockDrag.justDragged) return;
     workspace.select(id);
@@ -75,6 +101,7 @@
           onclick={() => onClick(t.id)}
           onkeydown={(e) => onTabKey(e, t.id, i)}
           onpointerdown={(e) => dockDrag.begin(e, t.id, title(t.panel))}
+          oncontextmenu={(e) => onTabContext(e, t.id)}
           onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); workspace.close(t.id); } }}
         >{title(t.panel)}{#if n}<span class="count">{n}</span>{/if}</button>
         <button class="x" tabindex="-1" aria-label="Close {title(t.panel)}" onclick={() => workspace.close(t.id)}>×</button>

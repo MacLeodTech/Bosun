@@ -30,7 +30,7 @@ TypeScript, so these tests stand in for a `cargo-fuzz` target; a Rust port would
 
 The suite starts the `bosun` binary (`BOSUN_BIN` overrides the path) with a throw-away data directory and a small
 stand-in "hostile" site (`e2e/target.ts`), then drives the UI in Chromium: first-run setup, sign-in, scope editing,
-live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out-of-scope refusal), the viewer (a 256 KiB-class JSON body is pretty-printed, windowed, searchable and scrolls, the Changes diff, header filters, the render view's colour scheme), the dock (layout survives a reload, a corrupt layout falls back, keyboard and mouse docking, a background panel ignores keys, saved and imported layouts), and the check that the render view cannot run a hostile page's script. The
+live history, intercept edit/forward/drop, the Repeater (send, diff, groups, out-of-scope refusal), the viewer (a 256 KiB-class JSON body is pretty-printed, windowed, searchable and scrolls, the Changes diff, header filters, the render view's colour scheme), pop-out windows (a panel moves out, follows the selection and returns), the dock (layout survives a reload, a corrupt layout falls back, keyboard and mouse docking, a background panel ignores keys, saved and imported layouts), and the check that the render view cannot run a hostile page's script. The
 ports are 18080 (proxy), 18090 (UI) and 18099 (target); override with `BOSUN_E2E_PROXY_PORT`, `BOSUN_E2E_UI_PORT`
 and `BOSUN_E2E_TARGET_PORT`. A failed CI run keeps the Playwright traces as an artifact.
 

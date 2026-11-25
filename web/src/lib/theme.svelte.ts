@@ -23,6 +23,12 @@ class Theme {
   constructor() {
     this.apply();
     this.mql.addEventListener('change', () => this.apply());
+    // A change made in another window (a pop-out, say) shows here too.
+    window.addEventListener('storage', (e) => {
+      if (e.key !== KEY) return;
+      this.pref = read();
+      this.apply();
+    });
   }
 
   private apply() {

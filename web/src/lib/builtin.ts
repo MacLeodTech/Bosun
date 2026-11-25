@@ -8,6 +8,7 @@ import { panels } from './panels';
 import { session } from './session.svelte';
 import { shell } from './shell.svelte';
 import { theme } from './theme.svelte';
+import { windows } from './windows.svelte';
 import { builtinPresets, workspace } from './workspace.svelte';
 import type { InterceptSettings } from './types';
 
@@ -48,6 +49,17 @@ export function registerBuiltins(): () => void {
         if (g) workspace.toggleMaximize(g);
       },
     },
+    {
+      id: 'window.popout',
+      title: 'Move this tab to a new window',
+      group: 'Layout',
+      when: () => !windows.isPopout && workspace.activeTabId() !== null,
+      run: () => {
+        const t = workspace.activeTabId();
+        if (t) windows.popOut(t);
+      },
+    },
+    { id: 'window.return', title: 'Return this window to the main window', group: 'Layout', when: () => windows.isPopout, run: () => windows.returnToMain() },
     { id: 'layout.close-tab', title: 'Close this tab', group: 'Layout', run: () => { const t = workspace.activeTabId(); if (t) workspace.close(t); } },
   );
 

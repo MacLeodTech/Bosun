@@ -9,6 +9,7 @@ import {
   type Dir, type Node, type Zone,
 } from './layout';
 import { isPanelId } from './panelids';
+import { parsePopout, windowKey } from './popout';
 
 const KEY = 'bosun.workspace.v1';
 
@@ -40,6 +41,11 @@ function reid(n: Node): Node {
 }
 
 class Workspace {
+  /** Where this window keeps its layout: the main window and each pop-out have their own. */
+  private key: string;
+  /** The layout a window starts with when nothing valid is stored. */
+  private fallback: () => Node;
+
   /** null when every panel is closed. */
   root = $state.raw<Node | null>(null);
   /** The group the user last worked in: where a newly opened panel goes. */
@@ -55,7 +61,9 @@ class Workspace {
 
   private timer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor() {
+  constructor(key: string = KEY, fallback: () => Node = () => builtin('triage')) {
+    this.key = key;
+    this.fallback = fallback;
     this.load();
     // The save is debounced while a divider is dragged; make sure a pending one is not lost on reload or close.
     window.addEventListener('pagehide', () => this.flush());
@@ -79,7 +87,7 @@ class Workspace {
   private load() {
     let ok = false;
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = localStorage.getItem(this.key);
       if (raw) {
         const data = JSON.parse(raw);
         const root = data?.version === 1 ? validate(data.root, isPanelId) : null;
@@ -102,7 +110,7 @@ class Workspace {
     } catch {
       // Unreadable storage: start from the default.
     }
-    if (!ok) this.root = builtin('triage');
+    if (!ok) this.root = this.fallback();
     this.focused = (this.root && groups(this.root)[0]?.id) || '';
   }
 
@@ -111,12 +119,12 @@ class Workspace {
     this.timer = setTimeout(() => this.flush(), 150);
   }
 
-  private flush() {
+  flush() {
     if (this.timer === undefined) return;
     clearTimeout(this.timer);
     this.timer = undefined;
     try {
-      localStorage.setItem(KEY, JSON.stringify({ version: 1, root: this.root, presets: this.presets }));
+      localStorage.setItem(this.key, JSON.stringify({ version: 1, root: this.root, presets: this.presets }));
     } catch {
       // Storage may be full or blocked; the layout then lasts until reload.
     }
@@ -338,4 +346,32 @@ class Workspace {
   }
 }
 
-export const workspace = new Workspace();
+/** Panels in a pop-out window's stored layout (and forget that layout). Used when a pop-out comes back to the main window. */
+export function takeWindow(id: string): string[] {
+  const key = windowKey(id);
+  let panels: string[] = [];
+  try {
+    const data = JSON.parse(localStorage.getItem(key) ?? 'null');
+    const root = data?.version === 1 ? validate(data.root, isPanelId) : null;
+    if (root) panels = tabs(root).map((t) => t.panel);
+    localStorage.removeItem(key);
+  } catch {
+    // Unreadable: nothing to bring back.
+  }
+  return panels;
+}
+
+/** Create a pop-out window's layout (one panel), before the window opens. */
+export function seedWindow(id: string, panel: string): boolean {
+  try {
+    localStorage.setItem(windowKey(id), JSON.stringify({ version: 1, root: group([tab(panel)]), presets: {} }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The pop-out this window is, if it is one. */
+export const POPOUT_ID = typeof location === 'undefined' ? null : parsePopout(location.hash);
+
+export const workspace = POPOUT_ID ? new Workspace(windowKey(POPOUT_ID), () => group([tab('history')])) : new Workspace();

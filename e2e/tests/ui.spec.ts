@@ -595,3 +595,45 @@ test('deep link: the address names the open request and a reload brings it back'
   await expect(page.locator('footer')).toContainText(`Request #${id}`);
   await expect(page.locator('.msg').nth(1).locator('.code')).toContainText('hello from /hello-history');
 });
+
+// ---- pop-out windows ---------------------------------------------------------------------------------------------
+
+test('pop-out: a tab moves to its own window, follows the selection, and comes back', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  // The request panel leaves the main window.
+  await page.getByRole('tab', { name: 'Request / response' }).click({ button: 'right' });
+  const popupPromise = page.context().waitForEvent('page');
+  await page.getByRole('menuitem', { name: 'Move to a new window' }).click();
+  const popup = await popupPromise;
+  await popup.waitForLoadState('domcontentloaded');
+  await expect(page.getByRole('tab', { name: 'Request / response' })).toHaveCount(0);
+
+  // It is the same app, signed in through the shared session, showing only that panel.
+  await expect(popup.getByRole('tab', { name: 'Request / response' })).toBeVisible();
+  await expect(popup.getByRole('button', { name: 'Return to main window' })).toBeVisible();
+  expect(popup.url()).toContain('#/popout/');
+
+  // Selecting a request in the main window shows it in the pop-out (ids travel, the pop-out fetches the bodies).
+  await page.locator('.row', { hasText: '/hello-history' }).first().click();
+  await expect(popup.locator('.msg').nth(1).locator('.code')).toContainText('hello from /hello-history', { timeout: 10000 });
+
+  // Return: the window closes and the panel is back in the main window.
+  const closed = popup.waitForEvent('close');
+  await popup.getByRole('button', { name: 'Return to main window' }).click();
+  await closed;
+  await expect(page.getByRole('tab', { name: 'Request / response' })).toBeVisible({ timeout: 5000 });
+});
+
+test('pop-out: closing the window by hand also brings its panel back', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('tab', { name: 'Request / response' }).click({ button: 'right' });
+  const popupPromise = page.context().waitForEvent('page');
+  await page.getByRole('menuitem', { name: 'Move to a new window' }).click();
+  const popup = await popupPromise;
+  await popup.waitForLoadState('domcontentloaded');
+  await expect(page.getByRole('tab', { name: 'Request / response' })).toHaveCount(0);
+  await popup.close();
+  await expect(page.getByRole('tab', { name: 'Request / response' })).toBeVisible({ timeout: 8000 });
+});

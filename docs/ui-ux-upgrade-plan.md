@@ -363,6 +363,7 @@ origin" tests (e2e) are unchanged and passing.
 | Tool hooks | `Send to Repeater / Decoder / Compare` commands register themselves when the tool panels exist. Until then they are hidden. |
 
 ### Phase 4: pop-out and shared state (about 5 days, desktop part depends on a decision)
+**Status (branch `ui-phase0`):** browser pop-out built (`lib/popout.ts`, `lib/windows.svelte.ts`). A tab's context menu, the palette ("Move this tab to a new window") and the command registry open it; the window has its own layout key (`bosun.window.<id>.v1`) and a slim header with "Return to main window". The selection (flow ids only) and the colour theme follow across windows. The main window takes a pop-out's panels back when it hands them over, when the window is closed (`window.closed`), or when its heartbeat stops (found again at startup). As decided, the desktop app is unchanged and server-side presets are not built; because the page cannot tell it is in the desktop shell, a refused `window.open` produces a message saying so rather than a hidden command.
 | Task | Component and spec |
 |---|---|
 | Browser pop-out | Per 2.4, with `BroadcastChannel` sync and a per-window CSRF fetch. |

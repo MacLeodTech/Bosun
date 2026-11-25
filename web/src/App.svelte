@@ -5,7 +5,8 @@
   import { theme } from './lib/theme.svelte';
   import { historyView } from './lib/historyView.svelte';
   import { shell } from './lib/shell.svelte';
-  import { workspace, builtinPresets } from './lib/workspace.svelte';
+  import { workspace, builtinPresets, POPOUT_ID } from './lib/workspace.svelte';
+  import { windows } from './lib/windows.svelte';
   import { panels } from './lib/panels';
   import { isPanelId } from './lib/panelids';
   import { commands, currentCtx } from './lib/commands.svelte';
@@ -56,10 +57,15 @@
   // The address follows the open request: #history?flow=1234.
   $effect(() => {
     const id = historyView.openId;
-    if (!session.me) return;
+    if (!session.me || POPOUT_ID) return;
     const cur = parseHash(location.hash, isPanelId).panel ?? 'history';
     const next = buildHash(cur, id);
     if (location.hash !== next) history.replaceState(null, '', next);
+  });
+
+  // The windows share what is selected and open (ids only), so a pop-out follows the list in the main window.
+  $effect(() => {
+    if (session.me) windows.broadcastSelection();
   });
 
   /** Plain keys belong to whatever has focus; commands with a modifier work from anywhere that is not a text field. */
@@ -95,9 +101,13 @@
   onMount(() => {
     session.init();
     const unregister = registerBuiltins();
-    // A link such as #repeater, or #history?flow=12, opens that panel and request.
-    followHash();
-    window.addEventListener('hashchange', followHash);
+    const stopWindows = windows.start();
+    if (POPOUT_ID) document.title = 'Bosun (pop-out)';
+    else {
+      // A link such as #repeater, or #history?flow=12, opens that panel and request.
+      followHash();
+      window.addEventListener('hashchange', followHash);
+    }
     const off = session.on((e) => {
       if (e.type === 'reload') {
         api.get<{ requests: boolean; responses: boolean }>('/intercept').then((s: { requests: boolean; responses: boolean }) => (shell.held = (s.requests ? 1 : 0) + (s.responses ? 1 : 0)));
@@ -112,6 +122,7 @@
     return () => {
       off();
       unregister();
+      stopWindows();
       window.removeEventListener('hashchange', followHash);
     };
   });
@@ -127,20 +138,28 @@
   <div class="app">
     <header>
       <span class="brand"><img src="/apple-touch-icon.png" alt="" width="24" height="24" />Bosun</span>
-      <nav aria-label="Open a panel">
-        {#each panels as p (p.id)}
-          {@const n = p.badge?.() ?? 0}
-          <button class:active={workspace.isActive(p.id)} onclick={() => go(p.id)}>
-            {p.title}{#if n}<span class="count">{n}</span>{/if}
-          </button>
-        {/each}
-      </nav>
+      {#if !POPOUT_ID}
+        <nav aria-label="Open a panel">
+          {#each panels as p (p.id)}
+            {@const n = p.badge?.() ?? 0}
+            <button class:active={workspace.isActive(p.id)} onclick={() => go(p.id)}>
+              {p.title}{#if n}<span class="count">{n}</span>{/if}
+            </button>
+          {/each}
+        </nav>
+      {/if}
       <span class="spacer"></span>
       <button class="ghost" title="Command palette (Ctrl+K)" onclick={() => { shell.paletteStart = ''; shell.palette = true; }}>Commands <kbd>Ctrl+K</kbd></button>
-      <Menu label="Layout" title="Arrange the panels" items={layoutItems} />
+      {#if POPOUT_ID}
+        <button onclick={() => windows.returnToMain()} title="Close this window and put its panels back in the main window">Return to main window</button>
+      {:else}
+        <Menu label="Layout" title="Arrange the panels" items={layoutItems} />
+      {/if}
       <button class="ghost" title="Colour theme: system, dark or light" onclick={() => theme.cycle()}>Theme: {theme.pref}</button>
-      <span class="small muted">{session.me.user.username} ({session.me.user.role})</span>
-      <button onclick={() => session.logout()}>Sign out</button>
+      {#if !POPOUT_ID}
+        <span class="small muted">{session.me.user.username} ({session.me.user.role})</span>
+        <button onclick={() => session.logout()}>Sign out</button>
+      {/if}
     </header>
     {#if shell.lost}
       <div class="lost" role="alert">

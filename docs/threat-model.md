@@ -88,6 +88,12 @@ This document says what is protected, from whom, and how. Code comments refer ba
   still apply. A request sent to the Repeater travels through `sessionStorage` (as it already did) and is removed
   when read. Deleting from the History list is delayed by a five-second undo window, and the server is asked only
   when it passes; closing the page in that window leaves the requests stored.
+- *Pop-out windows.* A pop-out is the same UI at `#/popout/<id>`, opened with `window.open` from the browser build. It is
+  same-origin, so it uses the same session cookie, fetches its own CSRF token and opens its own event stream; it has no
+  access the main window lacks. Windows talk over a same-origin `BroadcastChannel` and exchange only flow ids, panel
+  names and window ids; every message is validated before use and anything else is dropped. Target content is never
+  passed between windows. The desktop shell is unchanged: it exposes no IPC and may navigate only to the engine's
+  origin, so it cannot open pop-outs (the UI reports that the window could not be opened).
 - *Project files.* Opened with a bundled, current SQLite (`cargo deny` fails the build on SQLite advisories),
   with `trusted_schema` off, `cell_size_check` on and SQLite's defensive mode set. A file must carry exactly the
   schema this version creates: an extra trigger, view, table or index, or an altered column, is refused (a

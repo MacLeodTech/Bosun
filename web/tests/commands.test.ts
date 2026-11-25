@@ -178,3 +178,32 @@ test('deep links: panel and request, and nothing else', () => {
   assert.equal(buildHash('repeater', null), '#repeater');
   assert.deepEqual(parseHash(buildHash('history', 99), isPanel), { panel: 'history', flow: 99 });
 });
+
+// ---- pop-out windows
+
+import { idFromKey, isWindowId, parseMsg, parsePopout, popoutHash, windowKey } from '../src/lib/popout.ts';
+
+test('pop-out addresses, keys and ids', () => {
+  assert.equal(parsePopout('#/popout/abc123def'), 'abc123def');
+  assert.equal(parsePopout(popoutHash('Ab-_9xyz')), 'Ab-_9xyz');
+  for (const bad of ['#/popout/', '#/popout/ab', '#/popout/a b c d', '#/popout/../x', '#history', '', '#/popout/abcd/extra', '#/popout/abcd?x=1']) assert.equal(parsePopout(bad), null, bad);
+  assert.equal(isWindowId('abcd'), true);
+  assert.equal(isWindowId('abc'), false);
+  assert.equal(isWindowId('x'.repeat(41)), false);
+  assert.equal(isWindowId(5), false);
+  assert.equal(idFromKey(windowKey('abc12345')), 'abc12345');
+  assert.equal(idFromKey('bosun.workspace.v1'), null);
+  assert.equal(idFromKey('bosun.window.ab.v1'), null);
+});
+
+test('only well-formed messages get through, and they carry ids only', () => {
+  const ok = parseMsg({ type: 'select', from: 'abcd1234', selected: [1, 2], selectedId: 2, openId: null });
+  assert.deepEqual(ok, { type: 'select', from: 'abcd1234', selected: [1, 2], selectedId: 2, openId: null });
+  assert.deepEqual(parseMsg({ type: 'alive', id: 'abcd1234' }), { type: 'alive', id: 'abcd1234' });
+  assert.deepEqual(parseMsg({ type: 'return', id: 'abcd1234', extra: '<script>' }), { type: 'return', id: 'abcd1234' });
+  for (const bad of [null, 5, 'x', [], {}, { type: 'select' }, { type: 'select', from: 'abcd1234', selected: [1.5], selectedId: null, openId: null },
+    { type: 'select', from: 'abcd1234', selected: [-1], selectedId: null, openId: null }, { type: 'select', from: 'abcd1234', selected: [1], selectedId: 'x', openId: null },
+    { type: 'select', from: 'abcd1234', selected: new Array(6000).fill(1), selectedId: null, openId: null }, { type: 'alive', id: 'no' }, { type: 'other', id: 'abcd1234' }]) {
+    assert.equal(parseMsg(bad), null, JSON.stringify(bad)?.slice(0, 60));
+  }
+});

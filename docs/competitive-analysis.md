@@ -5,7 +5,7 @@ the roadmap does not yet cover. Sources for the first four tools were read onlin
 sqlmap and Nessus the notes come from general knowledge of those tools, not from a fresh look.
 
 How to read it: **Covered** means a work package in `roadmap.md` delivers it. **Gap** means no work package does.
-Proposed new work packages are WP-75 to WP-86 (see the end); they are not in the roadmap index until the owner agrees.
+The gaps became work packages WP-75 to WP-86 in `roadmap.md` (index, phase plan, details and milestone checklists).
 
 ## Proxies: Burp, Caido, mitmproxy, Proxyman
 
@@ -89,9 +89,9 @@ tools before committing to a design.
   origin, an out-of-scope policy that resets) are the main reason to choose it over the others. New features should
   keep them.
 
-## Proposed work packages
+## New work packages
 
-None of these are in `roadmap.md` yet. Sizes are rough. All need the threat model checked before they land.
+All are in `roadmap.md` (the details are under "WP-75 to WP-86"; the phases there are the plan). Sizes are rough. All need the threat model checked before they land.
 
 | WP | Title | Size | Notes |
 |---|---|---|---|

@@ -2,7 +2,7 @@
 
 The plan for Bosun: a free, Rust-based replacement for Burp Suite Professional and OWASP ZAP, for
 homelabbers, hobbyists and individual security testers. This file holds all planned work. The implementation
-strategy (phases, and work packages WP-01 to WP-74) sets the order; the milestone checklists list the features.
+strategy (phases, and work packages WP-01 to WP-86) sets the order; the milestone checklists list the features.
 Each phase ends with something usable and tested. Tick items off as they land, and add new work here as a work
 package rather than in issues alone.
 
@@ -54,7 +54,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
 ## Implementation strategy
 
 All remaining work, from the 2026-11-23 codebase review and from the milestones, is in **work packages WP-01 to
-WP-74**. The phase plan below sets the order. Work package numbers are stable identifiers, not the order. The
+WP-86**. The phase plan below sets the order. Work package numbers are stable identifiers, not the order. The
 milestone sections further down are the feature checklists; every open item there names the package that
 delivers it.
 
@@ -79,27 +79,32 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
 - Track D, release: WP-69, WP-70 (the first pages), WP-31.
+- Quick win from the gap analysis: WP-77 (copy as curl, HAR export) once WP-43 lands.
 - Owner: look up the pending BOSUN Class 9 filing before v0.2; an Apple Developer account. Windows signing is deferred.
 - Gate: v0.2 for Windows, macOS and Linux; Docker and Podman images; the CLI; security review 3.
 
 **Phase 4: Intruder, Sequencer and performance. Release v0.3.**
 - WP-47, WP-48, WP-27, WP-28, WP-32, WP-33. WP-46 is optional.
+- From the gap analysis: WP-75 (history query language), WP-76 (Map Local, Map Remote, throttling), WP-79 (gRPC,
+  Protobuf, GraphQL).
 - Gate: footprint budgets green on storage v2; the WP-27 and WP-28 benchmarks recorded here.
 
 **Phase 5: passive scanning and reports. Release v0.4.**
-- WP-49, then WP-50 and WP-51; WP-29; WP-73.
+- WP-49, then WP-50 and WP-51; WP-29; WP-73, then WP-80.
 
 **Phase 6: active scanning. Release v0.5.**
 - WP-52, WP-68, WP-53, then WP-54 (with the testbed), then WP-55 and WP-56, then WP-57; WP-72.
+- From the gap analysis: WP-81 (content and parameter discovery), WP-82 (fingerprints and known-vulnerable
+  components).
 
 **Phase 7: OAST and imports. Release v0.6.**
-- WP-58, then WP-59; WP-60.
+- WP-58, then WP-59; WP-60; WP-85.
 
 **Phase 8: plugins and advanced checks. Release v0.7.**
-- WP-61, then WP-62; WP-63.
+- WP-61, then WP-62; WP-63; WP-83 and WP-84.
 
 **Phase 9: teams, more front ends and 1.0.**
-- WP-30, then WP-64; WP-65, WP-66, WP-67, WP-71, WP-74.
+- WP-30, then WP-64; WP-65, WP-66, WP-67, WP-71, WP-74; WP-78 and WP-86.
 - Gate for 1.0: the docs complete, the migration guide, scanner benchmarks published, and an external security
   review (the owner decides whether to commission one).
 
@@ -176,6 +181,7 @@ valid in the "Depends on" column.
 | [ ] | WP-69 | Release workflow | 3 | M | WP-09, WP-24 |
 | [ ] | WP-70 | Docs site | 3 | M | WP-13 |
 | [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
+| [ ] | WP-77 | Export: copy as curl, HAR export, code snippets | 3 | S | WP-43 |
 | [ ] | WP-47 | Intruder | 4 | L | WP-40, WP-41 |
 | [ ] | WP-48 | Sequencer | 4 | M | WP-40 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
@@ -183,11 +189,15 @@ valid in the "Depends on" column.
 | [ ] | WP-32 | CA management | 4 | M | |
 | [ ] | WP-33 | Protocol gaps | 4 | M | WP-20 |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
+| [ ] | WP-75 | History query language and saved filters | 4 | M | WP-43 |
+| [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
+| [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
 | [ ] | WP-49 | Passive scanner, findings and the issues view | 5 | L | WP-05, WP-35 |
 | [ ] | WP-50 | `bosun-checks`: the check language and passive checks | 5 | L | WP-49 |
 | [ ] | WP-51 | `bosun-report` | 5 | M | WP-49 |
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
 | [ ] | WP-73 | Accessibility and keyboard shortcuts | 5 | M | WP-44 |
+| [ ] | WP-80 | Command palette and one shared message viewer | 5 | M | WP-44, WP-73 |
 | [ ] | WP-52 | `bosun-crawl`: the HTTP spider | 6 | M | WP-10, WP-40 |
 | [ ] | WP-68 | Encrypted credential vault | 6 | M | WP-20, WP-29 |
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
@@ -196,12 +206,17 @@ valid in the "Depends on" column.
 | [ ] | WP-56 | `bosun-auth` and the authorisation matrix | 6 | L | WP-54, WP-68 |
 | [ ] | WP-57 | `bosun scan` for CI | 6 | M | WP-25, WP-26, WP-51, WP-54 |
 | [ ] | WP-72 | Scanner benchmarks against ZAP | 6 | M | WP-55 |
+| [ ] | WP-81 | Content and parameter discovery | 6 | M | WP-47, WP-52 |
+| [ ] | WP-82 | Technology fingerprint and known-vulnerable components | 6 | M | WP-49, WP-69 |
 | [ ] | WP-58 | Lookout, the OAST server | 7 | L | WP-23, WP-24 |
 | [ ] | WP-59 | OAST client, payloads and checks | 7 | M | WP-58, WP-41, WP-47, WP-54 |
 | [ ] | WP-60 | Imports (OpenAPI, GraphQL, Postman, HAR, URL lists, Burp XML) | 7 | M | WP-16 |
+| [ ] | WP-85 | Issue tracker export | 7 | S | WP-49, WP-51 |
 | [ ] | WP-61 | Plugin host | 8 | L | WP-05, WP-10, WP-69 |
 | [ ] | WP-62 | Plugin SDK and hooks | 8 | L | WP-61 |
 | [ ] | WP-63 | Advanced checks | 8 | L | WP-40, WP-53, WP-54 |
+| [ ] | WP-83 | SQL injection exploitation helper (opt-in) | 8 | L | WP-55 |
+| [ ] | WP-84 | Scheduled scans and scan diff | 8 | M | WP-51, WP-57 |
 | [ ] | WP-30 | Multi-user server semantics | 9 | L | WP-23 |
 | [ ] | WP-64 | Teams: OIDC, per-project permissions, collaboration | 9 | L | WP-30, WP-16, WP-17 |
 | [ ] | WP-65 | In-container browser over CDP screencast | 9 | L | WP-53, WP-24 |
@@ -209,6 +224,8 @@ valid in the "Depends on" column.
 | [ ] | WP-67 | `bosun-tui` | 9 | L | WP-14 |
 | [ ] | WP-71 | Migration guide from Burp and ZAP | 9 | S | WP-60 |
 | [ ] | WP-74 | HTTP/3 | 9 | L | WP-40 |
+| [ ] | WP-78 | Proxy modes: reverse proxy, WireGuard or local capture, TLS key log | 9 | L | WP-31, WP-32 |
+| [ ] | WP-86 | Optional AI assistance | 9 | L | WP-49, WP-62 |
 
 ---
 
@@ -792,6 +809,117 @@ Open packages only; finished ones are in `docs/releases.md`.
   reachable.
 
 
+### WP-75 to WP-86: gaps found against other tools
+
+From `docs/competitive-analysis.md` (2026-11-25), which compares Bosun with Burp, Caido, mitmproxy, Proxyman, ZAP and
+others. Every package here follows the platform contracts above. Packages that decode or parse untrusted input get a
+fuzz target; ones that send traffic go through the gate.
+
+#### WP-75 History query language and saved filters · Phase 4 · M
+
+- **Do:**
+  - A small typed filter language over history (host, method, status, headers, body text, tags, source, size, time,
+    with and/or/not), parsed in Rust behind an endpoint so the UI, CLI and plugins share it.
+  - Saved filters per project (a migration), a query bar with autocomplete and a history of past queries.
+  - The same language drives Logger and Intruder results (WP-43, WP-47).
+  - A fuzz target for the parser; queries run against the store with a time and row limit, never string-built SQL.
+- **Done when:** the grammar is documented; unit and property tests cover it; a Playwright test saves and re-runs a filter.
+
+#### WP-76 Map Local, Map Remote and throttling · Phase 4 · M
+
+- **Do:**
+  - Rules that answer a matching request from a local file (Map Local) or send it to another host (Map Remote),
+    next to match-and-replace, with an audit entry on change.
+  - Throttle and latency simulation per host or rule.
+  - Map Remote's new target goes through `Gate::check`; Map Local reads only from a directory the user picked, with
+    no path traversal (tested).
+- **Done when:** tests cover each rule type, the path-traversal case, and an out-of-scope Map Remote target being refused.
+
+#### WP-77 Export: copy as curl, HAR export, code snippets · Phase 3 · S
+
+- **Do:** copy a request as `curl` (quoted safely for POSIX shells and PowerShell), export selected flows as HAR, and
+  generate snippets for a few languages. Secrets (cookies, authorization headers) are redacted unless the user ticks
+  a box. HAR import is in WP-60.
+- **Done when:** golden tests for each format, including hostile header values; once WP-60 lands, an exported HAR file imports back unchanged.
+
+#### WP-78 Proxy modes: reverse proxy, WireGuard or local capture, TLS key log · Phase 9 · L
+
+- **Do:**
+  - Reverse-proxy mode: listen in front of one upstream and rewrite Host.
+  - A TLS key log file option (`SSLKEYLOGFILE` format) so Wireshark can decrypt captures; off by default, with a
+    warning because the file exposes traffic secrets.
+  - WireGuard or local capture mode and guided setup for phones and emulators, on top of WP-31's transparent proxying.
+  - Decision first: ask the owner whether WireGuard (a user-space implementation) or per-OS local capture is wanted.
+  - The first pull request may be reverse mode and the key log alone; they can be pulled into an earlier phase.
+- **Done when:** a test client through each mode is recorded and the scope gate still applies; the key log decrypts a
+  captured session in a test; the threat model covers the new listener and the key file.
+
+#### WP-79 gRPC, Protobuf and GraphQL-aware views and rules · Phase 4 · M
+
+- **Do:**
+  - Decode gRPC and Protobuf (with a user-supplied schema, or schema-less field numbers), and edit and re-send them.
+  - GraphQL-aware matching and editing by operation name; query and variables shown separately.
+  - Decoders respect WP-06's size caps and have fuzz targets.
+- **Done when:** a recorded gRPC call shows decoded fields; a rule fires on a GraphQL operation name.
+
+#### WP-80 Command palette and one shared message viewer · Phase 5 · M
+
+- **Do:**
+  - A keyboard command palette (go to a page, open a flow, run a saved filter, toggle settings), with keyboard
+    paths for every item (builds on WP-73).
+  - Check that History, Repeater, Intruder results and Findings all use the same message viewer and editor (WP-44),
+    and that tabs can be reordered or grouped.
+- **Done when:** a Playwright test drives the palette and the viewer is shared by each tool.
+
+#### WP-81 Content and parameter discovery · Phase 6 · M
+
+- **Do:**
+  - A tool for forced browsing of paths, files and parameters from wordlists, with recursion, soft-404 detection and
+    response clustering, reusing Intruder's engine (WP-47) and the crawler's queue (WP-52).
+  - Bounded by scope and the gate's per-host rate limit; a stop switch.
+- **Done when:** a run against the testbed finds planted hidden paths and parameters and ignores soft-404s.
+
+#### WP-82 Technology fingerprint and known-vulnerable components · Phase 6 · M
+
+- **Do:**
+  - Passive fingerprinting of servers, frameworks and libraries from headers, cookies and script URLs (a finding
+    type under WP-49).
+  - Match detected versions to an offline advisory feed (OSV or similar), signed and updated like the check feeds
+    (WP-69), with no lookups to third parties by default.
+- **Done when:** fixtures with known versions produce the expected findings; the feed update verifies its signature.
+
+#### WP-83 SQL injection exploitation helper (opt-in) · Phase 8 · L
+
+- **Do:**
+  - Beyond detection (WP-55): confirm the injection type, identify the database, and apply tamper transforms for
+    filters. Data extraction is limited to what the user confirms for each target.
+  - Marked destructive-class: off by default, a confirmation per target, an audit entry, the gate and rate limit.
+  - Ask the owner how far extraction should go before starting.
+- **Done when:** tests against the testbed's vulnerable endpoints; an unconfirmed target is refused.
+
+#### WP-84 Scheduled scans and scan diff · Phase 8 · M
+
+- **Do:** recurring scans from a project or saved scan config (server mode), a comparison of two runs (new, fixed and
+  unchanged findings), and notifications only to destinations the user configured.
+- **Done when:** a scheduled run produces a diff in a test; the schedule survives a restart.
+
+#### WP-85 Issue tracker export · Phase 7 · S
+
+- **Do:** push a finding to GitHub issues, Jira or Linear. Credentials go in the vault (WP-68); the destination host
+  is on a user-set allow list; secrets in evidence are redacted by default.
+- **Done when:** tests against a mock tracker; a host off the allow list is refused.
+
+#### WP-86 Optional AI assistance · Phase 9 · L
+
+- **Do:**
+  - Off by default. Explain a response, suggest test ideas, draft a check from a finding. The user supplies a local
+    or remote model endpoint; nothing is sent anywhere until they configure one, and what is sent is shown first.
+  - Model output is untrusted input: it is never executed or rendered as HTML, and any request it proposes goes
+    through the gate and needs the user's approval. No agent mode without a separate decision.
+  - Ask the owner about scope and cost before starting.
+- **Done when:** the threat model covers it; tests show that nothing leaves without configuration and that proposed
+  requests are gated.
+
 ---
 
 ## Milestone checklists
@@ -831,6 +959,11 @@ the phase plan above sets the order. Tick an item here when its package lands.
   (parameters and endpoints) → **WP-45**
 - [ ] The scope gate enforced for every tool request (refuse out-of-scope, a per-host rate limit, the stop switch),
   with pinned addresses: **WP-10** must land first
+- [ ] Typed history filters with saved queries and a query bar → **WP-75**
+- [ ] Map Local, Map Remote and throttling → **WP-76**
+- [ ] Copy as curl, HAR export and code snippets → **WP-77**
+- [ ] gRPC, Protobuf and GraphQL-aware views and rules → **WP-79**
+- [ ] A command palette, and one message viewer shared by every tool → **WP-80**
 
 ### M3 Intruder and Sequencer
 
@@ -860,6 +993,7 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] `bosun-report`: HTML (self-contained, no script), JSON, SARIF, JUnit and Markdown; secrets redacted by default
   → **WP-51**
 - [ ] An issues view in the UI with filters and grouping, and links back to the evidence → **WP-49**
+- [ ] Technology fingerprints and known-vulnerable component findings from an offline advisory feed → **WP-82**
 
 ### M5 Active scanning
 
@@ -881,6 +1015,8 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] `bosun scan` CLI: headless CI scan from a URL or an API definition, exit code from a severity
   threshold, SARIF output → **WP-57**
 - [ ] An in-repo `testbed` crate with known vulnerabilities, so scanner tests in CI are deterministic → **WP-54**
+- [ ] Content and parameter discovery (forced browsing) → **WP-81**
+- [ ] Scheduled scans and a diff between two runs → **WP-84**
 
 ### M6 OAST server and API imports
 
@@ -892,6 +1028,7 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] OAST checks: blind SQL injection, SSRF, XXE, RCE, blind XSS, DNS rebinding probes → **WP-59**
 - [ ] Imports: OpenAPI/Swagger 2 and 3, GraphQL introspection, Postman collections, HAR, plain URL lists; and
   Burp XML exports where the format allows → **WP-60**
+- [ ] Push findings to GitHub, Jira or Linear → **WP-85**
 
 ### M7 Plugins and advanced checks
 
@@ -903,6 +1040,7 @@ the phase plan above sets the order. Tick an item here when its package lands.
   context menu actions, UI panels in a sandboxed iframe → **WP-62**
 - [ ] Advanced checks: request smuggling (CL.TE, TE.CL, H2 downgrade, client-side desync), web cache poisoning and
   deception, DOM XSS through browser instrumentation, race conditions, OAuth/OIDC misconfiguration → **WP-63**
+- [ ] Opt-in SQL injection exploitation helper → **WP-83**
 
 ### M8 Teams, containers, engines and the TUI
 
@@ -914,6 +1052,8 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] `bosun-tui`: a ratatui client over the same API (uses `bosun-client`, **WP-14**); delivered by **WP-67**
 - [ ] Encrypted projects (in-app encryption, not SQLCipher: **WP-29**) and an encrypted credential vault for auth
   configs; delivered by **WP-68**
+- [ ] Reverse-proxy mode, WireGuard or local capture, and a TLS key log file → **WP-78**
+- [ ] Optional, off-by-default AI assistance → **WP-86**
 
 ### Release and packaging (from the first public release onwards)
 

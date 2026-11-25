@@ -1,0 +1,86 @@
+/*
+ * Design tokens. Components use these (or the legacy aliases in app.css), never raw colours.
+ * Two blocks only: dark (default) and light. `main.ts` sets data-theme to "dark" or "light" (resolving "system"
+ * itself), so there is no prefers-color-scheme duplicate to keep in step.
+ * `web/scripts/contrast.mjs` parses this file and fails `npm run check` when a text token drops below 4.5:1.
+ */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --surface-0: #0f141a;
+  --surface-1: #151b23;
+  --surface-2: #1d2631;
+  --surface-sel: #243349;
+  --border-subtle: #232d3a;
+  --border-strong: #354357;
+
+  --text-1: #d7dee8;
+  --text-2: #8f9bad;
+  --on-accent: #14100a;
+  --accent: #e0913a;
+  --focus-ring: #e0913a;
+
+  --ok: #5fbf77;
+  --info: #5aa6e8;
+  --warn: #e3b341;
+  --bad: #f77d77;
+
+  --m-get: #5aa6e8;
+  --m-post: #5fbf77;
+  --m-put: #e3b341;
+  --m-patch: #4fc3b0;
+  --m-delete: #f77d77;
+  --m-other: #8f9bad;
+
+  --st-2xx: #5fbf77;
+  --st-3xx: #5aa6e8;
+  --st-4xx: #e3b341;
+  --st-5xx: #f77d77;
+  --st-err: #f77d77;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --surface-0: #fafbfc;
+  --surface-1: #f0f2f5;
+  --surface-2: #e5e9ee;
+  --surface-sel: #d3e2f4;
+  --border-subtle: #dde2e9;
+  --border-strong: #c3cbd6;
+
+  --text-1: #1d242c;
+  --text-2: #53616f;
+  --on-accent: #ffffff;
+  --accent: #8c4a05;
+  --focus-ring: #8c4a05;
+
+  --ok: #17692f;
+  --info: #1a62a3;
+  --warn: #7d5800;
+  --bad: #b3261e;
+
+  --m-get: #1a62a3;
+  --m-post: #17692f;
+  --m-put: #7d5800;
+  --m-patch: #0f6b5d;
+  --m-delete: #b3261e;
+  --m-other: #53616f;
+
+  --st-2xx: #17692f;
+  --st-3xx: #1a62a3;
+  --st-4xx: #7d5800;
+  --st-5xx: #b3261e;
+  --st-err: #b3261e;
+}
+
+:root {
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Inter, 'Helvetica Neue', sans-serif;
+  --font-mono: 'Cascadia Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-data: 12px;
+  --radius: 4px;
+}

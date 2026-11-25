@@ -1,40 +1,52 @@
+/* Tokens live in tokens.css. The names below (--bg, --line, ...) are aliases so older pages keep working. */
 :root {
-  --bg: #11161d; --bg2: #18202a; --line: #2a3442; --fg: #d7dee8; --muted: #7d8a9b;
-  --accent: #e0913a; --sel: #26354a; --hover: #1d2733;
-  --ok: #5fbf77; --info: #5aa6e8; --warn: #e3b341; --bad: #e5534b;
-  color-scheme: dark;
-  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
-}
-@media (prefers-color-scheme: light) {
-  :root { --bg: #f7f8fa; --bg2: #eceff3; --line: #d0d6de; --fg: #1d242c; --muted: #5d6b7c; --sel: #d6e4f5; --hover: #e4e9ef; color-scheme: light; }
+  --bg: var(--surface-0); --bg2: var(--surface-1); --line: var(--border-subtle); --fg: var(--text-1);
+  --muted: var(--text-2); --sel: var(--surface-sel); --hover: var(--surface-2);
+  font: var(--fs-sm)/1.4 var(--font-ui);
 }
 * { box-sizing: border-box; }
-html, body, #app { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
-code, .mono, pre, textarea.code { font-family: ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace; font-size: 12px; }
+html, body, #app { margin: 0; height: 100%; background: var(--surface-0); color: var(--text-1); }
+code, .mono, pre, textarea.code { font-family: var(--font-mono); font-size: var(--fs-data); font-variant-ligatures: none; }
+.num-col, .tnum { font-variant-numeric: tabular-nums; }
 button, input, select, textarea { font: inherit; color: inherit; }
-button { background: var(--bg2); border: 1px solid var(--line); border-radius: 4px; padding: .25rem .65rem; cursor: pointer; }
-button:hover:not(:disabled) { background: var(--hover); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -1px; }
+
+/* Flat buttons: a quiet fill, no border. Outlines are kept for the primary and destructive actions only. */
+button { background: var(--surface-2); border: 1px solid transparent; border-radius: var(--radius); padding: .2rem .6rem; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--border-strong); }
 button:disabled { opacity: .5; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #111; }
-button.danger { border-color: var(--bad); color: var(--bad); }
-button.active { background: var(--sel); }
-input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: .25rem .45rem; }
-input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); border-color: var(--accent); }
+button.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
+button.ghost { background: transparent; }
+button.ghost:hover:not(:disabled) { background: var(--surface-2); border-color: transparent; }
+button.active { background: var(--surface-sel); }
+kbd { font: var(--fs-xs) var(--font-mono); padding: 0 .3rem; border: 1px solid var(--border-strong); border-radius: 3px; color: var(--text-2); }
+
+input, select { background: var(--surface-0); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: .2rem .4rem; }
+input:hover, select:hover { border-color: var(--border-strong); }
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--focus-ring); outline-offset: 0; }
 a { color: var(--info); }
-.toolbar { display: flex; gap: .5rem; align-items: center; padding: .35rem .5rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+
+.toolbar { display: flex; gap: .4rem; align-items: center; padding: .25rem .5rem; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
 .toolbar .grow { flex: 1; min-width: 12rem; }
 .spacer { flex: 1; }
-.seg { display: inline-flex; }
+.seg { display: inline-flex; gap: 1px; }
 .seg button { border-radius: 0; }
-.seg button:first-child { border-radius: 4px 0 0 4px; }
-.seg button:last-child { border-radius: 0 4px 4px 0; }
-.small { font-size: .85em; }
-.muted { color: var(--muted); }
+.seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.small { font-size: .9em; }
+.muted { color: var(--text-2); }
 .error { color: var(--bad); margin: .4rem .5rem; }
 .ok { color: var(--ok); margin: .4rem .5rem; }
-.badge { display: inline-block; padding: 0 .4rem; border: 1px solid var(--line); border-radius: 8px; font-size: .8em; color: var(--muted); }
+.badge { display: inline-block; padding: 0 .4rem; border: 1px solid var(--border-subtle); border-radius: 8px; font-size: .9em; color: var(--text-2); }
 .badge.bad { color: var(--bad); border-color: var(--bad); }
 table.grid, table.kv { border-collapse: collapse; width: 100%; }
-table.grid td, table.grid th, table.kv td { padding: .2rem .4rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+table.grid td, table.grid th, table.kv td { padding: .15rem .4rem; border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: top; }
 table.kv td:first-child { font-weight: 600; white-space: nowrap; width: 1%; }
-table.kv td { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; word-break: break-all; }
+table.kv td { font-family: var(--font-mono); font-size: var(--fs-data); word-break: break-all; }
+
+/* HTTP method and status colours (also used outside History). Status is never colour alone: see .st-glyph. */
+.m-GET { color: var(--m-get); } .m-POST { color: var(--m-post); } .m-PUT { color: var(--m-put); }
+.m-PATCH { color: var(--m-patch); } .m-DELETE { color: var(--m-delete); }
+.m-other { color: var(--m-other); }

@@ -44,7 +44,15 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   (`bosun-codec`, `/decoder/*`, `/comparer/diff`, the `codec` fuzz target). The desktop app builds on Linux and opens
   on Windows; the sign-in logo, the Repeater page and first-run setup in the Windows window have not been checked
   by eye.
-- **In flight:** nothing. The UI overhaul (PR #25, Windows session) is on `main`; WP-42's pages are in the PR after it.
+- **UI restructure merged (PR #25, 2026-11-25):** the Windows session's `ui-phase0` work is on `main`. `web/` is free
+  again. The plan and what was built are in `docs/ui-ux-upgrade-plan.md`. It is a dockable workspace (own dock
+  engine, saved layouts, browser pop-out windows), a strict type scale and colour tokens, a shortcut map and help
+  overlay, a command registry and palette, context menus, drag and drop, multi-select, a filter bar, a shared
+  message viewer (tokeniser, pretty-print, windowed code view, diff) and an accessibility audit in the e2e suite.
+  **To add a tool page:** add its id to `web/src/lib/panelids.ts`, an entry in `web/src/lib/panels.ts`, and register
+  its commands with `commands.register([...])` (see `builtin.ts`). Do not add a page to `App.svelte`.
+  Items left out of PR #25 are under "UI follow-ups" below.
+- **In flight:** nothing.
 - **Next, in order** (see the phase plan below):
   1. Finish WP-41 (the three open items; the CLI one needs WP-26). Small WP-42 leftovers: MD5 and SHA-1 (new
      dependencies), compression encoders, and `bosun decode` (with WP-26); "Send to Decoder or Comparer" is in WP-43.
@@ -57,6 +65,27 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   5. **After v0.2:** Phase 4 (Intruder, Sequencer, WP-75, WP-76, WP-79), then Phase 5 and on as in the phase plan.
      Order within a phase is by value: pick the package that unblocks the most others (WP-49 unblocks the scanner;
      WP-47 unblocks WP-59 and WP-81).
+- **UI follow-ups (from PR #25; owner: the Linux session unless noted):**
+  1. **Server-side filter (WP-75, Rust).** The History filter line (`web/src/lib/query.ts`: `host:` `method:` `status:`
+     `scope:` `-ext:` and free text, quoted words, comma lists) is parsed in the browser and mapped onto the
+     parameters `/flows` already takes (`text`, `host`, `methods`, `status_min`, `status_max`, `in_scope_only`,
+     `hide_ext`). Move the grammar into Rust behind an endpoint (store, API, client, `openapi.json`, a fuzz target),
+     add the terms the UI cannot do (headers, body text, tags, source, size, time, and/or/not), and keep the current
+     syntax valid. When it lands, the UI swaps `parseQuery` for a call and keeps the chips.
+  2. **Recorder drops requests under a burst.** About 7,000 requests a second through the proxy were stored at only
+     31 to 34 per cent; at about 1,200 a second all 100,000 were stored (found while testing the UI at 100,000
+     rows; the list shows exactly what the server returns). Reproduce with a load generator, find where they are
+     dropped (a bounded channel, a write queue, a batch size), and either fix it or count and report the drops.
+     Add a test at a fixed rate.
+  3. **Scanner and Intruder panels** when WP-47 and WP-49 land: reuse the shared viewer (`MessageView`, `CodeView`,
+     `DiffView`). The Decoder and Comparer panels are on `main` (PR #26).
+  4. **Tag and note row actions** in History (WP-43), if the API supports them; the row context menu and command
+     registry are ready for them.
+  5. **axe-core scan (WP-73)** with `@axe-core/playwright`: needs the owner's approval for the new dependency
+     (pinned, `npm audit` in CI). Until then the e2e suite has an in-page audit.
+  6. **Screen-reader pass** (NVDA, VoiceOver or Orca) on the dock, tabs, menus and table: needs a person.
+  7. **Desktop pop-out and shortcuts.** Pop-out windows work in the browser only; the page cannot tell it is in the
+     desktop shell. `Alt+1..9` and `Ctrl+Alt+I` replace `Ctrl+1..9` and `Ctrl+Shift+I`, which browsers reserve.
 - **Decisions waiting for the owner:** WP-78 (WireGuard or per-OS local capture), WP-83 (how far SQL injection
   exploitation goes) and WP-86 (AI assistance: scope and cost). Also whether to keep a separate WinUI 3 app (WP-18)
   now that the Tauri build works on Windows.
@@ -544,6 +573,9 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Large messages stay responsive (load bodies in pages from WP-12's endpoints).
 - **Done when:** a Playwright test edits and sends a message, and the CSP header is unchanged or only gains a
   nonce.
+- **Progress (2026-11-25, PR #25):** the read-only viewer is done and shared (`MessageView`, `CodeView`, `DiffView`:
+  HTTP, JSON, XML and HTML tokeniser, pretty-print as text, windowed rendering of large bodies, diff). Still open:
+  the editable CodeMirror editor and the hex editor.
 
 #### WP-45 Engagement helpers · Phase 3 · M
 
@@ -794,6 +826,9 @@ Open packages only; finished ones are in `docs/releases.md`.
   passes WCAG 2.2 AA in light and dark themes, and a shortcut map (familiar to Burp users where sensible), with a
   shortcut help overlay. Shortcuts must not clash with WebView2 or the Tauri webview.
 - **Done when:** axe checks in the Playwright suite (WP-36) pass on every main view.
+- **Progress (2026-11-25, PR #25):** shortcut map and help overlay, visible focus, ARIA roles, a CI contrast check of
+  every text token in both themes, an in-page accessibility audit and a keyboard-only test in the e2e suite. Still
+  open: the axe-core scan (needs approval for the dependency) and a screen-reader pass.
 
 #### WP-74 HTTP/3 · Phase 9 · L
 
@@ -818,6 +853,9 @@ fuzz target; ones that send traffic go through the gate.
   - The same language drives Logger and Intruder results (WP-43, WP-47).
   - A fuzz target for the parser; queries run against the store with a time and row limit, never string-built SQL.
 - **Done when:** the grammar is documented; unit and property tests cover it; a Playwright test saves and re-runs a filter.
+- **Progress (2026-11-25):** the UI half exists in `web/src/lib/query.ts` (a client-side parser mapped onto the `/flows`
+  parameters, a filter bar with chips, the default hide-static-files query). The Rust grammar, endpoint, saved filters,
+  fuzz target and the extra terms are still to do; see "UI follow-ups" at the top.
 
 #### WP-76 Map Local, Map Remote and throttling · Phase 4 · M
 
@@ -864,6 +902,9 @@ fuzz target; ones that send traffic go through the gate.
   - Check that History, Repeater, Intruder results and Findings all use the same message viewer and editor (WP-44),
     and that tabs can be reordered or grouped.
 - **Done when:** a Playwright test drives the palette and the viewer is shared by each tool.
+- **Progress (2026-11-25, PR #25):** the palette (fuzzy search, recent commands, keyboard paths), the command registry,
+  tabs that can be reordered, grouped and moved by drag and drop, and the shared viewer are built, with Playwright
+  tests. Still open: Repeater, Intruder results and Findings using the shared viewer when those panels land.
 
 #### WP-81 Content and parameter discovery · Phase 6 · M
 

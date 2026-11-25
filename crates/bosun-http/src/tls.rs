@@ -8,7 +8,26 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
 use crate::TlsInfo;
 
-pub fn client_config(verify: bool) -> ClientConfig {
+/// The four client configurations (checking on or off, HTTP/1.1 or HTTP/2 offered), built once.
+#[derive(Debug)]
+pub struct Configs([Arc<ClientConfig>; 4]);
+
+impl Configs {
+    pub fn new() -> Self {
+        Self([
+            Arc::new(client_config(false, false)),
+            Arc::new(client_config(true, false)),
+            Arc::new(client_config(false, true)),
+            Arc::new(client_config(true, true)),
+        ])
+    }
+
+    pub fn get(&self, verify: bool, h2: bool) -> Arc<ClientConfig> {
+        self.0[usize::from(verify) + 2 * usize::from(h2)].clone()
+    }
+}
+
+fn client_config(verify: bool, h2: bool) -> ClientConfig {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let builder = ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
@@ -24,7 +43,11 @@ pub fn client_config(verify: bool) -> ClientConfig {
             .with_custom_certificate_verifier(Arc::new(AcceptAny(provider)))
             .with_no_client_auth()
     };
-    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+    cfg.alpn_protocols = if h2 {
+        vec![b"h2".to_vec()]
+    } else {
+        vec![b"http/1.1".to_vec()]
+    };
     cfg
 }
 

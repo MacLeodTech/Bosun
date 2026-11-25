@@ -35,7 +35,7 @@ assertion is what fails first.
 | Target | What it feeds |
 |---|---|
 | `http_messages` | raw requests and responses (parse, serialise, parse again must agree) |
-| `raw_framing` | the raw engine's chunked scanner (same answer however reads are split) and `Content-Length` rewrite (idempotent) |
+| `raw_framing` | the raw engine's parsers: chunked scanner (same answer however reads are split), `Content-Length` rewrite (idempotent), WebSocket and HTTP/2 frames (round trip), HPACK blocks (no panic), redirect resolution |
 | `ws_frames` | a WebSocket byte stream cut into arbitrary pieces |
 | `decode_body` | stored, compressed bodies (the decompression limit and the size check must hold) |
 | `scope_rules` | scope host patterns and path regexes (compile and match) |

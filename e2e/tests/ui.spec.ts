@@ -210,6 +210,29 @@ test('repeater: send by hand, again with a change, diff the two, and the sends a
   await expect(rp.getByText('refused')).toBeVisible();
 });
 
+test('decoder and comparer: a chain decodes, smart decode peels layers, and the diff marks what changed', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Decoder' }).click();
+  const dp = page.getByRole('tabpanel', { name: 'Decoder', exact: true });
+  await dp.getByLabel('Decoder input').fill('aGVsbG8lMjB3b3JsZA==');
+  await dp.getByLabel('Step to add').selectOption('base64_decode');
+  await dp.getByRole('button', { name: 'Add step' }).click();
+  await dp.getByLabel('Step to add').selectOption('url_decode');
+  await dp.getByRole('button', { name: 'Add step' }).click();
+  await expect(dp.locator('.out').last()).toHaveText('hello world');
+  // Smart decode finds the same layers without being told.
+  await dp.getByRole('button', { name: 'Clear steps' }).click();
+  await dp.getByRole('button', { name: 'Smart decode' }).click();
+  await expect(dp.locator('.out').last()).toHaveText('hello world');
+
+  await nav.getByRole('button', { name: 'Comparer' }).click();
+  const cp = page.getByRole('tabpanel', { name: 'Comparer', exact: true });
+  await cp.getByLabel('Left side').fill('the quick brown fox');
+  await cp.getByLabel('Right side').fill('the slow brown fox');
+  await expect(cp.locator('del')).toContainText('quick');
+  await expect(cp.locator('ins')).toContainText('slow');
+});
+
 test('projects: a new project starts empty, and the first one comes back with its history', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'Projects' }).click();

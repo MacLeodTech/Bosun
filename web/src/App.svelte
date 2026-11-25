@@ -72,7 +72,7 @@
 {:else}
   <div class="app">
     <header>
-      <span class="brand">Bosun</span>
+      <span class="brand"><img src="/apple-touch-icon.png" alt="" width="24" height="24" />Bosun</span>
       <nav>
         {#each pages as [p, label] (p)}
           <button class:active={page === p} onclick={() => go(p)}>
@@ -109,7 +109,8 @@
 <style>
   .app { display: flex; flex-direction: column; height: 100vh; }
   header { display: flex; align-items: center; gap: .75rem; padding: .3rem .75rem; background: var(--bg2); border-bottom: 1px solid var(--line); }
-  .brand { font-weight: 700; color: var(--accent); letter-spacing: .02em; }
+  .brand { display: inline-flex; align-items: center; gap: .45rem; font-weight: 700; color: var(--accent); letter-spacing: .02em; }
+  .brand img { border-radius: 5px; }
   nav { display: flex; gap: .15rem; }
   nav button { border: 0; background: none; padding: .35rem .7rem; }
   nav button.active { background: var(--sel); }

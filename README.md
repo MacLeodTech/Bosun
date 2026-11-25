@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/bosun_branding.jpg" alt="Bosun: fast web security proxy and scanner" width="640"></p>
+
 # Bosun
 
 A free, fast, low-memory intercepting proxy and dynamic application security testing (DAST) toolkit, written in
@@ -31,6 +33,11 @@ web UI work. Repeater, Intruder, Sequencer, the scanner and the OAST server are 
   same authenticated API.
 
 ## Quick start
+
+### Build script
+
+`scripts/bosun.sh` wraps the steps below: `deps` (Linux packages), `build`, `run [engine|desktop]`, `install`,
+`container`, `up`/`down` and `check`. Run `scripts/bosun.sh help`.
 
 ### Local
 

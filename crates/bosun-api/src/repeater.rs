@@ -570,7 +570,7 @@ pub async fn ws_send(State(st): State<AppState>, caller: Caller, Json(b): Json<W
             "the handshake is empty or over 4 MiB",
         ));
     }
-    let mut frames = Vec::with_capacity(b.frames.len());
+    let mut frames = Vec::new();
     for f in &b.frames {
         if f.opcode > 15 || f.rsv > 7 {
             return Err(reject(

@@ -14,6 +14,7 @@ bosun-scope = { path = "../crates/bosun-scope" }
 bosun-store = { path = "../crates/bosun-store" }
 bosun-proxy = { path = "../crates/bosun-proxy" }
 bosun-http = { path = "../crates/bosun-http" }
+bosun-codec = { path = "../crates/bosun-codec" }
 
 # Not part of the main workspace: it needs nightly and is built only by `cargo fuzz`.
 [workspace]
@@ -63,6 +64,13 @@ bench = false
 [[bin]]
 name = "raw_framing"
 path = "fuzz_targets/raw_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "codec"
+path = "fuzz_targets/codec.rs"
 test = false
 doc = false
 bench = false

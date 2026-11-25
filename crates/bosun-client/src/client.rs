@@ -397,6 +397,30 @@ impl Client {
             .await
     }
 
+    /// Run a chain of decoders. `body` is the `DecodeBody` of the API: base64 `input` and a list of `ops`.
+    pub async fn decoder_apply(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/decoder/apply").json(body))
+            .await
+    }
+
+    /// Guess and apply a chain of decoders on base64 `input`.
+    pub async fn decoder_smart(&self, input_b64: &str) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/decoder/smart")
+                .json(&json!({ "input": input_b64 })),
+        )
+        .await
+    }
+
+    /// Compare two base64 inputs; `level` is `words` or `bytes`.
+    pub async fn comparer_diff(&self, a_b64: &str, b_b64: &str, level: &str) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/comparer/diff")
+                .json(&json!({ "a": a_b64, "b": b_b64, "level": level })),
+        )
+        .await
+    }
+
     /// Whether the Repeater may send out of scope.
     pub async fn repeater_settings(&self) -> Result<bool> {
         #[derive(serde::Deserialize)]

@@ -36,6 +36,7 @@ assertion is what fails first.
 |---|---|
 | `http_messages` | raw requests and responses (parse, serialise, parse again must agree) |
 | `raw_framing` | the raw engine's parsers: HTTP/1.1 to HTTP/2 conversion, chunked scanner (same answer however reads are split), `Content-Length` rewrite (idempotent), WebSocket and HTTP/2 frames (round trip), HPACK blocks (no panic), redirect resolution |
+| `codec` | the Decoder and Comparer: every decoder on arbitrary input (no panic, output within the limit), smart decode, and a diff that rebuilds both sides |
 | `ws_frames` | a WebSocket byte stream cut into arbitrary pieces |
 | `decode_body` | stored, compressed bodies (the decompression limit and the size check must hold) |
 | `scope_rules` | scope host patterns and path regexes (compile and match) |

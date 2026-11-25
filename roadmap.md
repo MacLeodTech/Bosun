@@ -550,6 +550,12 @@ Open packages only; finished ones are in `docs/releases.md`.
   - **Comparer:** word-level and byte-level diff of any two messages or texts.
   - Fuzz targets for the decoders.
 - **Done when:** unit tests cover each codec, including bombs and invalid input.
+- **Progress (2026-11-25):** the Rust side is done on branch `wp-42-decoder`: the `bosun-codec` crate (URL, HTML, Base64 and
+  Base64url, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, SHA-256 and SHA-512, smart decode, word and byte
+  diff), the `/decoder/apply`, `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests and the
+  `codec` fuzz target. **Still open:** the UI pages (after the Windows UI Phase 0 work lands, to avoid conflicts in
+  `App.svelte`), MD5 and SHA-1 (they need new dependencies), compression encoders, and a `bosun decode` CLI command
+  (with WP-26).
 
 #### WP-43 History, Organizer, Logger and "send to" · Phase 3 · M
 

@@ -174,6 +174,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/comparer/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Compare two inputs (up to 1 MiB each, base64) by word or by byte. Returns runs of equal, deleted and inserted bytes with their offsets. Very different large inputs are reported coarsely. Needs the viewer role. */
+        post: operations["comparer_diff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/decoder/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes) on base64 input. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role. */
+        post: operations["decoder_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/decoder/smart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Guess and apply a chain of decoders (up to 16 layers). Plain text is returned with no steps. Needs the viewer role. */
+        post: operations["decoder_smart"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events": {
         parameters: {
             query?: never;
@@ -849,12 +900,50 @@ export interface components {
             /** @enum {string} */
             action: "drop";
         };
+        DecodeBody: {
+            /** @description The input, base64. */
+            input: string;
+            /** @description The steps to run, in order. */
+            ops: components["schemas"]["Op"][];
+        };
+        DecodeReply: {
+            error?: components["schemas"]["StepError"] | null;
+            /** @description One entry per step that ran. */
+            steps: components["schemas"]["StepOut"][];
+        };
         DeleteFlows: {
             ids: number[];
         };
         Deleted: {
             /** Format: int64 */
             deleted: number;
+        };
+        DiffBody: {
+            /** @description The left side, base64 (up to 1 MiB). */
+            a: string;
+            /** @description The right side, base64 (up to 1 MiB). */
+            b: string;
+            level: components["schemas"]["DiffLevel"];
+        };
+        /** @enum {string} */
+        DiffKind: "equal" | "delete" | "insert";
+        /** @enum {string} */
+        DiffLevel: "words" | "bytes";
+        /** @description A run of pieces. `a_start` and `b_start` are byte offsets into the two inputs. */
+        DiffOp: {
+            a_start: number;
+            b_start: number;
+            kind: components["schemas"]["DiffKind"];
+            /** @description Length in bytes (of `a` for equal and delete, of `b` for insert). */
+            len: number;
+        };
+        DiffResult: {
+            changed_bytes: number;
+            /** @description True when the inputs were too different or too large to compare piece by piece. */
+            coarse: boolean;
+            /** @description Bytes that are the same / different, for a one-line summary. */
+            equal_bytes: number;
+            ops: components["schemas"]["DiffOp"][];
         };
         /** @enum {string} */
         Direction: "client_to_server" | "server_to_client";
@@ -994,6 +1083,11 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        /**
+         * @description One step of a chain.
+         * @enum {string}
+         */
+        Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "sha256" | "sha512";
         /** @description The head of one stored message and how big it is, which is all the flow overview needs. */
         PartInfo: {
             /**
@@ -1244,6 +1338,10 @@ export interface components {
             port: number;
             scheme: components["schemas"]["Scheme"];
         };
+        SmartBody: {
+            /** @description The input, base64. */
+            input: string;
+        };
         SsoButton: {
             edge?: string | null;
             login: string;
@@ -1256,6 +1354,20 @@ export interface components {
             name: string;
             setup_required: boolean;
             version: string;
+        };
+        StepError: {
+            message: string;
+            /** @description Which step failed (0-based). */
+            step: number;
+        };
+        StepOut: {
+            op: components["schemas"]["Op"];
+            /** @description The output, base64: whole for the last step, up to 64 KiB for the others. */
+            output: string;
+            /** @description The step's full output size in bytes. */
+            size: number;
+            /** @description `output` is cut short. */
+            truncated: boolean;
         };
         StopBody: {
             stopped: boolean;
@@ -1867,6 +1979,186 @@ export interface operations {
             };
             /** @description No such item */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    comparer_diff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiffBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffResult"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Input too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    decoder_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecodeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecodeReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Input too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    decoder_smart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmartBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecodeReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Input too large */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

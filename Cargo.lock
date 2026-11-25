@@ -399,6 +399,7 @@ dependencies = [
  "base64 0.23.1",
  "bosun-ca",
  "bosun-client",
+ "bosun-codec",
  "bosun-http",
  "bosun-model",
  "bosun-proxy",
@@ -468,6 +469,21 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
+name = "bosun-codec"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "brotli",
+ "flate2",
+ "proptest",
+ "serde",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "utoipa",
+ "zstd",
 ]
 
 [[package]]

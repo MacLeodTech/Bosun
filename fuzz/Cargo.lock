@@ -146,9 +146,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bosun-codec"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "brotli",
+ "flate2",
+ "serde",
+ "sha2",
+ "thiserror",
+ "utoipa",
+ "zstd",
+]
+
+[[package]]
 name = "bosun-fuzz"
 version = "0.0.0"
 dependencies = [
+ "bosun-codec",
  "bosun-http",
  "bosun-model",
  "bosun-proxy",

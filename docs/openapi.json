@@ -639,6 +639,219 @@
         }
       }
     },
+    "/comparer/diff": {
+      "post": {
+        "tags": [
+          "decoder"
+        ],
+        "description": "Compare two inputs (up to 1 MiB each, base64) by word or by byte. Returns runs of equal, deleted and inserted bytes with their offsets. Very different large inputs are reported coarsely. Needs the viewer role.",
+        "operationId": "comparer_diff",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiffBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Input too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/decoder/apply": {
+      "post": {
+        "tags": [
+          "decoder"
+        ],
+        "description": "Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes) on base64 input. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role.",
+        "operationId": "decoder_apply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecodeReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Input too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/decoder/smart": {
+      "post": {
+        "tags": [
+          "decoder"
+        ],
+        "description": "Guess and apply a chain of decoders (up to 16 layers). Plain text is returned with no steps. Needs the viewer role.",
+        "operationId": "decoder_smart",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecodeReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Input too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/events": {
       "get": {
         "tags": [
@@ -4217,6 +4430,52 @@
           }
         ]
       },
+      "DecodeBody": {
+        "type": "object",
+        "required": [
+          "input",
+          "ops"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The input, base64."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Op"
+            },
+            "description": "The steps to run, in order."
+          }
+        }
+      },
+      "DecodeReply": {
+        "type": "object",
+        "required": [
+          "steps"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StepError",
+                "description": "Set when a step failed; the steps before it are still returned."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepOut"
+            },
+            "description": "One entry per step that ran."
+          }
+        }
+      },
       "DeleteFlows": {
         "type": "object",
         "required": [
@@ -4242,6 +4501,100 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "DiffBody": {
+        "type": "object",
+        "required": [
+          "a",
+          "b",
+          "level"
+        ],
+        "properties": {
+          "a": {
+            "type": "string",
+            "description": "The left side, base64 (up to 1 MiB)."
+          },
+          "b": {
+            "type": "string",
+            "description": "The right side, base64 (up to 1 MiB)."
+          },
+          "level": {
+            "$ref": "#/components/schemas/DiffLevel"
+          }
+        }
+      },
+      "DiffKind": {
+        "type": "string",
+        "enum": [
+          "equal",
+          "delete",
+          "insert"
+        ]
+      },
+      "DiffLevel": {
+        "type": "string",
+        "enum": [
+          "words",
+          "bytes"
+        ]
+      },
+      "DiffOp": {
+        "type": "object",
+        "description": "A run of pieces. `a_start` and `b_start` are byte offsets into the two inputs.",
+        "required": [
+          "kind",
+          "a_start",
+          "b_start",
+          "len"
+        ],
+        "properties": {
+          "a_start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "b_start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DiffKind"
+          },
+          "len": {
+            "type": "integer",
+            "description": "Length in bytes (of `a` for equal and delete, of `b` for insert).",
+            "minimum": 0
+          }
+        }
+      },
+      "DiffResult": {
+        "type": "object",
+        "required": [
+          "ops",
+          "coarse",
+          "equal_bytes",
+          "changed_bytes"
+        ],
+        "properties": {
+          "changed_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "coarse": {
+            "type": "boolean",
+            "description": "True when the inputs were too different or too large to compare piece by piece."
+          },
+          "equal_bytes": {
+            "type": "integer",
+            "description": "Bytes that are the same / different, for a one-line summary.",
+            "minimum": 0
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiffOp"
+            }
           }
         }
       },
@@ -4722,6 +5075,32 @@
             "type": "string"
           }
         }
+      },
+      "Op": {
+        "type": "string",
+        "description": "One step of a chain.",
+        "enum": [
+          "url_encode",
+          "url_decode",
+          "url_decode_form",
+          "html_encode",
+          "html_decode",
+          "base64_encode",
+          "base64_decode",
+          "base64url_encode",
+          "base64url_decode",
+          "hex_encode",
+          "hex_decode",
+          "gzip_decode",
+          "deflate_decode",
+          "brotli_decode",
+          "zstd_decode",
+          "jwt_decode",
+          "unicode_escape",
+          "unicode_unescape",
+          "sha256",
+          "sha512"
+        ]
       },
       "PartInfo": {
         "type": "object",
@@ -5547,6 +5926,18 @@
           }
         }
       },
+      "SmartBody": {
+        "type": "object",
+        "required": [
+          "input"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The input, base64."
+          }
+        }
+      },
       "SsoButton": {
         "type": "object",
         "required": [
@@ -5599,6 +5990,50 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "StepError": {
+        "type": "object",
+        "required": [
+          "step",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "description": "Which step failed (0-based).",
+            "minimum": 0
+          }
+        }
+      },
+      "StepOut": {
+        "type": "object",
+        "required": [
+          "op",
+          "size",
+          "output",
+          "truncated"
+        ],
+        "properties": {
+          "op": {
+            "$ref": "#/components/schemas/Op"
+          },
+          "output": {
+            "type": "string",
+            "description": "The output, base64: whole for the last step, up to 64 KiB for the others."
+          },
+          "size": {
+            "type": "integer",
+            "description": "The step's full output size in bytes.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "`output` is cut short."
           }
         }
       },
@@ -5800,6 +6235,9 @@
     },
     {
       "name": "repeater"
+    },
+    {
+      "name": "decoder"
     },
     {
       "name": "accounts"

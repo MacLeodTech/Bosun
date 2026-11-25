@@ -7,6 +7,38 @@ There is no tagged release yet. The first public preview is v0.2, at the end of 
 
 Newest first. Each entry keeps the work package's original brief (why, do, done when) and its "Done" note.
 
+## Phase 3 so far (on `main`)
+
+- **Branding** (PR #22). The app icon, the logo on the sign-in page and in the README, the favicon, `icon.ico` (tauri-build
+  needs it on Windows), the startup banner (`bosun serve`, only on a terminal, honours `NO_COLOR`) and
+  `scripts/bosun.sh` (build, run, install, container, check). Source art is in `assets/`.
+- **Competitive analysis** (PR #22). `docs/competitive-analysis.md` compares Bosun with Burp, Caido, mitmproxy, Proxyman,
+  Wireshark, Nmap, sqlmap, Nessus and the DAST tools, and became WP-75 to WP-86 in the roadmap.
+- **Secret scan allowlist** (PR #22). `.gitleaks.toml` allows the RFC 6455 sample `Sec-WebSocket-Key` that the WebSocket
+  tests use. `gitleaks git` scans every branch in the clone, so one test value on one branch failed every PR.
+- **WP-41 Repeater, first slice** (PR #22). Connection reuse (opt-in pooling that keeps the scope gate and DNS pinning),
+  HTTP/2 multiplexing with a single-packet batch mode, `/repeater/send` and `/repeater/settings`, the `bosun-client`
+  methods, and the Repeater page. What is left is in the roadmap's WP-41 entry.
+
+### WP-40: the raw request engine
+
+**WP-40** `bosun-http`: the raw request engine · Phase 3 · L
+
+- **Why:** Repeater, Intruder, Sequencer and the scanner must send bytes exactly as written, which hyper won't do.
+- **Do:**
+  - A new crate that sends a raw message over HTTP/1.1 (byte for byte: duplicate headers, bare LF, odd methods,
+    no normalisation), HTTP/2 (its own frame writer, so malformed requests are possible) and WebSockets.
+  - Every send goes through `Gate::check` and connects to the pinned address (WP-10); bodies are read under the
+    memory budget (WP-05); results are recorded as flows with the tool's `FlowSource`.
+  - Timings (DNS, connect, TLS, first byte, total), the TLS details and the negotiated protocol are kept with the
+    flow.
+  - "Update Content-Length" and redirect following are options, not defaults.
+- **Done when:** tests against a local test server show malformed requests arrive unchanged, out-of-scope targets
+  are refused, and HTTP/2 frames are as written.
+- **Done (PR #22):** the `bosun-http` crate: raw HTTP/1.1 (bytes as written), redirects, an upstream proxy, WebSockets
+  and an HTTP/2 frame writer, with a fuzz target (`raw_framing`). Everything goes through `Gate::check` and the memory
+  budget, and is recorded with its tool's `FlowSource`. The raw engine's `legacy-tls` option stays WP-46.
+
 ## After Phase 2 (on `main`)
 
 - **CI hardening** (PR #12, #13). The container image smoke test no longer fails on SIGPIPE (it captures

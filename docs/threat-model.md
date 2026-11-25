@@ -79,7 +79,21 @@ This document says what is protected, from whom, and how. Code comments refer ba
   the proxy's own outbound sockets (covers aliases such as other loopback addresses or the host's LAN address).
 - *Hostile HTML in the UI.* The UI's CSP forbids inline script and inline style and allows nothing but its own
   origin. Responses are shown as text; the "render" view is an iframe with an empty `sandbox` attribute (no
-  scripts, opaque origin) whose `srcdoc` also inherits the UI's CSP.
+  scripts, opaque origin) whose `srcdoc` also inherits the UI's CSP. Syntax colour is drawn from a tokeniser's
+  output as `<span>` elements, never as markup built from the body. The render frame is told the UI's colour scheme
+  through one `<meta name="color-scheme">` that the UI writes (after the doctype, so the page's rendering mode
+  does not change); the `sandbox` attribute and the CSP are untouched.
+- *Requests moved between tools.* Dragging requests, the palette, context menus and shortcuts all pass flow **ids**,
+  never message bodies; a receiving tool fetches by id through the API, so the scope gate, role checks and audit
+  still apply. A request sent to the Repeater travels through `sessionStorage` (as it already did) and is removed
+  when read. Deleting from the History list is delayed by a five-second undo window, and the server is asked only
+  when it passes; closing the page in that window leaves the requests stored.
+- *Pop-out windows.* A pop-out is the same UI at `#/popout/<id>`, opened with `window.open` from the browser build. It is
+  same-origin, so it uses the same session cookie, fetches its own CSRF token and opens its own event stream; it has no
+  access the main window lacks. Windows talk over a same-origin `BroadcastChannel` and exchange only flow ids, panel
+  names and window ids; every message is validated before use and anything else is dropped. Target content is never
+  passed between windows. The desktop shell is unchanged: it exposes no IPC and may navigate only to the engine's
+  origin, so it cannot open pop-outs (the UI reports that the window could not be opened).
 - *Project files.* Opened with a bundled, current SQLite (`cargo deny` fails the build on SQLite advisories),
   with `trusted_schema` off, `cell_size_check` on and SQLite's defensive mode set. A file must carry exactly the
   schema this version creates: an extra trigger, view, table or index, or an altered column, is refused (a

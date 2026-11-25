@@ -114,9 +114,9 @@
       {/each}
     </tbody></table>
     <form class="row" onsubmit={(e) => { e.preventDefault(); createToken(); }}>
-      <input placeholder="token name" bind:value={newToken} required maxlength="64" />
+      <input placeholder="token name" aria-label="Token name" bind:value={newToken} required maxlength="64" />
       <select bind:value={tokenScope}><option value="full">full access</option><option value="read">read only</option></select>
-      <input type="number" min="1" max="3650" placeholder="expires in days (optional)" bind:value={tokenDays} />
+      <input type="number" min="1" max="3650" placeholder="expires in days (optional)" aria-label="Token expires in days (optional)" bind:value={tokenDays} />
       <button>Create token</button>
     </form>
   </section>
@@ -124,8 +124,8 @@
   <section>
     <h2>Password</h2>
     <form class="row" onsubmit={(e) => { e.preventDefault(); changePw(); }}>
-      <input type="password" placeholder="current" bind:value={pw.current} autocomplete="current-password" required />
-      <input type="password" placeholder="new (12+ characters)" bind:value={pw.next} autocomplete="new-password" minlength="12" required />
+      <input type="password" placeholder="current" aria-label="Current password" bind:value={pw.current} autocomplete="current-password" required />
+      <input type="password" placeholder="new (12+ characters)" aria-label="New password (12 or more characters)" bind:value={pw.next} autocomplete="new-password" minlength="12" required />
       <label class="small"><input type="checkbox" bind:checked={revokeTokens} /> also revoke my API tokens</label>
       <button>Change</button>
     </form>
@@ -150,8 +150,8 @@
         {/each}
       </tbody></table>
       <form class="row" onsubmit={(e) => { e.preventDefault(); addUser(); }}>
-        <input placeholder="username" bind:value={nu.username} required />
-        <input type="password" placeholder="password (12+)" bind:value={nu.password} minlength="12" autocomplete="new-password" required />
+        <input placeholder="username" aria-label="New user name" bind:value={nu.username} required />
+        <input type="password" placeholder="password (12+)" aria-label="New user password (12 or more characters)" bind:value={nu.password} minlength="12" autocomplete="new-password" required />
         <select bind:value={nu.role}><option value="viewer">viewer</option><option value="tester">tester</option><option value="admin">admin</option></select>
         <button>Add user</button>
       </form>

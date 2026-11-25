@@ -5,9 +5,16 @@ title = "Bosun"
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Public protocol sample values"
 regexes = [
   # The example Sec-WebSocket-Key from RFC 6455 section 1.3 ("the sample nonce"), used by the WebSocket tests.
   '''dGhlIHNhbXBsZSBub25jZQ==''',
 ]
+
+# The UI source names its localStorage keys ("bosun.prefs.v1") and keyboard shortcuts ("Alt+Shift+ArrowUp"), which the
+# generic-api-key entropy rule mistakes for keys. Only that one rule, only under web/src; every other rule still applies.
+[[allowlists]]
+description = "UI storage-key names and shortcut strings"
+targetRules = ["generic-api-key"]
+paths = ['''^web/src/''']

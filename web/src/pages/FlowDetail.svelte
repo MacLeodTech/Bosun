@@ -1,0 +1,262 @@
+<script lang="ts">
+  // The open flow: its request and response, WebSocket messages and note. A panel of its own so it can sit beside,
+  // below or apart from the History list. It follows `historyView.openId`.
+  import { untrack } from 'svelte';
+  import { api } from '../lib/api';
+  import { historyView as v } from '../lib/historyView.svelte';
+  import { session } from '../lib/session.svelte';
+  import { workspace } from '../lib/workspace.svelte';
+  import { commands } from '../lib/commands.svelte';
+  import { deleteFlows } from '../lib/flowactions';
+  import { withTerm, withText } from '../lib/query';
+  import { b64ToBytes, bytesToB64, bytesToText, flowUrl, fmtTime } from '../lib/bytes';
+  import { bodyUrl, loadMore, loadPart, type Loaded, type PartName } from '../lib/flowbody';
+  import type { FlowMeta, WsMessage } from '../lib/types';
+  import MessageView from '../components/MessageView.svelte';
+  import DiffView from '../components/DiffView.svelte';
+
+  let selected = $state<FlowMeta | null>(null);
+  let req = $state<Loaded | null>(null);
+  let resp = $state<Loaded | null>(null);
+  let loadError = $state('');
+  let wsMessages = $state<WsMessage[]>([]);
+  /** The "Changes" tab: what the client and server first sent, against what went on after edits. */
+  let changes = $state<{ reqA: string; reqB: string; resA: string; resB: string } | null>(null);
+
+  // Which stored messages the two panes show: the current ones, or what the client and server first sent.
+  function parts(tab: 'messages' | 'original'): [PartName, PartName] {
+    if (tab === 'messages' || !selected) return ['request', 'response'];
+    return [selected.original_request ? 'original-request' : 'request', selected.original_response ? 'original-response' : 'response'];
+  }
+
+  let opening = 0;
+  async function loadPanes() {
+    const m = selected;
+    if (!m) return;
+    const ticket = ++opening;
+    loadError = '';
+    try {
+      if (v.detailTab === 'diff') {
+        const text = async (name: PartName, info: unknown) => {
+          if (!info) return '';
+          const l = await loadPart(m, name, info as never);
+          return bytesToText(join(l.head, l.body)).text;
+        };
+        const [reqA, reqB, resA, resB] = await Promise.all([
+          text(m.original_request ? 'original-request' : 'request', m.original_request ?? m.request),
+          text('request', m.request),
+          text(m.original_response ? 'original-response' : 'response', m.original_response ?? m.response),
+          text('response', m.response),
+        ]);
+        if (ticket === opening) changes = { reqA, reqB, resA, resB };
+        return;
+      }
+      const tab = v.detailTab === 'original' ? 'original' : 'messages';
+      const [rp, sp] = parts(tab);
+      const info = (p: PartName) => (p === 'request' ? m.request : p === 'response' ? m.response : p === 'original-request' ? m.original_request : m.original_response);
+      const [a, b] = await Promise.all([
+        loadPart(m, rp, info(rp)!),
+        info(sp) ? loadPart(m, sp, info(sp)!) : Promise.resolve(null),
+      ]);
+      if (ticket !== opening) return;
+      req = a;
+      resp = b;
+    } catch (e) {
+      if (ticket === opening) loadError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  /** "Load more" clicks run one after another: each starts from what the one before it loaded, so none is lost or repeated. */
+  let moreQueue: Promise<void> = Promise.resolve();
+  function loadNext(which: 'req' | 'resp', decoded: boolean) {
+    moreQueue = moreQueue.then(() => loadNextNow(which, decoded));
+  }
+
+  async function loadNextNow(which: 'req' | 'resp', decoded: boolean) {
+    const m = selected;
+    const cur = which === 'req' ? req : resp;
+    if (!m || !cur) return;
+    const [rp, sp] = parts(v.detailTab === 'original' ? 'original' : 'messages');
+    try {
+      const next = await loadMore(m, which === 'req' ? rp : sp, cur, decoded);
+      if (which === 'req') req = next;
+      else resp = next;
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  const toB64 = (l: Loaded | null) => (l ? bytesToB64(join(l.head, l.body)) : null);
+  function join(a: Uint8Array, b: Uint8Array): Uint8Array {
+    const out = new Uint8Array(a.length + b.length);
+    out.set(a, 0);
+    out.set(b, a.length);
+    return out;
+  }
+
+  let ticketNo = 0;
+  /** Load a flow into the panes, or clear them. */
+  async function load(id: number | null) {
+    const ticket = ++ticketNo;
+    if (id === null) {
+      selected = null;
+      req = null;
+      resp = null;
+      wsMessages = [];
+      return;
+    }
+    let m: FlowMeta;
+    try {
+      m = await api.get<FlowMeta>(`/flows/${id}`);
+    } catch {
+      // Gone (deleted, or another project): nothing to show.
+      if (ticket === ticketNo) {
+        v.selectedId = null;
+        v.openId = null;
+      }
+      return;
+    }
+    if (ticket !== ticketNo) return;
+    selected = m;
+    wsMessages = [];
+    req = null;
+    resp = null;
+    if ((v.detailTab === 'original' || v.detailTab === 'diff') && !(m.original_request || m.original_response)) v.detailTab = 'messages';
+    if (v.detailTab === 'ws' && m.status !== 101) v.detailTab = 'messages';
+    await loadPanes();
+    if (ticket === ticketNo && m.status === 101) wsMessages = await api.get<WsMessage[]>(`/flows/${id}/ws`);
+  }
+
+  $effect(() => {
+    const id = v.openId;
+    untrack(() => load(id));
+  });
+
+  function setTab(t: 'messages' | 'original' | 'diff' | 'ws') {
+    v.detailTab = t;
+    if (t !== 'ws') loadPanes();
+  }
+
+  /** Hand the request to the Repeater page, which picks it up from session storage. */
+  function toRepeater() {
+    if (selected) commands.run('flow.repeater', { flows: [selected.id], focus: selected.id });
+  }
+
+  async function saveNote() {
+    if (!selected) return;
+    await api.patch(`/flows/${selected.id}`, { note: selected.note ?? '', tags: selected.tags });
+  }
+
+  function remove() {
+    if (selected) deleteFlows([selected.id]);
+  }
+
+  /** Show history entries that have this header: the Host header is the host filter, anything else a text search. */
+  function filterBy(name: string, value: string) {
+    const host = value.replace(/:\d+$/, '');
+    v.setQuery(name.toLowerCase() === 'host' ? withTerm(v.query, 'host', host) : withText(v.query, `${name}: ${value}`));
+    workspace.reveal('history', 'flow');
+  }
+
+  async function copyUrl() {
+    if (selected) await navigator.clipboard.writeText(flowUrl(selected));
+  }
+</script>
+
+{#if selected}
+  <div class="detail">
+    <div class="toolbar">
+      <div class="seg">
+        <button class:active={v.detailTab === 'messages'} onclick={() => setTab('messages')}>Request / Response</button>
+        {#if selected.original_request || selected.original_response}
+          <button class:active={v.detailTab === 'original'} onclick={() => setTab('original')}>Original (before edits)</button>
+          <button class:active={v.detailTab === 'diff'} onclick={() => setTab('diff')}>Changes</button>
+        {/if}
+        {#if selected.status === 101}
+          <button class:active={v.detailTab === 'ws'} onclick={() => setTab('ws')}>WebSocket ({wsMessages.length})</button>
+        {/if}
+      </div>
+      <span class="url" title={flowUrl(selected)}>{flowUrl(selected)}</span>
+      <span class="spacer"></span>
+      <button onclick={copyUrl}>Copy URL</button>
+      {#if session.can('tester')}<button onclick={toRepeater} title="Open this request in the Repeater">Send to Repeater</button>{/if}
+      {#if session.can('tester')}<button onclick={remove}>Delete</button>{/if}
+    </div>
+    {#if selected.error}<p class="error pad">{selected.error}</p>{/if}
+    {#if v.detailTab === 'ws'}
+      <div class="ws">
+        {#each wsMessages as m (m.id)}
+          <div class="wsm" class:out={m.direction === 'client_to_server'}>
+            <span class="small muted">{fmtTime(m.time_ms)} {m.direction === 'client_to_server' ? '→' : '←'} op {m.opcode}{m.truncated ? ' (truncated)' : ''}</span>
+            <pre>{bytesToText(b64ToBytes(m.payload)).text}</pre>
+          </div>
+        {/each}
+      </div>
+    {:else if v.detailTab === 'diff'}
+      <div class="pair">
+        {#if changes}
+          <div class="dpane"><strong class="dh">Request</strong><DiffView a={changes.reqA} b={changes.reqB} label="Request changes" /></div>
+          <div class="dpane"><strong class="dh">Response</strong><DiffView a={changes.resA} b={changes.resB} label="Response changes" /></div>
+        {:else}
+          <p class="empty muted">Loading…</p>
+        {/if}
+      </div>
+    {:else}
+      <div class="pair">
+        {#key `${selected.id}-${v.detailTab}`}
+          {@const names = parts(v.detailTab === 'original' ? 'original' : 'messages')}
+          <MessageView
+            title="Request"
+            role="request"
+            scheme={selected.scheme}
+            onFilterHeader={filterBy}
+            raw={toB64(req)}
+            rawRemaining={req ? req.bodyLen - req.body.length : 0}
+            onMore={(d) => loadNext('req', d)}
+            downloadHref={bodyUrl(selected.id, names[0])}
+          />
+          <MessageView
+            title={selected.response_truncated ? 'Response (truncated)' : 'Response'}
+            role="response"
+            onFilterHeader={filterBy}
+            raw={toB64(resp)}
+            decodedBody={resp?.decoded ? bytesToB64(resp.decoded) : null}
+            rawRemaining={resp ? resp.bodyLen - resp.body.length : 0}
+            decodedMore={resp?.decodedMore ?? false}
+            onMore={(d) => loadNext('resp', d)}
+            downloadHref={resp ? bodyUrl(selected.id, names[1]) : ''}
+          />
+        {/key}
+      </div>
+    {/if}
+    {#if resp?.note}<p class="small muted pad">{resp.note}</p>{/if}
+    {#if loadError}<p class="error pad">{loadError}</p>{/if}
+    {#if session.can('tester')}
+      <div class="toolbar">
+        <input class="grow" placeholder="Note" aria-label="Note" bind:value={selected.note} onchange={saveNote} />
+      </div>
+    {/if}
+  </div>
+{:else}
+  <p class="empty muted">Select a request in HTTP history to see it here.</p>
+{/if}
+
+<style>
+  .detail { display: flex; flex-direction: column; flex: 1; min-height: 0; container-type: inline-size; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
+  .pair > :global(*) { border-right: 1px solid var(--border-subtle); min-width: 0; min-height: 0; }
+  /* In a narrow panel the two messages stack instead of squeezing. */
+  @container (max-width: 760px) {
+    .pair { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    .pair > :global(*) { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+  }
+  .dpane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .dh { padding: .2rem .5rem; font-size: var(--fs-sm); border-bottom: 1px solid var(--border-subtle); }
+  .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+  .ws { overflow: auto; flex: 1; padding: .5rem; }
+  .wsm { border-left: 3px solid var(--info); padding-left: .5rem; margin-bottom: .4rem; }
+  .wsm.out { border-color: var(--accent); }
+  .wsm pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
+  .pad { padding: 0 .5rem; }
+  .empty { padding: 1rem; margin: 0; }
+</style>

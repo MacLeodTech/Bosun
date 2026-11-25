@@ -2855,6 +2855,116 @@
         }
       }
     },
+    "/repeater/tabs": {
+      "get": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "The Repeater's tabs as saved in the open project (requests and options; responses are not stored).",
+        "operationId": "get_repeater_tabs",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TabsDoc"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Replace the Repeater's saved tabs (at most 100). Needs the tester role or above.",
+        "operationId": "put_repeater_tabs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TabsDoc"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TabsDoc"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rules": {
       "get": {
         "tags": [
@@ -6056,6 +6166,30 @@
         "properties": {
           "stopped": {
             "type": "boolean"
+          }
+        }
+      },
+      "TabsDoc": {
+        "type": "object",
+        "description": "The Repeater's tabs as the page keeps them. The server stores them as the page wrote them and looks only at their\ncount and shape, so the page can add a field without a server change.",
+        "required": [
+          "tabs"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Id of the tab that was open."
+          },
+          "next": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The id the next new tab gets."
+          },
+          "tabs": {
+            "type": "array",
+            "items": {},
+            "description": "One object per tab (target, request text, options). Responses are not stored."
           }
         }
       },

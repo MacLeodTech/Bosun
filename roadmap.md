@@ -21,7 +21,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
 
 ---
 
-## Where we are (updated 2026-11-23): resume here
+## Where we are (updated 2026-11-25): resume here
 
 - **Finished work** (the work packages, milestone items and what each phase delivered) is in `docs/releases.md`.
   This file lists only what is still to do.
@@ -38,12 +38,33 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   came from a dev machine. Compare them with the first numbers the CI `footprint` job prints on GitHub's runners and
   adjust. Consider a Dependabot group for `github/codeql-action/*`, because `init`, `analyze` and `upload-sarif`
   must be the same version and Dependabot opens them as three PRs.
+- **Open pull requests (2026-11-25), none merged yet.** Merge in this order; the first two are independent fixes:
+  1. #17 `fix-refusal-delivery`: 413/503 refusals reach clients that are still uploading.
+  2. #18 `wp-40-bosun-http` (to `main`): WP-40, the raw request engine (HTTP/1.1, redirects, upstream proxy,
+     WebSockets, HTTP/2 frames).
+  3. #19 `wp-41-repeater` (stacked on #18; retarget to `main` after #18 merges): WP-41 first slice, with connection
+     reuse, HTTP/2 multiplexing, the Repeater API and UI. **Still open in WP-41:** tabs saved in the project (a
+     migration; they are in `sessionStorage` for now), WebSocket sends in the Repeater, and `bosun repeater send` in
+     the CLI.
+  4. #20 `branding` (to `main`): icons, logo, startup banner, `icon.ico` for Windows, `scripts/bosun.sh`. Checked
+     on Linux (desktop builds) and on Windows (builds, window opens); the sign-in logo and first-run setup on
+     Windows have not been looked at by eye.
+  5. #21 `competitive-analysis` (to `main`): `docs/competitive-analysis.md` and WP-75 to WP-86.
+  When a package's PR merges, move its details to `docs/releases.md` and delete its index row (see the rules above).
 - **Next, in order** (see the phase plan below):
-  1. **Phase 3, track A (M2):** WP-40 (the raw request engine), then WP-41 (Repeater), WP-42 and WP-44, then WP-43
-     and WP-45. WP-38 and WP-39 are the M1 follow-ups.
-  2. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
-     release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches.
-  3. **Owner tasks before v0.2:** look up the pending BOSUN Class 9 filing; an Apple Developer account.
+  1. Merge the PRs above, then finish WP-41 (the three open items).
+  2. **Phase 3, track A (M2):** WP-42 and WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
+     used every day). WP-38 and WP-39 are the M1 follow-ups.
+  3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
+     release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
+     is built with Tauri for now; WP-18 (WinUI 3) is still planned.
+  4. **Owner tasks before v0.2:** look up the pending BOSUN Class 9 filing; an Apple Developer account.
+  5. **After v0.2:** Phase 4 (Intruder, Sequencer, WP-75, WP-76, WP-79), then Phase 5 and on as in the phase plan.
+     Order within a phase is by value: pick the package that unblocks the most others (WP-49 unblocks the scanner;
+     WP-47 unblocks WP-59 and WP-81).
+- **Decisions waiting for the owner:** WP-78 (WireGuard or per-OS local capture), WP-83 (how far SQL injection
+  exploitation goes) and WP-86 (AI assistance: scope and cost). Also whether to keep a separate WinUI 3 app (WP-18)
+  now that the Tauri build works on Windows.
 - **Decided (2026-11-23):** the product keeps the name Bosun. Published artefacts use distinct names: the crates.io
   crate is `bosun-dast` (the installed binary stays `bosun`), and any npm package goes under the `@macleodtech` scope.
   Windows code signing is deferred; unsigned builds ship until then. The name check found a medium risk: a pending

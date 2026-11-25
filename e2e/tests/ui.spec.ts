@@ -147,10 +147,14 @@ test('intercept: hold a request, edit it, forward it, and the target sees the ed
   const pending = viaProxy(PROXY_PORT, `${TARGET}/echo`);
   await expect(page.locator('.list li button', { hasText: '/echo' })).toBeVisible();
 
-  const editor = page.locator('textarea.code');
-  const raw = await editor.inputValue();
-  expect(raw).toContain('GET /echo');
-  await editor.fill(raw.replace(/\r?\n\r?\n$/, '\r\nX-Edited-By-Test: yes\r\n\r\n'));
+  // The raw editor is CodeMirror (in a shadow root); the message ends with a blank line, so one line up from the
+  // end is the gap between the headers and the body, and a new header goes there.
+  const editor = page.getByRole('textbox', { name: /^request #\d+/i });
+  await expect(editor).toContainText('GET /echo');
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.type('X-Edited-By-Test: yes');
   await page.getByRole('button', { name: 'Forward', exact: true }).click();
 
   const reply = await pending;
@@ -208,6 +212,62 @@ test('repeater: send by hand, again with a change, diff the two, and the sends a
   await rp.getByLabel('Mode').selectOption('sequential');
   await rp.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(rp.getByText('refused')).toBeVisible();
+});
+
+test('message editor: CodeMirror runs under the unchanged CSP, pretty-prints, edits as hex, and the edit is what is sent', async () => {
+  // The policy has no nonce and no 'unsafe-inline': the editor gets its styles from a constructed stylesheet.
+  const csp = (await page.request.get('/')).headers()['content-security-policy'] ?? '';
+  expect(csp).toContain("style-src 'self';");
+  expect(csp).not.toMatch(/unsafe-inline|nonce-/);
+  // Stylesheets are what the editor needs. (When typing replaces a selection, Chromium's own editing can try to
+  // write an inline style attribute, which the policy blocks and the editor does not rely on, so
+  // `style-src-attr` is not counted here; any other blocked style is.)
+  await page.evaluate(() => {
+    (window as unknown as { __csp: string[] }).__csp = [];
+    document.addEventListener('securitypolicyviolation', (e) => { if (e.violatedDirective !== 'style-src-attr') (window as unknown as { __csp: string[] }).__csp.push(`${e.violatedDirective} ${e.blockedURI}`); });
+  });
+
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByRole('button', { name: '+', exact: true }).click(); // a fresh tab builds a fresh editor
+  await rp.getByLabel('Scheme').selectOption('http');
+  await rp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await rp.getByLabel('Port').fill(String(TARGET_PORT));
+  const editor = rp.getByLabel('Request', { exact: true });
+  // Real key presses: Playwright's fill() goes through an editing command that writes inline styles into a
+  // contenteditable, which the policy (rightly) blocks, and nobody types that way.
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('POST /rp-json HTTP/1.1\nHost: 127.0.0.1\nContent-Type: application/json\n\n{"a":1,"b":[1,2]}');
+
+  // Its styles applied (line numbers and colours), and nothing was blocked.
+  await expect(rp.locator('.cm-lineNumbers')).toBeVisible();
+  await expect(rp.locator('.cm-gutters')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(rp.locator('.sx-hname').first()).toHaveCSS('color', /rgb/);
+  expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)).toEqual([]);
+
+  // Pretty-print re-indents the body as text.
+  await rp.getByRole('button', { name: 'pretty-print body' }).click();
+  await expect(editor).toContainText('"a": 1');
+
+  // Hex: the same bytes, editable. POST becomes PUT.
+  await rp.getByRole('button', { name: 'hex', exact: true }).click();
+  const hex = rp.getByLabel('Request', { exact: true });
+  await expect(hex).toHaveValue(/^50 4f 53 54 20 2f 72 70/);
+  await hex.fill((await hex.inputValue()).replace(/^50 4f 53 54/, '50 55 54'));
+  await rp.getByRole('button', { name: 'text', exact: true }).click();
+  await expect(editor).toContainText('PUT /rp-json');
+
+  // What is sent is the edited message.
+  await rp.getByLabel('Request', { exact: true }).click();
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(rp.locator('.out')).toContainText('hello from /rp-json');
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await page.locator('.row', { hasText: '/rp-json' }).first().click();
+  await expect(page.locator('.row', { hasText: '/rp-json' }).first()).toContainText('PUT');
+
+  expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)).toEqual([]);
 });
 
 test('decoder and comparer: a chain decodes, smart decode peels layers, and the diff marks what changed', async () => {
@@ -572,7 +632,7 @@ test('context menu: a row offers its actions, Escape closes it, and Send to Repe
   await expect(page.getByRole('tab', { name: 'Repeater' })).toHaveAttribute('aria-selected', 'true');
   const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
   await expect(rp.getByLabel('Host', { exact: true })).toHaveValue('127.0.0.1');
-  await expect(rp.getByLabel('Request')).toHaveValue(/GET \/hello-history/);
+  await expect(rp.getByLabel('Request')).toContainText('GET /hello-history');
 });
 
 test('shortcuts: Ctrl+R sends to the Repeater without reloading, and ? lists every shortcut and any conflict', async () => {
@@ -607,7 +667,7 @@ test('drag and drop: dropping requests on a pane opens the Repeater there with o
   await src.dragTo(page.locator('#pane-flow'), { targetPosition: { x: target!.width / 2, y: target!.height - 10 } });
   await expect(page.getByRole('tablist')).toHaveCount(3);
   const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
-  await expect(rp.getByLabel('Request')).toHaveValue(/GET \/hello-history/);
+  await expect(rp.getByLabel('Request')).toContainText('GET /hello-history');
 });
 
 test('deep link: the address names the open request and a reload brings it back', async () => {

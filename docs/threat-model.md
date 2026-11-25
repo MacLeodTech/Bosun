@@ -83,6 +83,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
   output as `<span>` elements, never as markup built from the body. The render frame is told the UI's colour scheme
   through one `<meta name="color-scheme">` that the UI writes (after the doctype, so the page's rendering mode
   does not change); the `sandbox` attribute and the CSP are untouched.
+- *The message editor (CodeMirror 6).* CodeMirror writes its styles into a `<style>` element, which `style-src 'self'`
+  blocks. In a shadow root it adopts a constructed stylesheet instead, which the policy does not govern, so the editor
+  lives in one and the policy stays exactly as it was: no nonce, no `unsafe-inline`, and the e2e test checks the
+  header. Target text is only the editor's document and span class names, never markup. Window shortcuts read the
+  event's composed path, because inside a shadow root `event.target` is the host. Chromium's own editing can try to
+  write an inline `style` attribute when typing replaces a selection; that is blocked (`style-src-attr`), and nothing
+  depends on it.
 - *Requests moved between tools.* Dragging requests, the palette, context menus and shortcuts all pass flow **ids**,
   never message bodies; a receiving tool fetches by id through the API, so the scope gate, role checks and audit
   still apply. A request sent to the Repeater travels through `sessionStorage` (as it already did) and is removed

@@ -2,9 +2,10 @@
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
-  import { b64ToBytes, bytesToB64, bytesToText, textToBytes, type TextMode } from '../lib/bytes';
+  import { b64ToBytes, bytesToB64, bytesToText, wireBytes, type TextMode } from '../lib/bytes';
   import { diffLines, type Op } from '../lib/diff';
   import DiffView from '../components/DiffView.svelte';
+  import MessageEditor from '../components/MessageEditor.svelte';
   import type { RepeaterSendBody, RepeaterSendReply, RepeaterSendResult } from '../lib/types';
 
   type Mode = 'sequential' | 'parallel' | 'single_packet';
@@ -89,11 +90,7 @@
   }
 
   /** The editor holds text; what is sent is those characters as bytes (Latin-1 when the original was not UTF-8). */
-  function requestBytes(t: Tab): Uint8Array {
-    // Line endings: a textarea gives `\n`, HTTP wants CRLF. Text that already has CRLF is left as typed.
-    const text = t.request.includes('\r\n') ? t.request : t.request.replace(/\n/g, '\r\n');
-    return textToBytes(text, t.mode);
-  }
+  const requestBytes = (t: Tab) => wireBytes(t.request, t.mode);
 
   const respText = (r: RepeaterSendResult) => bytesToText(b64ToBytes(r.response)).text;
 
@@ -167,8 +164,10 @@
   </div>
   <div class="panes">
     <div class="pane">
-      <div class="small muted pad">Request: sent as written. Line endings become CRLF.</div>
-      <textarea class="code edit" spellcheck="false" bind:value={tab.request} aria-label="Request"></textarea>
+      <div class="small muted pad">Request: sent as written. In the text view line endings become CRLF; the hex view is exact.</div>
+      {#key tab.id}
+        <MessageEditor text={tab.request} mode={tab.mode} label="Request" onchange={(t, m) => { const x = tab!; x.request = t; x.mode = m; }} />
+      {/key}
     </div>
     <div class="pane">
       <div class="toolbar small">
@@ -220,7 +219,6 @@
   .count { width: 4rem; }
   .panes { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
   .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); }
-  .edit { flex: 1; resize: none; border: 0; background: var(--bg); padding: .5rem; white-space: pre; overflow: auto; }
   .out { flex: 1; margin: 0; padding: .5rem; overflow: auto; white-space: pre-wrap; word-break: break-all; }
   .pad { padding: .25rem .5rem; }
   .chip { margin-left: .4rem; padding: 0 .35rem; border: 1px solid var(--line); border-radius: 8px; }

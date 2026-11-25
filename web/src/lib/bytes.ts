@@ -38,6 +38,14 @@ export function textToBytes(text: string, mode: TextMode): Uint8Array {
   return out;
 }
 
+/**
+ * The bytes a request written as text goes out as. A text editor gives `\n`, HTTP wants CRLF; text that already has
+ * CRLF is left as written, so a deliberate mix survives.
+ */
+export function wireBytes(text: string, mode: TextMode): Uint8Array {
+  return textToBytes(text.includes('\r\n') ? text : text.replace(/\n/g, '\r\n'), mode);
+}
+
 export function hexDump(bytes: Uint8Array, max = 64 * 1024): string {
   const lines: string[] = [];
   const n = Math.min(bytes.length, max);

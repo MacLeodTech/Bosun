@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isTyping } from '../lib/typing';
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
@@ -54,8 +55,7 @@
   function onKey(e: KeyboardEvent) {
     // The panel stays mounted in the background: a hidden Intercept must never act on a key meant for another panel.
     if (!canEdit || !panel.visible) return;
-    const t = e.target as HTMLElement | null;
-    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    const typing = isTyping(e);
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       if (current) decide('forward');

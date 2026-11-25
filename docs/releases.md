@@ -55,6 +55,26 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
   `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests, the `codec` fuzz target, and the
   Decoder and Comparer panels. **Not done:** MD5 and SHA-1, compression encoders, and a `bosun decode` command (WP-26).
 
+### WP-44: Message editor
+
+**WP-44** Message editor (CodeMirror 6, hex, pretty-print) · Phase 3 · M
+
+- **Do:**
+  - CodeMirror 6 for the raw editor, with HTTP syntax highlighting; a hex editor; pretty-printing of JSON, XML and
+    HTML as text, never rendered.
+  - Check CodeMirror under the strict CSP. If anything is blocked, use `EditorView.cspNonce` with a per-response
+    nonce from the server instead of loosening `style-src`. Record the decision in the threat model.
+  - Large messages stay responsive (load bodies in pages from WP-12's endpoints).
+- **Done when:** a Playwright test edits and sends a message, and the CSP header is unchanged or only gains a nonce.
+- **Done:** the editor (`RawEditor`, `HexEditor`, `MessageEditor`) is used by the Repeater and by Intercept's edit
+  view. CodeMirror adds its styles as a `<style>` element, which `style-src 'self'` blocks, but inside a shadow root
+  it adopts a constructed stylesheet instead, which the policy does not govern. So the editor is mounted in a shadow
+  root, and the CSP header is **unchanged** (no nonce, no `unsafe-inline`); the e2e test asserts both. Colours come
+  from the existing tokeniser (not a CodeMirror language package), so only `@codemirror/state`, `view` and `commands`
+  were added. Window-level shortcuts now read the real event target (`lib/typing.ts`), because inside a shadow root
+  `event.target` is the host element: Intercept's single-key shortcuts had fired while typing. **Not done:** paging
+  an editable body (the editor holds what the message view has loaded; the hex view is read-only past 256 KiB).
+
 ## After Phase 2 (on `main`)
 
 - **CI hardening** (PR #12, #13). The container image smoke test no longer fails on SIGPIPE (it captures

@@ -7,7 +7,7 @@ Everything below runs in CI (`.github/workflows/ci.yml`). Run the same things lo
 | Unit and integration tests | `crates/*/src`, `crates/*/tests` | `cargo test` |
 | Property tests (`proptest`) | the `properties` module inside the unit tests of `bosun-scope`, `bosun-model` and `bosun-proxy` (`ws.rs`) | `cargo test` |
 | End-to-end (Playwright) | `e2e/` | `cargo build -p bosun`, then `cd e2e && npm ci && npx playwright install chromium && npm test` |
-| Layout model, tokeniser, pretty-printer, diff (`node --test`) | `web/tests/*.test.ts` | `cd web && npm test` |
+| Layout model, tokeniser, pretty-printer, diff, hex helpers (`node --test`) | `web/tests/*.test.ts` | `cd web && npm test` |
 | Fuzzing (`cargo-fuzz`) | `fuzz/` | `cd fuzz && cargo +nightly fuzz run <target> -- -max_total_time=30` |
 
 ## Property tests

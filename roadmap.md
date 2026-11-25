@@ -48,7 +48,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
 - **Next, in order** (see the phase plan below):
   1. Finish WP-41 (the three open items; the CLI one needs WP-26). Small WP-42 leftovers: MD5 and SHA-1 (new
      dependencies), compression encoders, and `bosun decode` (with WP-26); "Send to Decoder or Comparer" is in WP-43.
-  2. **Phase 3, track A (M2):** WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
+  2. **Phase 3, track A (M2):** WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
      used every day). WP-38 and WP-39 are the M1 follow-ups.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
      release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
@@ -90,7 +90,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 **Phases 0 to 2: done** (repository and CI, hardening, foundation). See `docs/releases.md` for what each delivered.
 
 **Phase 3: manual tools and the front ends. Release v0.2, the first public preview.**
-- Track A, M2 tools: WP-41 (finish), then WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
+- Track A, M2 tools: WP-41 (finish), then WP-43 and WP-45. Also WP-38 and WP-39, the M1
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
@@ -178,7 +178,6 @@ valid in the "Depends on" column.
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [ ] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
-| [ ] | WP-44 | Message editor (CodeMirror 6, hex, pretty-print) | 3 | M | |
 | [ ] | WP-43 | History, Organizer, Logger and "send to" | 3 | M | WP-35, WP-41 |
 | [ ] | WP-45 | Engagement helpers | 3 | M | WP-41 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
@@ -532,18 +531,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - **Logger:** every request from every tool, using the `FlowSource` each tool records, with filters.
   - **"Send to"** Repeater, Intruder, Comparer or Decoder from everywhere a message is shown.
 - **Done when:** Playwright tests cover each view and the send-to menu.
-
-#### WP-44 Message editor (CodeMirror 6, hex, pretty-print) · Phase 3 · M
-
-- **Do:**
-  - CodeMirror 6 for the raw editor, with HTTP syntax highlighting; a hex editor; pretty-printing of JSON, XML and
-    HTML as text, never rendered.
-  - Check CodeMirror under the strict CSP. It adds its styles with constructed stylesheets or `<style>`
-    elements; if anything is blocked, use `EditorView.cspNonce` with a per-response nonce from the server instead
-    of loosening `style-src`. Record the decision in the threat model.
-  - Large messages stay responsive (load bodies in pages from WP-12's endpoints).
-- **Done when:** a Playwright test edits and sends a message, and the CSP header is unchanged or only gains a
-  nonce.
 
 #### WP-45 Engagement helpers · Phase 3 · M
 

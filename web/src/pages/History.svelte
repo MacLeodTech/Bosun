@@ -1,5 +1,6 @@
 <script lang="ts">
   // The request list. Opening a request is the flow-detail panel's job: this panel only sets `historyView.openId`.
+  import { isTyping } from '../lib/typing';
   import { onMount, untrack } from 'svelte';
   import { api, qs } from '../lib/api';
   import { css } from '../lib/style';
@@ -244,7 +245,7 @@
 
   function onWindowKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
-    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    const typing = isTyping(e);
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
     // The panel stays mounted while hidden, so only react when this panel is the one on screen.
     if (!panel.visible || !root) return;

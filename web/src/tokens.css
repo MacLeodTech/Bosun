@@ -38,6 +38,22 @@
   --st-4xx: #e3b341;
   --st-5xx: #f77d77;
   --st-err: #f77d77;
+
+  --sx-key: #7fbdf0;
+  --sx-string: #a3d98f;
+  --sx-number: #e9b872;
+  --sx-bool: #ee9f78;
+  --sx-punct: #8f9bad;
+  --sx-hname: #d9a14a;
+  --sx-hvalue: #cdd6e1;
+  --sx-tag: #6fc9c1;
+  --sx-attr: #d9b45a;
+  --sx-comment: #8f9bad;
+
+  --df-add-bg: #16301f;
+  --df-del-bg: #3a1d1f;
+  --df-add-word: #1f5130;
+  --df-del-word: #6a2a2d;
 }
 
 :root[data-theme='light'] {
@@ -73,6 +89,22 @@
   --st-4xx: #7d5800;
   --st-5xx: #b3261e;
   --st-err: #b3261e;
+
+  --sx-key: #1a62a3;
+  --sx-string: #2d6a1f;
+  --sx-number: #8a5a00;
+  --sx-bool: #a8421a;
+  --sx-punct: #53616f;
+  --sx-hname: #8c4a05;
+  --sx-hvalue: #2a3541;
+  --sx-tag: #0f6b5d;
+  --sx-attr: #7d5800;
+  --sx-comment: #53616f;
+
+  --df-add-bg: #dcf1e1;
+  --df-del-bg: #f8dcda;
+  --df-add-word: #b5e2c1;
+  --df-del-word: #f2b4b0;
 }
 
 :root {

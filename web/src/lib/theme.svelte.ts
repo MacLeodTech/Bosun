@@ -16,6 +16,8 @@ function read(): ThemePref {
 
 class Theme {
   pref = $state<ThemePref>(read());
+  /** What is actually showing: "dark" or "light", with "system" looked up. */
+  resolved = $state<'dark' | 'light'>('dark');
   private mql = window.matchMedia('(prefers-color-scheme: light)');
 
   constructor() {
@@ -25,6 +27,7 @@ class Theme {
 
   private apply() {
     const resolved = this.pref === 'system' ? (this.mql.matches ? 'light' : 'dark') : this.pref;
+    this.resolved = resolved;
     document.documentElement.dataset.theme = resolved;
   }
 

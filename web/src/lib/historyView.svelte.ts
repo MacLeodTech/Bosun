@@ -1,7 +1,7 @@
 // What the History panels show, kept outside the components so it survives a panel being closed and reopened, and so
 // the list and the flow-detail panel (two separate panels in the dock) agree on what is open.
 
-export type DetailTab = 'messages' | 'original' | 'ws';
+export type DetailTab = 'messages' | 'original' | 'diff' | 'ws';
 
 class HistoryView {
   text = $state('');
@@ -19,6 +19,8 @@ class HistoryView {
   /** Flows deleted from the detail panel, for the list to drop. `removedTick` changes on each deletion. */
   removedIds = $state<number[]>([]);
   removedTick = $state(0);
+  /** Bumped when something outside the list changes a filter and wants it applied (the headers view does this). */
+  applyTick = $state(0);
 
   remove(ids: number[]) {
     this.removedIds = ids;

@@ -102,6 +102,17 @@
     openTimer = setTimeout(() => (v.openId = f.id), 90);
   }
 
+  // A filter was set from outside the list (the headers view), so apply it.
+  let seenApply = untrack(() => v.applyTick);
+  $effect(() => {
+    const tick = v.applyTick;
+    untrack(() => {
+      if (tick === seenApply) return;
+      seenApply = tick;
+      reload();
+    });
+  });
+
   // A flow was deleted in the detail panel.
   let seenRemoval = untrack(() => v.removedTick);
   $effect(() => {

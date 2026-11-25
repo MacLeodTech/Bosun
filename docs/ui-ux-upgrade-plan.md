@@ -330,6 +330,7 @@ Acceptance: layout survives reload, a corrupt saved layout falls back safely, dr
 the mouse and has a keyboard alternative (move panel command in the palette).
 
 ### Phase 2: the viewer (about 8 days)
+**Status (branch `ui-phase0`):** built. `lib/highlight.ts` (HTTP, JSON, HTML/XML, forms, light JS; capped at 1 MiB, 20,000 characters a line), `lib/pretty.ts`, `lib/diff.ts` (Myers, bounded, with word diffs), `CodeView.svelte` (windowed above 3,000 lines or with wrap off, find over the whole text), `DiffView.svelte` (folded context, +/− gutter), and a rebuilt `MessageView` (raw, pretty, headers, hex, render, wrap, find, copy, copy as cURL). History's "Original" tab gained a "Changes" tab, and the Repeater's diff uses `DiffView`. Differences: the Content-Type-less sniffing treats a leading `<` as XML; the headers view's "filter" runs a text search (or sets the host filter for `Host`); the render view is told the UI's colour scheme through a `<meta>` only, because the CSP bars inline `<style>`.
 | Task | Component and spec |
 |---|---|
 | Tokeniser | `lib/highlight/*.ts` for HTTP, JSON, HTML/XML, forms and light JS. Render by `{#each}`. Size cap. Tests and a robustness test per 3.4. |

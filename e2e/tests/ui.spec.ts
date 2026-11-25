@@ -67,13 +67,13 @@ test('history: a large response is shown a page at a time', async () => {
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
   await page.locator('.row', { hasText: '/big' }).click();
   const resp = page.locator('.msg').nth(1);
-  await expect(resp.locator('pre.code')).toContainText('START-MARK');
-  await expect(resp.locator('pre.code')).not.toContainText('END-MARK');
+  await expect(resp.locator('.code')).toContainText('START-MARK');
+  await expect(resp.locator('.code')).not.toContainText('END-MARK');
   await expect(resp.getByText(/of the body not loaded/)).toBeVisible();
   // Two more pages bring in the rest.
   await resp.getByRole('button', { name: 'Load more' }).click();
   await resp.getByRole('button', { name: 'Load more' }).click();
-  await expect(resp.locator('pre.code')).toContainText('END-MARK');
+  await expect(resp.locator('.code')).toContainText('END-MARK');
   await expect(resp.getByRole('button', { name: 'Load more' })).toHaveCount(0);
   await expect(resp.getByRole('link', { name: 'download body' })).toHaveAttribute('href', /\/response\/body$/);
 });
@@ -88,7 +88,7 @@ test('history: the open flow and the filters survive a visit to another page', a
   await nav.getByRole('button', { name: 'HTTP history' }).click();
   await expect(page.getByLabel('Host contains')).toHaveValue('127.0.0.1');
   await expect(page.locator('.row.active', { hasText: '/hello-history' })).toBeVisible();
-  await expect(page.locator('.msg').nth(1).locator('pre.code')).toContainText('hello from /hello-history');
+  await expect(page.locator('.msg').nth(1).locator('.code')).toContainText('hello from /hello-history');
   await page.getByLabel('Host contains').fill('');
 });
 
@@ -178,15 +178,15 @@ test('repeater: send by hand, again with a change, diff the two, and the sends a
   await rp.getByLabel('Port').fill(String(TARGET_PORT));
   await rp.getByLabel('Request').fill('GET /rp-one HTTP/1.1\nHost: 127.0.0.1\n\n');
   await rp.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(rp.locator('pre.out')).toContainText('hello from /rp-one');
+  await expect(rp.locator('.out')).toContainText('hello from /rp-one');
   await expect(rp.getByText('send 1 of 1')).toBeVisible();
 
   await rp.getByLabel('Request').fill('GET /rp-two HTTP/1.1\nHost: 127.0.0.1\n\n');
   await rp.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(rp.locator('pre.out')).toContainText('hello from /rp-two');
+  await expect(rp.locator('.out')).toContainText('hello from /rp-two');
   await rp.getByLabel('Diff with previous').check();
-  await expect(rp.locator('pre.out .del', { hasText: 'hello from /rp-one' })).toBeVisible();
-  await expect(rp.locator('pre.out .add', { hasText: 'hello from /rp-two' })).toBeVisible();
+  await expect(rp.locator('.out .del', { hasText: 'hello from /rp-one' })).toBeVisible();
+  await expect(rp.locator('.out .add', { hasText: 'hello from /rp-two' })).toBeVisible();
 
   // Many at once: a group shows how many different answers it produced.
   await rp.getByLabel('Count').fill('5');
@@ -351,4 +351,80 @@ test('dock: layouts can be saved, exported and imported', async () => {
   await expect(page.getByRole('tab', { name: 'Repeater' })).toBeVisible();
   await page.keyboard.press('Escape');
   await layoutMenu('Reset layout');
+});
+
+// ---- the viewer -----------------------------------------------------------------------------------------------
+
+async function openFlow(path: string) {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await page.locator('.row', { hasText: path }).first().click();
+}
+
+test('viewer: a large JSON body is pretty-printed, windowed, searchable and scrolls quickly', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/json`);
+  await openFlow('/json');
+  const resp = page.locator('.msg').nth(1);
+  await resp.getByRole('button', { name: 'pretty', exact: true }).click();
+  const code = resp.getByRole('textbox', { name: 'Response' });
+  await expect(code).toContainText('"item-0"');
+  // Tens of thousands of lines, but only the ones on screen are in the page.
+  const rows = await resp.locator('.ln-row').count();
+  expect(rows).toBeGreaterThan(5);
+  expect(rows).toBeLessThan(200);
+  // Syntax colour comes from spans, not markup.
+  await expect(resp.locator('.sx-key').first()).toBeVisible();
+
+  // Scroll through the whole body in steps; every frame must settle quickly and the window must stay small.
+  const ms = await code.evaluate(async (el) => {
+    const t0 = performance.now();
+    for (let i = 0; i <= 60; i++) {
+      el.scrollTop = (el.scrollHeight - el.clientHeight) * (i / 60);
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    }
+    return performance.now() - t0;
+  });
+  expect(ms).toBeLessThan(4000);
+  await expect(resp.locator('.ln-row').last()).toContainText('}');
+  expect(await resp.locator('.ln-row').count()).toBeLessThan(200);
+
+  // Ctrl+F searches the whole text, including lines that are not in the page.
+  await code.focus();
+  await page.keyboard.press('Control+f');
+  await resp.getByLabel('Find in message').fill('item-2400"');
+  await expect(resp.getByRole('status').filter({ hasText: /of 1$/ })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(code).toContainText('"item-2400"');
+  await expect(resp.locator('.hit.cur')).toBeVisible();
+  await page.keyboard.press('Escape');
+});
+
+test('viewer: the edited request shows what changed, and a header can filter the history', async () => {
+  await openFlow('/echo');
+  await page.getByRole('button', { name: 'Changes' }).click();
+  const added = page.locator('.diff .add', { hasText: 'X-Edited-By-Test' });
+  await expect(added).toBeVisible();
+  await expect(page.locator('.diff .w', { hasText: 'X-Edited-By-Test' }).or(added).first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Request / Response', exact: true }).click();
+  const req = page.locator('.msg').first();
+  await req.getByRole('button', { name: 'headers', exact: true }).click();
+  await req.getByRole('button', { name: 'Filter history by X-Edited-By-Test' }).click();
+  await expect(page.getByLabel('Search requests and responses')).toHaveValue('X-Edited-By-Test: yes');
+  await expect(page.locator('.row', { hasText: '/echo' })).toBeVisible();
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toHaveCount(0);
+  await page.getByLabel('Search requests and responses').fill('');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await req.getByRole('button', { name: 'raw', exact: true }).click();
+});
+
+test('viewer: the render view follows the UI theme and stays sandboxed', async () => {
+  await openFlow('/evil');
+  await page.getByRole('button', { name: 'render', exact: true }).nth(1).click();
+  const frame = page.locator('iframe.render');
+  await expect(frame).toHaveAttribute('sandbox', '');
+  const doc = await frame.getAttribute('srcdoc');
+  // The scheme is a <meta> placed after the doctype (before it, the page would fall into quirks mode).
+  expect(doc).toMatch(/^<!doctype html><meta name="color-scheme" content="(dark|light)">/i);
+  await page.locator('.msg').nth(1).getByRole('button', { name: 'raw', exact: true }).click();
 });

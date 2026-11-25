@@ -7,6 +7,8 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "isolatedModules": true,
     "skipLibCheck": true,
     "types": ["svelte"]

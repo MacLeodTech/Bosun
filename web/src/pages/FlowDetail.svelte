@@ -10,12 +10,15 @@
   import { bodyUrl, loadMore, loadPart, type Loaded, type PartName } from '../lib/flowbody';
   import type { FlowMeta, WsMessage } from '../lib/types';
   import MessageView from '../components/MessageView.svelte';
+  import DiffView from '../components/DiffView.svelte';
 
   let selected = $state<FlowMeta | null>(null);
   let req = $state<Loaded | null>(null);
   let resp = $state<Loaded | null>(null);
   let loadError = $state('');
   let wsMessages = $state<WsMessage[]>([]);
+  /** The "Changes" tab: what the client and server first sent, against what went on after edits. */
+  let changes = $state<{ reqA: string; reqB: string; resA: string; resB: string } | null>(null);
 
   // Which stored messages the two panes show: the current ones, or what the client and server first sent.
   function parts(tab: 'messages' | 'original'): [PartName, PartName] {
@@ -30,6 +33,21 @@
     const ticket = ++opening;
     loadError = '';
     try {
+      if (v.detailTab === 'diff') {
+        const text = async (name: PartName, info: unknown) => {
+          if (!info) return '';
+          const l = await loadPart(m, name, info as never);
+          return bytesToText(join(l.head, l.body)).text;
+        };
+        const [reqA, reqB, resA, resB] = await Promise.all([
+          text(m.original_request ? 'original-request' : 'request', m.original_request ?? m.request),
+          text('request', m.request),
+          text(m.original_response ? 'original-response' : 'response', m.original_response ?? m.response),
+          text('response', m.response),
+        ]);
+        if (ticket === opening) changes = { reqA, reqB, resA, resB };
+        return;
+      }
       const tab = v.detailTab === 'original' ? 'original' : 'messages';
       const [rp, sp] = parts(tab);
       const info = (p: PartName) => (p === 'request' ? m.request : p === 'response' ? m.response : p === 'original-request' ? m.original_request : m.original_response);
@@ -94,7 +112,7 @@
     wsMessages = [];
     req = null;
     resp = null;
-    if (v.detailTab === 'original' && !(m.original_request || m.original_response)) v.detailTab = 'messages';
+    if ((v.detailTab === 'original' || v.detailTab === 'diff') && !(m.original_request || m.original_response)) v.detailTab = 'messages';
     if (v.detailTab === 'ws' && m.status !== 101) v.detailTab = 'messages';
     await loadPanes();
     if (ticket === ticketNo && m.status === 101) wsMessages = await api.get<WsMessage[]>(`/flows/${id}/ws`);
@@ -105,7 +123,7 @@
     untrack(() => load(id));
   });
 
-  function setTab(t: 'messages' | 'original' | 'ws') {
+  function setTab(t: 'messages' | 'original' | 'diff' | 'ws') {
     v.detailTab = t;
     if (t !== 'ws') loadPanes();
   }
@@ -141,6 +159,14 @@
     v.remove([id]);
   }
 
+  /** Show history entries that have this header: the Host header is the host filter, anything else a text search. */
+  function filterBy(name: string, value: string) {
+    if (name.toLowerCase() === 'host') v.host = value.replace(/:\d+$/, '');
+    else v.text = `${name}: ${value}`;
+    v.applyTick++;
+    workspace.reveal('history', 'flow');
+  }
+
   async function copyUrl() {
     if (selected) await navigator.clipboard.writeText(flowUrl(selected));
   }
@@ -153,6 +179,7 @@
         <button class:active={v.detailTab === 'messages'} onclick={() => setTab('messages')}>Request / Response</button>
         {#if selected.original_request || selected.original_response}
           <button class:active={v.detailTab === 'original'} onclick={() => setTab('original')}>Original (before edits)</button>
+          <button class:active={v.detailTab === 'diff'} onclick={() => setTab('diff')}>Changes</button>
         {/if}
         {#if selected.status === 101}
           <button class:active={v.detailTab === 'ws'} onclick={() => setTab('ws')}>WebSocket ({wsMessages.length})</button>
@@ -174,6 +201,15 @@
           </div>
         {/each}
       </div>
+    {:else if v.detailTab === 'diff'}
+      <div class="pair">
+        {#if changes}
+          <div class="dpane"><strong class="dh">Request</strong><DiffView a={changes.reqA} b={changes.reqB} label="Request changes" /></div>
+          <div class="dpane"><strong class="dh">Response</strong><DiffView a={changes.resA} b={changes.resB} label="Response changes" /></div>
+        {:else}
+          <p class="empty muted">Loading…</p>
+        {/if}
+      </div>
     {:else}
       <div class="pair">
         {#key `${selected.id}-${v.detailTab}`}
@@ -181,6 +217,8 @@
           <MessageView
             title="Request"
             role="request"
+            scheme={selected.scheme}
+            onFilterHeader={filterBy}
             raw={toB64(req)}
             rawRemaining={req ? req.bodyLen - req.body.length : 0}
             onMore={(d) => loadNext('req', d)}
@@ -189,6 +227,7 @@
           <MessageView
             title={selected.response_truncated ? 'Response (truncated)' : 'Response'}
             role="response"
+            onFilterHeader={filterBy}
             raw={toB64(resp)}
             decodedBody={resp?.decoded ? bytesToB64(resp.decoded) : null}
             rawRemaining={resp ? resp.bodyLen - resp.body.length : 0}
@@ -220,6 +259,8 @@
     .pair { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
     .pair > :global(*) { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
   }
+  .dpane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .dh { padding: .2rem .5rem; font-size: var(--fs-sm); border-bottom: 1px solid var(--border-subtle); }
   .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
   .ws { overflow: auto; flex: 1; padding: .5rem; }
   .wsm { border-left: 3px solid var(--info); padding-left: .5rem; margin-bottom: .4rem; }

@@ -29,8 +29,16 @@ const ratio = (a, b) => {
 const surfaces = ['surface-0', 'surface-1', 'surface-2', 'surface-sel'];
 const text = ['text-1', 'text-2', 'accent', 'ok', 'info', 'warn', 'bad',
   'm-get', 'm-post', 'm-put', 'm-patch', 'm-delete', 'm-other',
-  'st-2xx', 'st-3xx', 'st-4xx', 'st-5xx', 'st-err'];
-const pairs = [...text.flatMap((t) => surfaces.map((s) => [t, s])), ['on-accent', 'accent']];
+  'st-2xx', 'st-3xx', 'st-4xx', 'st-5xx', 'st-err',
+  'sx-key', 'sx-string', 'sx-number', 'sx-bool', 'sx-punct', 'sx-hname', 'sx-hvalue', 'sx-tag', 'sx-attr', 'sx-comment'];
+// Diff backgrounds carry text too: the body text on all four, and the (dimmer) gutter text on the two line shades.
+const diffBg = ['df-add-bg', 'df-del-bg', 'df-add-word', 'df-del-word'];
+const pairs = [
+  ...text.flatMap((t) => surfaces.map((s) => [t, s])),
+  ['on-accent', 'accent'],
+  ...diffBg.map((b) => ['text-1', b]),
+  ...['df-add-bg', 'df-del-bg'].map((b) => ['text-2', b]),
+];
 
 let failed = 0;
 for (const [name, t] of Object.entries(themes)) {

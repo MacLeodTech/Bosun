@@ -18,7 +18,13 @@ pub fn print() {
 /// The banner text, with or without ANSI colours.
 pub fn render(colour: bool) -> String {
     let (orange, cyan, white, dim, reset) = if colour {
-        ("\x1b[38;5;208m", "\x1b[38;5;51m", "\x1b[1;97m", "\x1b[2;37m", "\x1b[0m")
+        (
+            "\x1b[38;5;208m",
+            "\x1b[38;5;51m",
+            "\x1b[1;97m",
+            "\x1b[2;37m",
+            "\x1b[0m",
+        )
     } else {
         ("", "", "", "", "")
     };

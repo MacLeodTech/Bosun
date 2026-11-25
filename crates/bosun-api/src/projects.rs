@@ -823,6 +823,9 @@ async fn switch_to(st: &AppState, caller: &Caller, target: Option<&str>) -> Resu
     let (proxy, p) = (st.inner.proxy.clone(), new.clone());
     blocking(move || proxy.switch_project(p)).await?;
     st.inner.gate.set_scope(loaded.scope);
+    // Sending out of scope from the Repeater is a choice made for the work in front of you, not one a project carries.
+    st.inner.gate.set_repeater_policy(bosun_scope::OutOfScopePolicy::Refuse);
+    st.inner.repeater.close_idle();
     let rules_ok = st.inner.proxy.set_rules(loaded.rules).is_ok();
     // Interception never comes back on by itself; the in-scope choice is kept.
     st.inner.proxy.intercept().set(InterceptSettings {

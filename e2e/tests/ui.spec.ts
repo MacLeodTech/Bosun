@@ -140,6 +140,43 @@ test('intercept: dropping a request answers the client with an error', async () 
   await setIntercept(false);
 });
 
+test('repeater: send by hand, again with a change, diff the two, and the sends are recorded', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  await page.getByLabel('Scheme').selectOption('http');
+  await page.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await page.getByLabel('Port').fill(String(TARGET_PORT));
+  await page.getByLabel('Request').fill('GET /rp-one HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.locator('pre.out')).toContainText('hello from /rp-one');
+  await expect(page.getByText('send 1 of 1')).toBeVisible();
+
+  await page.getByLabel('Request').fill('GET /rp-two HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.locator('pre.out')).toContainText('hello from /rp-two');
+  await page.getByLabel('Diff with previous').check();
+  await expect(page.locator('pre.out .del', { hasText: 'hello from /rp-one' })).toBeVisible();
+  await expect(page.locator('pre.out .add', { hasText: 'hello from /rp-two' })).toBeVisible();
+
+  // Many at once: a group shows how many different answers it produced.
+  await page.getByLabel('Count').fill('5');
+  await page.getByLabel('Mode').selectOption('parallel');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('5 results, 1 different');
+
+  // The sends are in the history as the Repeater's.
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/rp-two' }).first()).toBeVisible();
+
+  // Out-of-scope targets are refused until the setting is turned on.
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  await page.getByLabel('Host', { exact: true }).fill('localhost');
+  await page.getByLabel('Count').fill('1');
+  await page.getByLabel('Mode').selectOption('sequential');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('refused')).toBeVisible();
+});
+
 test('projects: a new project starts empty, and the first one comes back with its history', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'Projects' }).click();

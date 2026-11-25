@@ -485,6 +485,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repeater/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Send a raw request once or many times (sequentially, in parallel, or as an HTTP/2 single-packet batch). Every send passes the scope gate and is recorded as a flow with source repeater. A send that is refused or fails comes back as a result with an error, not as an HTTP error. Needs the tester role or above. */
+        post: operations["repeater_send"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repeater/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Whether the Repeater may send out of scope. */
+        get: operations["get_repeater_settings"];
+        /** @description Allow or refuse out-of-scope sends from the Repeater (audited; goes back to refuse when a project is opened). Needs the tester role or above. */
+        put: operations["put_repeater_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules": {
         parameters: {
             query?: never;
@@ -937,6 +972,8 @@ export interface components {
             csrf?: string | null;
             user: components["schemas"]["User"];
         };
+        /** @enum {string} */
+        Mode: "sequential" | "parallel" | "single_packet";
         NewProject: {
             name: string;
             /** @description Open it straight away. */
@@ -994,6 +1031,8 @@ export interface components {
             /** @description Names last opened, newest first. */
             recent: string[];
         };
+        /** @enum {string} */
+        Protocol: "http1" | "h2";
         /** @description Events the proxy publishes for front ends (sent over the API's event stream). */
         ProxyEvent: {
             flow: components["schemas"]["FlowSummary"];
@@ -1070,6 +1109,10 @@ export interface components {
         RenameProject: {
             name: string;
         };
+        RepeaterSettings: {
+            /** @description Let the Repeater send to hosts outside the scope. Starts off, and goes back off when a project is opened. */
+            allow_out_of_scope: boolean;
+        };
         Revoked: {
             /** Format: int64 */
             revoked: number;
@@ -1107,6 +1150,67 @@ export interface components {
         ScopeSpec: {
             exclude?: components["schemas"]["ScopeRule"][];
             include?: components["schemas"]["ScopeRule"][];
+        };
+        SendBody: {
+            /**
+             * Format: int32
+             * @description How many times to send it (1 to 100).
+             */
+            count?: number;
+            /** @description Follow redirects (HTTP/1.1 only), recording each hop. */
+            follow_redirects?: boolean;
+            host: string;
+            mode?: components["schemas"]["Mode"];
+            /** Format: int32 */
+            port: number;
+            protocol?: components["schemas"]["Protocol"];
+            /** @description The request as written, base64. */
+            request: string;
+            scheme: components["schemas"]["Scheme"];
+            /** @description Rewrite `Content-Length` to match the body. Off by default: what you wrote is what is sent. */
+            update_content_length?: boolean;
+            verify_tls?: boolean;
+        };
+        SendReply: {
+            results: components["schemas"]["SendResult"][];
+        };
+        SendResult: {
+            /** @description Why there is no (or only a partial) response. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description The recorded flow, when something was sent.
+             */
+            flow_id?: number | null;
+            /** @description Number of HTTP/2 frames written and read, when the exchange was HTTP/2. */
+            h2_frames?: number[] | null;
+            /**
+             * Format: int32
+             * @description Which redirect hop (0 is the request itself).
+             */
+            hop: number;
+            in_scope?: boolean | null;
+            /**
+             * Format: int32
+             * @description Which of the `count` sends this is (0-based).
+             */
+            index: number;
+            peer?: string | null;
+            /** @description The scope gate or the kill switch stopped it; nothing was sent. */
+            refused: boolean;
+            /** @description What was written, base64. */
+            request: string;
+            /** @description What was read, base64. */
+            response: string;
+            /** @description The connection came from the pool or was shared. */
+            reused: boolean;
+            /** Format: int64 */
+            started_ms?: number | null;
+            /** Format: int32 */
+            status?: number | null;
+            timings?: components["schemas"]["TimingsOut"] | null;
+            tls?: components["schemas"]["TlsSummary"] | null;
+            truncated: boolean;
         };
         /**
          * @description A signed-in browser session, as shown to its owner and to admins. The id is a prefix of the stored hash; it
@@ -1162,6 +1266,23 @@ export interface components {
         TicketBody: {
             /** @description The single-use ticket an embedded engine printed for its parent. */
             ticket: string;
+        };
+        TimingsOut: {
+            /** Format: int64 */
+            connect_ms: number;
+            /** Format: int64 */
+            dns_ms: number;
+            /** Format: int64 */
+            first_byte_ms?: number | null;
+            /** Format: int64 */
+            tls_ms?: number | null;
+            /** Format: int64 */
+            total_ms: number;
+        };
+        TlsSummary: {
+            alpn?: string | null;
+            cipher: string;
+            version: string;
         };
         /**
          * @description What an API token may do. A `Read` token can only make requests that don't change anything (GET, HEAD).
@@ -3146,6 +3267,182 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProxyInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    repeater_send: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_repeater_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepeaterSettings"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_repeater_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepeaterSettings"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepeaterSettings"];
                 };
             };
             /** @description Bad request */

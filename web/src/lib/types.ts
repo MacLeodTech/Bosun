@@ -70,3 +70,7 @@ agree<Same<keyof AuditEntry, keyof Schemas['AuditEntry']>>();
 agree<Same<CurrentProject, Schemas['CurrentProject']>>();
 agree<Same<keyof ProjectInfo, keyof Schemas['ProjectInfo']>>();
 agree<Same<keyof ProjectList, keyof Schemas['ProjectList']>>();
+
+export type RepeaterSendResult = components['schemas']['SendResult'];
+export type RepeaterSendBody = components['schemas']['SendBody'];
+export type RepeaterSendReply = components['schemas']['SendReply'];

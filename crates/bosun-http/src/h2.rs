@@ -13,7 +13,7 @@
 use std::time::{Duration, Instant};
 
 use bosun_proxy::budget::COPY_FACTOR;
-use fluke_hpack::{Decoder, Encoder};
+use fluke_hpack::Decoder;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{Engine, Exchange, SendError, SendOptions, gate_path};
@@ -118,6 +118,35 @@ pub fn parse_frame(buf: &[u8], max_payload: usize) -> Result<Option<(Frame, usiz
     )))
 }
 
+/// Encode a header block as literals without indexing, never touching the connection's dynamic table. A block
+/// built this way decodes the same whatever was sent before it, which a shared connection needs and a plan of
+/// several separately built requests relies on.
+pub fn encode_block(headers: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+    fn string(out: &mut Vec<u8>, s: &[u8]) {
+        // 7-bit prefix length, no Huffman coding.
+        let mut n = s.len();
+        if n < 127 {
+            out.push(n as u8);
+        } else {
+            out.push(127);
+            n -= 127;
+            while n >= 128 {
+                out.push((n % 128) as u8 | 0x80);
+                n /= 128;
+            }
+            out.push(n as u8);
+        }
+        out.extend_from_slice(s);
+    }
+    let mut out = Vec::new();
+    for (n, v) in headers {
+        out.push(0x00); // literal, not indexed, new name
+        string(&mut out, n);
+        string(&mut out, v);
+    }
+    out
+}
+
 /// A request as a list of headers (pseudo-headers included, in the order and spelling given) and a body.
 #[derive(Debug, Clone, Default)]
 pub struct H2Request {
@@ -148,10 +177,42 @@ impl H2Request {
         }
     }
 
+    /// An HTTP/1.1 request turned into the HTTP/2 form: the request line becomes `:method` and `:path`, `Host`
+    /// becomes `:authority`, names are lower-cased, and the headers HTTP/2 does not allow (`Connection` and its
+    /// kin, `Transfer-Encoding`) are dropped. Everything else, including duplicates and odd values, is kept as is.
+    /// A chunked body cannot be converted (it would have to be de-chunked, which changes what is sent).
+    pub fn from_http1(raw: &[u8], scheme: &str) -> Result<Self, String> {
+        let mut storage = [httparse::EMPTY_HEADER; 128];
+        let mut req = httparse::Request::new(&mut storage);
+        let n = match req.parse(raw).map_err(|e| format!("not an HTTP/1.1 request: {e}"))? {
+            httparse::Status::Complete(n) => n,
+            httparse::Status::Partial => return Err("the request head is not complete".into()),
+        };
+        let (method, path) = (req.method.unwrap_or("GET"), req.path.unwrap_or("/"));
+        let mut authority = String::new();
+        let mut rest: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        for h in req.headers.iter() {
+            let name = h.name.to_ascii_lowercase();
+            match name.as_str() {
+                "host" => authority = String::from_utf8_lossy(h.value).into_owned(),
+                "connection" | "keep-alive" | "proxy-connection" | "upgrade" => {}
+                "transfer-encoding" => return Err("a chunked body cannot be sent over HTTP/2 as written".into()),
+                _ => rest.push((name.into_bytes(), h.value.to_vec())),
+            }
+        }
+        if authority.is_empty() {
+            return Err("the request has no Host header to use as :authority".into());
+        }
+        let mut out = Self::new(method, scheme, &authority, path, &[]);
+        out.headers.extend(rest);
+        out.body = raw[n..].to_vec();
+        Ok(out)
+    }
+
     /// The frames for this request on `stream`: `HEADERS` (and `CONTINUATION`s) with `END_HEADERS`, then one
     /// `DATA` frame with `END_STREAM` if there is a body (otherwise `END_STREAM` is on the `HEADERS`).
     pub fn frames(&self, stream: u32) -> Vec<Frame> {
-        let block = Encoder::new().encode(self.headers.iter().map(|(n, v)| (n.as_slice(), v.as_slice())));
+        let block = encode_block(&self.headers);
         let end_stream = if self.body.is_empty() { flag::END_STREAM } else { 0 };
         let mut out = Vec::new();
         match self.header_chunk.filter(|n| *n > 0 && *n < block.len()) {
@@ -237,7 +298,7 @@ pub struct H2Details {
     pub request_headers: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-type Headers = Vec<(Vec<u8>, Vec<u8>)>;
+pub(crate) type Headers = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// A complete header block, decoded.
 #[derive(Debug)]
@@ -411,14 +472,14 @@ pub fn decode_plan_headers(frames: &[Frame]) -> Result<Vec<(u32, Headers)>, Stri
     Ok(out)
 }
 
-fn pseudo<'a>(h: &'a Headers, name: &str) -> Option<&'a [u8]> {
+pub(crate) fn pseudo<'a>(h: &'a Headers, name: &str) -> Option<&'a [u8]> {
     h.iter()
         .find(|(n, _)| n == name.as_bytes())
         .map(|(_, v)| v.as_slice())
 }
 
 /// A text rendering of a request for storage and display: `METHOD path HTTP/2`, then the headers, then the body.
-fn render_request(h: &Headers, body: &[u8]) -> Vec<u8> {
+pub(crate) fn render_request(h: &Headers, body: &[u8]) -> Vec<u8> {
     let lossy = |b: Option<&[u8]>| b.map_or(String::new(), |b| String::from_utf8_lossy(b).into_owned());
     let mut out = format!(
         "{} {} HTTP/2\r\n",
@@ -436,7 +497,7 @@ fn render_request(h: &Headers, body: &[u8]) -> Vec<u8> {
     out
 }
 
-fn render_response(status: &[u8], h: &Headers, body: &[u8]) -> Vec<u8> {
+pub(crate) fn render_response(status: &[u8], h: &Headers, body: &[u8]) -> Vec<u8> {
     let mut out = b"HTTP/2 ".to_vec();
     out.extend_from_slice(status);
     out.extend_from_slice(b"\r\n");
@@ -456,7 +517,7 @@ fn push_headers(out: &mut Vec<u8>, h: &Headers) {
 }
 
 /// The payload of a `DATA` frame without its padding.
-fn data_payload(f: &Frame) -> &[u8] {
+pub(crate) fn data_payload(f: &Frame) -> &[u8] {
     if f.flags & flag::PADDED == 0 {
         return &f.payload;
     }
@@ -506,8 +567,9 @@ impl Engine {
             p.dedup();
             p
         };
+        let checked = self.check(target, &paths[0], opts).await?;
         let mut o = self
-            .open(target, &paths[0], render_request(&first, &body), opts, true)
+            .open(&checked, target, render_request(&first, &body), opts, true, false)
             .await?;
         // Other requests in the plan may name other paths: each goes through the gate too.
         for extra in paths.iter().skip(1) {
@@ -782,5 +844,32 @@ mod tests {
             assert_eq!(decoded[0].1, r.headers, "chunk {chunk:?}");
         }
         assert!(r.frames(1).len() > 2, "split into CONTINUATIONs");
+    }
+}
+
+#[cfg(test)]
+mod from_http1_tests {
+    use super::H2Request;
+
+    #[test]
+    fn a_request_is_converted_without_losing_headers() {
+        let r = H2Request::from_http1(
+            b"POST /a?b=1 HTTP/1.1\r\nHost: x.test:8443\r\nConnection: keep-alive\r\nX-A: 1\r\nx-a: 2\r\nContent-Length: 3\r\n\r\nabc",
+            "https",
+        )
+        .unwrap();
+        let h: Vec<(String, String)> = r
+            .headers
+            .iter()
+            .map(|(n, v)| (String::from_utf8_lossy(n).into(), String::from_utf8_lossy(v).into()))
+            .collect();
+        assert_eq!(h[0], (":method".into(), "POST".into()));
+        assert_eq!(h[2], (":authority".into(), "x.test:8443".into()));
+        assert_eq!(h[3], (":path".into(), "/a?b=1".into()));
+        assert_eq!(h[4..].iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["x-a", "x-a", "content-length"]);
+        assert_eq!(r.body, b"abc");
+        assert!(H2Request::from_http1(b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n", "http").is_err());
+        assert!(H2Request::from_http1(b"GET / HTTP/1.1\r\n\r\n", "http").is_err());
+        assert!(H2Request::from_http1(b"GET / HT", "http").is_err());
     }
 }

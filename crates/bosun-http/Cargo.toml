@@ -1,0 +1,33 @@
+[package]
+name = "bosun-http"
+description = "The raw request engine: sends messages exactly as written, through the scope gate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-scope.workspace = true
+bosun-store.workspace = true
+bosun-proxy.workspace = true
+tokio.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
+thiserror.workspace = true
+httparse.workspace = true
+fluke-hpack.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+rcgen.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

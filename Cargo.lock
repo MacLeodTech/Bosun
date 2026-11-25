@@ -483,6 +483,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bosun-http"
+version = "0.1.0"
+dependencies = [
+ "bosun-model",
+ "bosun-proxy",
+ "bosun-scope",
+ "bosun-store",
+ "bytes",
+ "fluke-hpack",
+ "http-body-util",
+ "httparse",
+ "hyper",
+ "hyper-util",
+ "rand 0.10.4",
+ "rcgen",
+ "rustls",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "webpki-roots 1.0.12",
+]
+
+[[package]]
 name = "bosun-model"
 version = "0.1.0"
 dependencies = [
@@ -1574,6 +1598,15 @@ dependencies = [
  "crc32fast",
  "miniz_oxide 0.9.1",
  "zlib-rs",
+]
+
+[[package]]
+name = "fluke-hpack"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60608dc8ab0a0af790a360b85c3e80a7b50022cd0fc5637a288e25c73e20bd8e"
+dependencies = [
+ "tracing",
 ]
 
 [[package]]

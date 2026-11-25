@@ -175,6 +175,12 @@ This document says what is protected, from whom, and how. Code comments refer ba
   lifts this, and the Repeater's "send out of scope" choice does not. A per-host rate limit sits in the same gate.
   Open: the server does not yet fill in its own networks (WP-23), so in container mode only the address classes
   above are refused.
+- *Raw sends (`bosun-http`).* The raw request engine is the one place tools send bytes. It calls the gate, connects
+  only to the addresses the gate returned (it never resolves a name itself), and reads the response under the memory
+  budget and a per-message cap (16 MiB by default; the rest is cut off and marked truncated). Response framing
+  (`Content-Length`, chunked, close-delimited) is scanned without trusting the server: a bad chunk size or a short
+  body ends the read with an error and keeps what arrived. The scanner has a fuzz target (`raw_framing`). Certificate
+  checking is off by default for tools, because test targets often have bad certificates; `verify_tls` turns it on.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

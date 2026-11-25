@@ -132,6 +132,37 @@ where
     }
 }
 
+/// How much of a refused request body is read and thrown away before the refusal is sent, and for how long.
+///
+/// A server that answers and closes while the client is still uploading resets the connection (unread data in its
+/// receive buffer), and the client can lose the answer: Windows clients report "connection aborted" instead of the
+/// 413 or 503. Reading the rest of a body that is not too large lets the client finish its upload and read the
+/// answer, and keeps the connection usable. Past the limit we stop and close: nothing is stored either way, so the
+/// cost is bounded bandwidth and time per refused request.
+pub const DISCARD_LIMIT: usize = 8 * 1024 * 1024;
+pub const DISCARD_TIME: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Read and drop the rest of a request body (up to [`DISCARD_LIMIT`] bytes, within [`DISCARD_TIME`]). Nothing is
+/// buffered and nothing is reserved from the memory budget.
+pub async fn discard_body<B>(mut body: B)
+where
+    B: Body<Data = Bytes> + Unpin,
+{
+    use http_body_util::BodyExt;
+    let _ = tokio::time::timeout(DISCARD_TIME, async {
+        let mut seen = 0usize;
+        while let Some(Ok(frame)) = body.frame().await {
+            if let Some(d) = frame.data_ref() {
+                seen += d.len();
+                if seen > DISCARD_LIMIT {
+                    break;
+                }
+            }
+        }
+    })
+    .await;
+}
+
 /// Why a body could not be buffered.
 #[derive(Debug)]
 pub enum CollectError {
@@ -146,7 +177,7 @@ pub enum CollectError {
 /// refused rather than exhausting memory). The reservation covers [`crate::budget::COPY_FACTOR`] copies and is
 /// returned so the caller can hold it for as long as the message is buffered.
 pub async fn collect_budgeted<B>(
-    mut body: B,
+    body: &mut B,
     limit: usize,
     budget: &MemoryBudget,
 ) -> Result<(Vec<u8>, Reservation), CollectError>

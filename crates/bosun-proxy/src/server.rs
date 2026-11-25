@@ -22,7 +22,7 @@ use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::body::{CollectError, TeeBody, collect_budgeted};
+use crate::body::{CollectError, TeeBody, collect_budgeted, discard_body};
 use crate::budget::MemoryBudget;
 use crate::config::ProxyConfig;
 use crate::events::EventSender;
@@ -620,17 +620,22 @@ impl Shared {
         let flow_id = active.project.next_flow_id();
         let wants_upgrade = is_upgrade(req.headers());
         let client_upgrade = wants_upgrade.then(|| hyper::upgrade::on(&mut req));
-        let (parts, body) = req.into_parts();
+        let (parts, mut body) = req.into_parts();
         // `_mem` keeps the body's bytes counted against the memory budget while this request is in flight.
-        let (body, _mem) = match collect_budgeted(body, self.cfg.max_request_body, &self.budget).await {
+        let (body, _mem) = match collect_budgeted(&mut body, self.cfg.max_request_body, &self.budget).await {
             Ok(b) => b,
             Err(CollectError::TooBig) => {
+                // Let the client finish its upload, so it can read the answer (see `discard_body`).
+                discard_body(body).await;
                 return text(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "request body is larger than proxy.max_request_body",
                 );
             }
-            Err(CollectError::OutOfMemory) => return busy(),
+            Err(CollectError::OutOfMemory) => {
+                discard_body(body).await;
+                return busy();
+            }
             Err(CollectError::Other(_)) => {
                 return text(StatusCode::BAD_REQUEST, "failed to read the request body");
             }
@@ -839,7 +844,7 @@ impl Shared {
         let mut resp = resp;
         let server_upgrade = (resp.status() == StatusCode::SWITCHING_PROTOCOLS && client_upgrade.is_some())
             .then(|| hyper::upgrade::on(&mut resp));
-        let (mut rparts, rbody) = resp.into_parts();
+        let (mut rparts, mut rbody) = resp.into_parts();
         let rversion = version_label(rparts.version);
         let mut head = serialize_response(rversion, rparts.status, &rparts.headers, &[]);
 
@@ -885,7 +890,7 @@ impl Shared {
             || rules.has(|t| t == RuleTarget::ResponseBody);
         if need_buffer {
             let (rbody, _resp_mem) =
-                match collect_budgeted(rbody, self.cfg.max_buffered_response, &self.budget).await {
+                match collect_budgeted(&mut rbody, self.cfg.max_buffered_response, &self.budget).await {
                     Ok(b) => b,
                     Err(CollectError::OutOfMemory) => return busy(),
                     Err(e) => {

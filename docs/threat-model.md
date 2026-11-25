@@ -152,7 +152,10 @@ This document says what is protected, from whom, and how. Code comments refer ba
   truncated (counters in `/proxy` under `stats`). A write that fails is retried once; after that the batch is
   counted as lost and a `recorder_failed` event tells the UI. The intercept queue is capped by item and byte count
   (`max_intercept_items`, `max_intercept_bytes`): a message that does not fit is refused with 503 and is *not*
-  forwarded, and the UI shows it. An optional timeout forwards a held message unedited.
+  forwarded, and the UI shows it. An optional timeout forwards a held message unedited. When a request body is
+  refused (413 or 503) the proxy first reads and discards the rest of it, at most 8 MiB and 5 seconds, storing and
+  reserving nothing, so the client can finish its upload and read the answer instead of getting a reset. That costs a
+  refused request bounded bandwidth and time on a connection that the connection limits already cap.
 - *Slow and many connections.* Both listeners set a header-read timeout (`header_timeout_secs`, default 30; it
   also bounds idle keep-alive connections), HTTP/2 limits (100 concurrent streams, 64 KiB header list, keep-alive
   pings) and a cap on concurrent connections (`proxy.max_connections` 1024, `api.max_connections` 256). Past the

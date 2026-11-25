@@ -47,6 +47,22 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
   and an HTTP/2 frame writer, with a fuzz target (`raw_framing`). Everything goes through `Gate::check` and the memory
   budget, and is recorded with its tool's `FlowSource`. The raw engine's `legacy-tls` option stays WP-46.
 
+### WP-42: Decoder and Comparer
+
+**WP-42** Decoder and Comparer · Phase 3 · M
+
+- **Do:**
+  - **Decoder:** chains of URL, HTML, Base64/Base64url, hex, gzip/deflate/brotli/zstd, JWT, Unicode escapes and
+    hashing, plus "smart decode". Implemented in Rust behind an endpoint, so the CLI and plugins share it, with the
+    WP-06 decompression caps.
+  - **Comparer:** word-level and byte-level diff of any two messages or texts.
+  - Fuzz targets for the decoders.
+- **Done when:** unit tests cover each codec, including bombs and invalid input.
+- **Done (PR #23 and the UI PR):** the `bosun-codec` crate (URL, HTML, Base64 and Base64url, hex, gzip, deflate, brotli,
+  zstd, JWT, Unicode escapes, SHA-256 and SHA-512, smart decode, word and byte diff), the `/decoder/apply`,
+  `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests, the `codec` fuzz target, and the
+  Decoder and Comparer panels. **Not done:** MD5 and SHA-1, compression encoders, and a `bosun decode` command (WP-26).
+
 ## After Phase 2 (on `main`)
 
 - **CI hardening** (PR #12, #13). The container image smoke test no longer fails on SIGPIPE (it captures

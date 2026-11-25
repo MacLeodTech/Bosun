@@ -51,10 +51,11 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   message viewer (tokeniser, pretty-print, windowed code view, diff) and an accessibility audit in the e2e suite.
   **To add a tool page:** add its id to `web/src/lib/panelids.ts`, an entry in `web/src/lib/panels.ts`, and register
   its commands with `commands.register([...])` (see `builtin.ts`). Do not add a page to `App.svelte`.
-  **Left out, handed to the Linux session:** see "UI follow-ups" below.
+  Items left out of PR #25 are under "UI follow-ups" below.
+- **In flight:** nothing.
 - **Next, in order** (see the phase plan below):
-  1. Add the Decoder and Comparer panels (finishes WP-42), and finish WP-41 (the three open
-     items; the CLI one needs WP-26). Then the UI follow-ups below.
+  1. Finish WP-41 (the three open items; the CLI one needs WP-26). Small WP-42 leftovers: MD5 and SHA-1 (new
+     dependencies), compression encoders, and `bosun decode` (with WP-26); "Send to Decoder or Comparer" is in WP-43.
   2. **Phase 3, track A (M2):** WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
      used every day). WP-38 and WP-39 are the M1 follow-ups.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
@@ -76,9 +77,8 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
      rows; the list shows exactly what the server returns). Reproduce with a load generator, find where they are
      dropped (a bounded channel, a write queue, a batch size), and either fix it or count and report the drops.
      Add a test at a fixed rate.
-  3. **Decoder, Comparer and Scanner panels.** `/decoder/*` and `/comparer/diff` exist. The message viewer
-     (`MessageView`, `CodeView`, `DiffView`) is shared; reuse it. "Send to Decoder / Comparer" commands should
-     register themselves when the panels exist (they are hidden until then).
+  3. **Scanner and Intruder panels** when WP-47 and WP-49 land: reuse the shared viewer (`MessageView`, `CodeView`,
+     `DiffView`). The Decoder and Comparer panels are on `main` (PR #26).
   4. **Tag and note row actions** in History (WP-43), if the API supports them; the row context menu and command
      registry are ready for them.
   5. **axe-core scan (WP-73)** with `@axe-core/playwright`: needs the owner's approval for the new dependency
@@ -119,7 +119,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 **Phases 0 to 2: done** (repository and CI, hardening, foundation). See `docs/releases.md` for what each delivered.
 
 **Phase 3: manual tools and the front ends. Release v0.2, the first public preview.**
-- Track A, M2 tools: WP-41 and WP-42 (finish), then WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
+- Track A, M2 tools: WP-41 (finish), then WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
@@ -207,7 +207,6 @@ valid in the "Depends on" column.
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [ ] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
-| [ ] | WP-42 | Decoder and Comparer | 3 | M | WP-13 |
 | [ ] | WP-44 | Message editor (CodeMirror 6, hex, pretty-print) | 3 | M | |
 | [ ] | WP-43 | History, Organizer, Logger and "send to" | 3 | M | WP-35, WP-41 |
 | [ ] | WP-45 | Engagement helpers | 3 | M | WP-41 |
@@ -553,22 +552,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   `/repeater/settings`, the `bosun-client` methods and the Repeater page (tabs in `sessionStorage`, history, diff, send
   groups, the out-of-scope toggle). **Still open:** tabs saved in the project (a migration), WebSocket sends, and
   `bosun repeater send` (needs the client commands of WP-26).
-
-#### WP-42 Decoder and Comparer · Phase 3 · M
-
-- **Do:**
-  - **Decoder:** chains of URL, HTML, Base64/Base64url, hex, gzip/deflate/brotli/zstd, JWT, Unicode escapes and
-    hashing, plus "smart decode". Implemented in Rust behind an endpoint, so the CLI and plugins share it, with the
-    WP-06 decompression caps.
-  - **Comparer:** word-level and byte-level diff of any two messages or texts.
-  - Fuzz targets for the decoders.
-- **Done when:** unit tests cover each codec, including bombs and invalid input.
-- **Progress (2026-11-25):** the Rust side is done on branch `wp-42-decoder`: the `bosun-codec` crate (URL, HTML, Base64 and
-  Base64url, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, SHA-256 and SHA-512, smart decode, word and byte
-  diff), the `/decoder/apply`, `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests and the
-  `codec` fuzz target. **Still open:** the UI pages (`web/` is free since PR #25: add a panel, not an `App.svelte` page;
-  see "UI restructure merged" at the top), MD5 and SHA-1 (they need new dependencies), compression encoders, and a `bosun decode` CLI command
-  (with WP-26).
 
 #### WP-43 History, Organizer, Logger and "send to" · Phase 3 · M
 
@@ -997,9 +980,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] **Repeater**: tabs, per-tab history (back/forward), h1/h2/WebSocket, raw bytes, "update Content-Length",
   follow redirects (optional), response diff with the previous send, send groups (in order or in parallel,
   single-packet attack for race conditions) → **WP-41**
-- [ ] **Decoder**: chains of URL, HTML, Base64/Base64url, hex, gzip/deflate/brotli/zstd, JWT, Unicode escapes,
-  hashing, "smart decode" → **WP-42**
-- [ ] **Comparer**: word- and byte-level diff of any two messages or texts → **WP-42**
 - [ ] **Organizer**: save requests with notes and status for follow-up → **WP-43**
 - [ ] **Logger**: every request from every tool (not just the proxy), with filters → **WP-43**
 - [ ] "Send to Repeater, Intruder, Comparer or Decoder" everywhere a message is shown → **WP-43**

@@ -15,7 +15,6 @@
     count: number; sendMode: Mode; history: Sent[]; shown: number;
   }
 
-  const KEY = 'bosun.repeater.tabs';
   const INBOX = 'bosun.repeater.inbox';
   const INBOX_EVENT = 'bosun:repeater-inbox';
   const canSend = $derived(session.can('tester'));
@@ -38,24 +37,45 @@
     };
   }
 
-  // Tabs survive a reload of the page (not closing the browser: they may hold credentials).
+  // Tabs are saved in the open project (requests and options, not responses), so they come back with it and move
+  // with it. Saving waits for typing to settle, and never runs before the saved tabs have been read, so an empty
+  // page cannot overwrite what the project holds.
+  let loaded = false;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let saveFailed = $state(false);
+
   $effect(() => {
-    const slim = tabs.map((t) => ({ ...t, history: [], shown: 0 }));
-    try { sessionStorage.setItem(KEY, JSON.stringify({ tabs: slim, active, next })); } catch { /* full or blocked */ }
+    const doc = { tabs: tabs.map((t) => ({ ...t, history: [], shown: 0 })), active, next };
+    const body = JSON.stringify(doc);
+    if (!loaded || !canSend) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try { await api.put('/repeater/tabs', JSON.parse(body)); saveFailed = false; } catch { saveFailed = true; }
+    }, 600);
   });
 
   onMount(() => {
     // The panel stays mounted in the background, so requests sent from History arrive as an event, not a mount.
     window.addEventListener(INBOX_EVENT, takeInbox);
     start();
-    return () => window.removeEventListener(INBOX_EVENT, takeInbox);
+    // Another project is open: its tabs replace these.
+    const off = session.on((e) => { if (e.type === 'reload') start(); });
+    return () => { window.removeEventListener(INBOX_EVENT, takeInbox); off(); clearTimeout(saveTimer); };
   });
 
   async function start() {
+    loaded = false;
+    clearTimeout(saveTimer);
+    tabs = [];
     try {
-      const saved = JSON.parse(sessionStorage.getItem(KEY) ?? 'null');
-      if (saved?.tabs?.length) { tabs = saved.tabs; active = saved.active; next = saved.next; }
-    } catch { /* start fresh */ }
+      const saved = await api.get<{ tabs: Tab[]; active: number; next: number }>('/repeater/tabs');
+      if (saved.tabs.length) {
+        tabs = saved.tabs.map((t) => ({ ...blank(), ...t, history: [], shown: 0 }));
+        active = tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0]!.id;
+        next = Math.max(saved.next, ...tabs.map((t) => t.id + 1));
+      }
+    } catch { /* no access to the saved tabs: start fresh */ }
+    loaded = true;
     takeInbox();
     if (!tabs.length) { const t = blank(); tabs = [t]; active = t.id; }
     try { allowOut = (await api.get<{ allow_out_of_scope: boolean }>('/repeater/settings')).allow_out_of_scope; } catch { /* viewer without access */ }
@@ -63,6 +83,8 @@
 
   /** Requests sent here from the history page. */
   function takeInbox() {
+    // Until the saved tabs are in, requests wait in the inbox: loading them would replace what was added here.
+    if (!loaded) return;
     try {
       const inbox = JSON.parse(sessionStorage.getItem(INBOX) ?? '[]') as Partial<Tab>[];
       sessionStorage.removeItem(INBOX);
@@ -144,6 +166,7 @@
   <label class="small" title="Off by default. Goes back off when a project is opened. Audited."><input type="checkbox" checked={allowOut} disabled={!canSend} onchange={toggleOut} /> Allow out-of-scope targets</label>
 </div>
 {#if error}<p class="error">{error}</p>{/if}
+{#if saveFailed}<p class="error" role="status">The tabs could not be saved in the project.</p>{/if}
 
 {#if tab}
   <div class="toolbar">

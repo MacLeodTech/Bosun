@@ -360,3 +360,70 @@ pub async fn put_settings(State(st): State<AppState>, caller: Caller, Json(s): J
         .await;
     Ok(Json(s).into_response())
 }
+
+/// The Repeater's tabs as the page keeps them. The server stores them as the page wrote them and looks only at their
+/// count and shape, so the page can add a field without a server change.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+pub struct TabsDoc {
+    /// One object per tab (target, request text, options). Responses are not stored.
+    pub tabs: Vec<serde_json::Value>,
+    /// Id of the tab that was open.
+    #[serde(default)]
+    pub active: i64,
+    /// The id the next new tab gets.
+    #[serde(default)]
+    pub next: i64,
+}
+
+const MAX_TABS: usize = 100;
+/// Largest stored tab set, bytes of JSON. The request body limit is lower, so this is a second guard.
+const MAX_TABS_BYTES: usize = 8 << 20;
+
+pub async fn get_tabs(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    let p = st.project();
+    let doc = tokio::task::spawn_blocking(move || p.setting::<TabsDoc>(crate::SETTING_REPEATER_TABS))
+        .await
+        .map_err(|_| {
+            reject(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error (see the server log)",
+            )
+        })?
+        // A stored value that no longer parses is treated as no tabs rather than breaking the page.
+        .unwrap_or(None)
+        .unwrap_or_default();
+    Ok(Json(doc).into_response())
+}
+
+pub async fn put_tabs(State(st): State<AppState>, caller: Caller, Json(doc): Json<TabsDoc>) -> R {
+    caller.require(Role::Tester)?;
+    if doc.tabs.len() > MAX_TABS {
+        return Err(reject(StatusCode::BAD_REQUEST, "too many tabs"));
+    }
+    if doc.tabs.iter().any(|t| !t.is_object()) {
+        return Err(reject(StatusCode::BAD_REQUEST, "each tab must be an object"));
+    }
+    if serde_json::to_vec(&doc).map_or(true, |b| b.len() > MAX_TABS_BYTES) {
+        return Err(reject(StatusCode::PAYLOAD_TOO_LARGE, "the tabs are too large"));
+    }
+    let _settings = st.inner.projects.settings_guard().await;
+    let p = st.project();
+    let d = doc.clone();
+    tokio::task::spawn_blocking(move || p.set_setting(crate::SETTING_REPEATER_TABS, &d))
+        .await
+        .map_err(|_| {
+            reject(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error (see the server log)",
+            )
+        })?
+        .map_err(|e| {
+            tracing::error!(error = %e, "could not store the Repeater tabs");
+            reject(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error (see the server log)",
+            )
+        })?;
+    Ok(Json(doc).into_response())
+}

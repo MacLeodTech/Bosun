@@ -570,6 +570,8 @@ fn the_client_covers_every_documented_operation() {
         ("post", "/repeater/send", "repeater_send"),
         ("get", "/repeater/settings", "repeater_settings"),
         ("put", "/repeater/settings", "put_repeater_settings"),
+        ("get", "/repeater/tabs", "repeater_tabs"),
+        ("put", "/repeater/tabs", "put_repeater_tabs"),
         ("get", "/ca", "ca_info"),
         ("get", "/ca/cert.pem", "ca_pem"),
         ("post", "/browser/launch", "launch_browser"),

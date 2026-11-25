@@ -46,7 +46,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   by eye.
 - **In flight:** nothing. The UI overhaul (PR #25, Windows session) is on `main`; WP-42's pages are in the PR after it.
 - **Next, in order** (see the phase plan below):
-  1. Finish WP-41 (the three open items; the CLI one needs WP-26). Small WP-42 leftovers: MD5 and SHA-1 (new
+  1. Finish WP-41 (WebSocket sends; the CLI one needs WP-26). Small WP-42 leftovers: MD5 and SHA-1 (new
      dependencies), compression encoders, and `bosun decode` (with WP-26); "Send to Decoder or Comparer" is in WP-43.
   2. **Phase 3, track A (M2):** WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
      used every day). WP-38 and WP-39 are the M1 follow-ups.
@@ -520,9 +520,10 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** API and Playwright tests cover tabs, history, diff and send groups; the CLI command sends a raw
   file.
 - **Progress (2026-11-25):** the first slice is on `main`: connection reuse, HTTP/2 multiplexing, `/repeater/send` and
-  `/repeater/settings`, the `bosun-client` methods and the Repeater page (tabs in `sessionStorage`, history, diff, send
-  groups, the out-of-scope toggle). **Still open:** tabs saved in the project (a migration), WebSocket sends, and
-  `bosun repeater send` (needs the client commands of WP-26).
+  `/repeater/settings`, the `bosun-client` methods and the Repeater page (history, diff, send groups, the out-of-scope
+  toggle) and tabs saved in the project (`/repeater/tabs`, kept in the project's settings table rather than a new
+  table; responses are not saved). **Still open:** WebSocket sends, and `bosun repeater send` (needs the client
+  commands of WP-26).
 
 #### WP-43 History, Organizer, Logger and "send to" · Phase 3 · M
 

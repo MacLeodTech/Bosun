@@ -253,3 +253,83 @@ async fn the_client_can_send_and_change_the_setting() {
     assert!(!cl.repeater_settings().await.unwrap());
     assert!(cl.put_repeater_settings(true).await.unwrap());
 }
+
+#[tokio::test]
+async fn tabs_are_saved_in_the_project_and_bounded() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    let put = |b: Value| {
+        let (c, csrf, url) = (c.clone(), csrf.clone(), s.url("/repeater/tabs"));
+        async move {
+            c.put(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // Nothing saved yet.
+    let v: Value = c
+        .get(s.url("/repeater/tabs"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["tabs"], json!([]));
+
+    // Saved, and read back as written (including fields the server does not know).
+    let doc = json!({ "tabs": [{ "id": 1, "host": "a.test", "request": "GET / HTTP/1.1\r\n\r\n", "extra": [1, 2] }], "active": 1, "next": 2 });
+    assert_eq!(put(doc.clone()).await.status(), StatusCode::OK);
+    let v: Value = c
+        .get(s.url("/repeater/tabs"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v, doc);
+    // It is in the project file, so another project would not see it.
+    assert!(
+        s.project
+            .setting::<Value>(bosun_api::SETTING_REPEATER_TABS)
+            .unwrap()
+            .is_some()
+    );
+
+    // Bounds: too many tabs, and something that is not a tab.
+    let many: Vec<Value> = (0..101).map(|i| json!({ "id": i })).collect();
+    assert_eq!(
+        put(json!({ "tabs": many })).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        put(json!({ "tabs": ["x"] })).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    // Refused saves leave the stored tabs alone.
+    let v: Value = c
+        .get(s.url("/repeater/tabs"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v, doc);
+
+    // Writing needs a CSRF token like every other change.
+    let r = c.put(s.url("/repeater/tabs")).json(&doc).send().await.unwrap();
+    assert!(r.status().is_client_error());
+
+    // The client crate reads and writes it too.
+    let cl = bosun_client::Client::new(format!("http://127.0.0.1:{}", s.api.port())).unwrap();
+    cl.login("admin", "a long enough password").await.unwrap();
+    assert_eq!(cl.repeater_tabs().await.unwrap(), doc);
+    let doc2 = json!({ "tabs": [], "active": 0, "next": 1 });
+    assert_eq!(cl.put_repeater_tabs(&doc2).await.unwrap(), doc2);
+}

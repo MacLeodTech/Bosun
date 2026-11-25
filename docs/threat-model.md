@@ -205,6 +205,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
     cuts off a response over the cap with `RST_STREAM`, cancels streams whose caller gave up, and stops using a
     connection after `GOAWAY`. A batch passes the gate for every `:path` before any byte is written.
   - The framing code has a fuzz target (`raw_framing`).
+- *The Decoder and Comparer API (`/decoder/apply`, `/decoder/smart`, `/comparer/diff`).* Pure computation on bytes in the
+  request: nothing is fetched, stored or sent, so the viewer role is enough. The risks are memory and CPU, so the input
+  is capped (4 MiB; 1 MiB per side for a diff), every step's output is capped at 4 MiB (a decompression bomb ends the
+  chain with an error), a chain is at most 16 steps, intermediate outputs are returned truncated, the diff table is
+  capped (very different large inputs are reported coarsely) and the work runs off the async threads. The codecs are
+  in `bosun-codec` (no I/O), covered by property tests and the `codec` fuzz target. Output is data for display as text;
+  the UI never renders it as HTML.
 - *The Repeater API (`/repeater/send`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
   the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
   unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a

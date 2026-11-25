@@ -38,22 +38,16 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   came from a dev machine. Compare them with the first numbers the CI `footprint` job prints on GitHub's runners and
   adjust. Consider a Dependabot group for `github/codeql-action/*`, because `init`, `analyze` and `upload-sarif`
   must be the same version and Dependabot opens them as three PRs.
-- **Open pull requests (2026-11-25), none merged yet.** Merge in this order; the first two are independent fixes:
-  1. #17 `fix-refusal-delivery`: 413/503 refusals reach clients that are still uploading.
-  2. #18 `wp-40-bosun-http` (to `main`): WP-40, the raw request engine (HTTP/1.1, redirects, upstream proxy,
-     WebSockets, HTTP/2 frames).
-  3. #19 `wp-41-repeater` (stacked on #18; retarget to `main` after #18 merges): WP-41 first slice, with connection
-     reuse, HTTP/2 multiplexing, the Repeater API and UI. **Still open in WP-41:** tabs saved in the project (a
-     migration; they are in `sessionStorage` for now), WebSocket sends in the Repeater, and `bosun repeater send` in
-     the CLI.
-  4. #20 `branding` (to `main`): icons, logo, startup banner, `icon.ico` for Windows, `scripts/bosun.sh`. Checked
-     on Linux (desktop builds) and on Windows (builds, window opens); the sign-in logo and first-run setup on
-     Windows have not been looked at by eye.
-  5. #21 `competitive-analysis` (to `main`): `docs/competitive-analysis.md` and WP-75 to WP-86.
-  When a package's PR merges, move its details to `docs/releases.md` and delete its index row (see the rules above).
+- **Merged to `main` (2026-11-25), PR #22** (it combined #18 to #21 and the fix in #17 went in before it): WP-40
+  (`bosun-http`), the first slice of WP-41 (the Repeater), the branding (icons, logo, banner, `icon.ico` for Windows,
+  `scripts/bosun.sh`), `docs/competitive-analysis.md` and WP-75 to WP-86. The desktop app builds on Linux and opens on
+  Windows; the sign-in logo, the Repeater page and first-run setup in the Windows window have not been checked by eye.
+- **In flight:** `wp-42-decoder` (WP-42, Rust side: `bosun-codec`, the API, the fuzz target; its UI pages wait for the
+  Windows session's `ui-phase0` branch, which restructures `web/`, so nothing else should edit `web/` until it lands).
 - **Next, in order** (see the phase plan below):
-  1. Merge the PRs above, then finish WP-41 (the three open items).
-  2. **Phase 3, track A (M2):** WP-42 and WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
+  1. Merge `wp-42-decoder` and `ui-phase0`, then add the Decoder and Comparer pages, and finish WP-41 (the three open
+     items; the CLI one needs WP-26).
+  2. **Phase 3, track A (M2):** WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
      used every day). WP-38 and WP-39 are the M1 follow-ups.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
      release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
@@ -95,7 +89,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 **Phases 0 to 2: done** (repository and CI, hardening, foundation). See `docs/releases.md` for what each delivered.
 
 **Phase 3: manual tools and the front ends. Release v0.2, the first public preview.**
-- Track A, M2 tools: WP-40, then WP-41, WP-42 and WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
+- Track A, M2 tools: WP-41 (finish), then WP-42 and WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
@@ -177,12 +171,11 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
-| [ ] | WP-40 | `bosun-http`: the raw request engine | 3 | L | WP-05, WP-10 |
 | [ ] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-42 | Decoder and Comparer | 3 | M | WP-13 |
 | [ ] | WP-44 | Message editor (CodeMirror 6, hex, pretty-print) | 3 | M | |
@@ -514,21 +507,7 @@ Open packages only; finished ones are in `docs/releases.md`.
   - The desktop login ticket (WP-15) skips TOTP, because it is a local, single-use exchange.
 - **Done when:** API tests cover enrolment, sign-in, a replayed code (refused), recovery codes and admin reset.
 
-### WP-40 to WP-46: M2 manual tools
-
-#### WP-40 `bosun-http`: the raw request engine · Phase 3 · L
-
-- **Why:** Repeater, Intruder, Sequencer and the scanner must send bytes exactly as written, which hyper won't do.
-- **Do:**
-  - A new crate that sends a raw message over HTTP/1.1 (byte for byte: duplicate headers, bare LF, odd methods,
-    no normalisation), HTTP/2 (its own frame writer, so malformed requests are possible) and WebSockets.
-  - Every send goes through `Gate::check` and connects to the pinned address (WP-10); bodies are read under the
-    memory budget (WP-05); results are recorded as flows with the tool's `FlowSource`.
-  - Timings (DNS, connect, TLS, first byte, total), the TLS details and the negotiated protocol are kept with the
-    flow.
-  - "Update Content-Length" and redirect following are options, not defaults.
-- **Done when:** tests against a local test server show malformed requests arrive unchanged, out-of-scope targets
-  are refused, and HTTP/2 frames are as written.
+### WP-41 to WP-46: M2 manual tools
 
 #### WP-41 Repeater · Phase 3 · L
 
@@ -540,6 +519,10 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Endpoints in OpenAPI, a `bosun-client` method and `bosun repeater send` in the CLI (WP-26).
 - **Done when:** API and Playwright tests cover tabs, history, diff and send groups; the CLI command sends a raw
   file.
+- **Progress (2026-11-25):** the first slice is on `main`: connection reuse, HTTP/2 multiplexing, `/repeater/send` and
+  `/repeater/settings`, the `bosun-client` methods and the Repeater page (tabs in `sessionStorage`, history, diff, send
+  groups, the out-of-scope toggle). **Still open:** tabs saved in the project (a migration), WebSocket sends, and
+  `bosun repeater send` (needs the client commands of WP-26).
 
 #### WP-42 Decoder and Comparer · Phase 3 · M
 
@@ -550,6 +533,12 @@ Open packages only; finished ones are in `docs/releases.md`.
   - **Comparer:** word-level and byte-level diff of any two messages or texts.
   - Fuzz targets for the decoders.
 - **Done when:** unit tests cover each codec, including bombs and invalid input.
+- **Progress (2026-11-25):** the Rust side is done on branch `wp-42-decoder`: the `bosun-codec` crate (URL, HTML, Base64 and
+  Base64url, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, SHA-256 and SHA-512, smart decode, word and byte
+  diff), the `/decoder/apply`, `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests and the
+  `codec` fuzz target. **Still open:** the UI pages (after the Windows UI Phase 0 work lands, to avoid conflicts in
+  `App.svelte`), MD5 and SHA-1 (they need new dependencies), compression encoders, and a `bosun decode` CLI command
+  (with WP-26).
 
 #### WP-43 History, Organizer, Logger and "send to" · Phase 3 · M
 
@@ -962,8 +951,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
 
 ### M2 Manual tools
 
-- [ ] `bosun-http`: a raw request engine that sends bytes exactly as written (malformed requests, duplicate
-  headers, bare LF, unusual methods), over HTTP/1.1, HTTP/2 (its own frames), and WebSockets → **WP-40**
 - [ ] Optional `legacy-tls` backend (OpenSSL, opt-in feature) for very old targets, upstream only → **WP-46**
 - [ ] **Repeater**: tabs, per-tab history (back/forward), h1/h2/WebSocket, raw bytes, "update Content-Length",
   follow redirects (optional), response diff with the previous send, send groups (in order or in parallel,

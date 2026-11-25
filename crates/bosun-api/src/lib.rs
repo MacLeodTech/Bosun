@@ -9,6 +9,7 @@
 pub mod auth;
 pub mod browser;
 pub mod child;
+pub mod codec;
 pub mod events;
 pub mod handlers;
 pub mod openapi;
@@ -398,6 +399,9 @@ pub fn router(st: AppState) -> Router {
         .route("/projects/{name}/rename", post(projects::rename))
         .route("/projects/{name}/export", get(projects::export))
         .route("/projects/{name}/backup", post(projects::backup))
+        .route("/decoder/apply", post(codec::decode))
+        .route("/decoder/smart", post(codec::smart))
+        .route("/comparer/diff", post(codec::compare))
         .route("/repeater/send", post(repeater::send))
         .route(
             "/repeater/settings",

@@ -306,7 +306,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [http_messages, ws_frames, decode_body, scope_rules, rewrite_rules, import_project, raw_framing]
+        target: [http_messages, ws_frames, decode_body, scope_rules, rewrite_rules, import_project, raw_framing, codec]
     env:
       FUZZ_SECONDS: ${{ github.event_name == 'schedule' && 600 || 30 }}
       NIGHTLY: nightly-2026-11-22

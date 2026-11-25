@@ -1,0 +1,24 @@
+[package]
+name = "bosun-codec"
+description = "Decoder and Comparer: encodings, decompression and diffs, on bytes, with output caps."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+utoipa.workspace = true
+thiserror.workspace = true
+base64.workspace = true
+flate2.workspace = true
+brotli.workspace = true
+zstd.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

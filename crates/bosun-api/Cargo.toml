@@ -15,6 +15,7 @@ bosun-store.workspace = true
 bosun-scope.workspace = true
 bosun-proxy.workspace = true
 bosun-http.workspace = true
+bosun-codec.workspace = true
 axum.workspace = true
 tower.workspace = true
 tokio.workspace = true

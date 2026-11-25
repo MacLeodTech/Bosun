@@ -9,6 +9,14 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3 so far (on `main`)
 
+- **Web UI upgrade** (PR #25). The `web/` restructure from `docs/ui-ux-upgrade-plan.md`, phases 0 to 5: a dockable
+  workspace (own dock engine, saved layouts, browser pop-out windows), a strict type scale and colour tokens in a
+  low-glare dark and light theme, a shortcut map, a command registry and palette, context menus, drag and drop,
+  multi-select, a client-side filter bar, a shared message viewer, an accessibility audit and a 100,000-row
+  performance pass. Partly delivers WP-44 (viewer only), WP-73, WP-80 and the UI half of WP-75; what is left is
+  in the roadmap's "UI follow-ups". It also scoped the secret scan allowlist (`.gitleaks.toml`) for the UI's storage-key
+  names and shortcut strings, `generic-api-key` rule and `web/src` only.
+
 - **Branding** (PR #22). The app icon, the logo on the sign-in page and in the README, the favicon, `icon.ico` (tauri-build
   needs it on Windows), the startup banner (`bosun serve`, only on a terminal, honours `NO_COLOR`) and
   `scripts/bosun.sh` (build, run, install, container, check). Source art is in `assets/`.

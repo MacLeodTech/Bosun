@@ -239,7 +239,9 @@ This document says what is protected, from whom, and how. Code comments refer ba
   project is opened, and changing it is audited. Each send is audited (target, count, mode) and recorded as a flow
   with source `repeater`, so nothing the Repeater sends is hidden from history. The kill switch stops it. Counts
   are capped (100; 50 for a single-packet batch), and so are the request (4 MiB) and, by the engine, the
-  response. The UI keeps tabs in `sessionStorage` only, because a request can hold credentials.
+  response. Tabs are saved in the project (`/repeater/tabs`, viewer to read, tester to write: at most 100 tabs and 8 MiB,
+  each an object; responses are not stored). A request can hold credentials, but so does every flow in the same file,
+  and the project file is already the place those live, with its permissions, export and backup rules.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

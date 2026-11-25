@@ -446,6 +446,16 @@ impl Client {
         Ok(r.allow_out_of_scope)
     }
 
+    /// The Repeater's saved tabs (`tabs`, `active`, `next`).
+    pub async fn repeater_tabs(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/repeater/tabs")).await
+    }
+
+    /// Replace the Repeater's saved tabs.
+    pub async fn put_repeater_tabs(&self, doc: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::PUT, "/repeater/tabs").json(doc)).await
+    }
+
     /// The kill switch for all tool traffic. Returns the new state.
     pub async fn set_stopped(&self, stopped: bool) -> Result<bool> {
         #[derive(serde::Deserialize)]

@@ -270,6 +270,22 @@ test('message editor: CodeMirror runs under the unchanged CSP, pretty-prints, ed
   expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)).toEqual([]);
 });
 
+test('repeater: the tabs are saved in the project, not just in the page', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByLabel('Host', { exact: true }).fill('saved.example');
+  await rp.getByLabel('Request').fill('GET /kept HTTP/1.1\nHost: saved.example\n\n');
+  // Saving waits for typing to settle, then the server holds the tab (the responses are not stored).
+  await expect
+    .poll(async () => {
+      const r = await page.request.get('/api/v1/repeater/tabs');
+      const doc = (await r.json()) as { tabs: { host: string; request: string; history: unknown[] }[] };
+      return doc.tabs.some((t) => t.host === 'saved.example' && t.request.includes('/kept') && t.history.length === 0);
+    })
+    .toBe(true);
+});
+
 test('decoder and comparer: a chain decodes, smart decode peels layers, and the diff marks what changed', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'Decoder' }).click();

@@ -571,6 +571,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repeater/tabs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The Repeater's tabs as saved in the open project (requests and options; responses are not stored). */
+        get: operations["get_repeater_tabs"];
+        /** @description Replace the Repeater's saved tabs (at most 100). Needs the tester role or above. */
+        put: operations["put_repeater_tabs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules": {
         parameters: {
             query?: never;
@@ -1374,6 +1392,24 @@ export interface components {
         };
         Stopped: {
             stopped: boolean;
+        };
+        /**
+         * @description The Repeater's tabs as the page keeps them. The server stores them as the page wrote them and looks only at their
+         *     count and shape, so the page can add a field without a server change.
+         */
+        TabsDoc: {
+            /**
+             * Format: int64
+             * @description Id of the tab that was open.
+             */
+            active?: number;
+            /**
+             * Format: int64
+             * @description The id the next new tab gets.
+             */
+            next?: number;
+            /** @description One object per tab (target, request text, options). Responses are not stored. */
+            tabs: unknown[];
         };
         TicketBody: {
             /** @description The single-use ticket an embedded engine printed for its parent. */
@@ -3766,6 +3802,104 @@ export interface operations {
             };
             /** @description No such item */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_repeater_tabs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TabsDoc"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_repeater_tabs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TabsDoc"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TabsDoc"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too large */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

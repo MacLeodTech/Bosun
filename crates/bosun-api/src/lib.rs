@@ -44,6 +44,7 @@ pub const MAX_PROJECT_UPLOAD: u64 = 2 << 30;
 pub const SETTING_SCOPE: &str = "scope";
 pub const SETTING_RULES: &str = "match_replace";
 pub const SETTING_INTERCEPT: &str = "intercept";
+pub const SETTING_REPEATER_TABS: &str = "repeater_tabs";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -407,6 +408,7 @@ pub fn router(st: AppState) -> Router {
             "/repeater/settings",
             get(repeater::get_settings).put(repeater::put_settings),
         )
+        .route("/repeater/tabs", get(repeater::get_tabs).put(repeater::put_tabs))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

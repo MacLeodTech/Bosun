@@ -39,6 +39,7 @@ bosun-ca = { path = "crates/bosun-ca" }
 bosun-store = { path = "crates/bosun-store" }
 bosun-scope = { path = "crates/bosun-scope" }
 bosun-proxy = { path = "crates/bosun-proxy" }
+bosun-http = { path = "crates/bosun-http" }
 bosun-api = { path = "crates/bosun-api" }
 bosun-client = { path = "crates/bosun-client" }
 bosun = { path = "crates/bosun" }

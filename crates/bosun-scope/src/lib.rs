@@ -358,6 +358,10 @@ impl Gate {
         self.inner.stopped.load(Ordering::SeqCst)
     }
 
+    pub fn repeater_policy(&self) -> OutOfScopePolicy {
+        *self.inner.repeater_policy.read().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn set_repeater_policy(&self, p: OutOfScopePolicy) {
         *self
             .inner

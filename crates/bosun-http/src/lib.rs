@@ -13,9 +13,12 @@
 //!
 //! It speaks HTTP/1.1 (plain and TLS, [`Engine::send`]), follows redirects when asked
 //! ([`Engine::send_following`]), upgrades to WebSockets with frames written as given ([`ws`]) and writes HTTP/2
-//! frames itself ([`h2`]).
+//! frames itself ([`h2`]). With [`SendOptions::reuse`] HTTP/1.1 connections are pooled, and [`mux`] shares one
+//! HTTP/2 connection between many requests.
 
 pub mod h2;
+pub mod mux;
+pub(crate) mod pool;
 pub mod redirect;
 mod tls;
 pub mod wire;
@@ -70,6 +73,9 @@ pub struct SendOptions {
     pub total_timeout: Duration,
     /// Response bytes kept; more is cut off and marked truncated.
     pub max_response: usize,
+    /// Take the connection from the pool and put it back when the exchange leaves it clean. Off by default, so a
+    /// send is on a connection of its own unless the caller asks.
+    pub reuse: bool,
 }
 
 impl Default for SendOptions {
@@ -82,6 +88,7 @@ impl Default for SendOptions {
             idle_timeout: Duration::from_secs(30),
             total_timeout: Duration::from_secs(120),
             max_response: 16 * 1024 * 1024,
+            reuse: false,
         }
     }
 }
@@ -129,6 +136,8 @@ pub struct Exchange {
     pub leftover: Vec<u8>,
     /// Frame-level detail when the exchange was HTTP/2.
     pub h2: Option<h2::H2Details>,
+    /// The connection came from the pool (so there was no connect or TLS time).
+    pub reused: bool,
 }
 
 impl Exchange {
@@ -163,21 +172,34 @@ impl Exchange {
 pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
-/// A connection the gate approved, and what is known about it.
+/// What the gate said about a target, before any connection.
+pub(crate) struct Checked {
+    pub pinned: bosun_scope::Pinned,
+    pub dns_ms: u64,
+    pub in_scope: bool,
+    pub started_ms: i64,
+    pub started: Instant,
+}
+
+/// A connection in use, and what is known about it.
 pub(crate) struct Opened {
     pub io: Box<dyn Io>,
     /// Keeps the local address registered with the loop guard while the connection lives.
     pub _reg: Registration,
     pub ex: Exchange,
+    pub key: pool::Key,
+    /// How many requests this connection has carried, this one included.
+    pub uses: u32,
 }
 
-/// Sends raw messages. Cheap to clone.
+/// Sends raw messages. Cheap to clone; clones share the connection pool.
 #[derive(Debug, Clone)]
 pub struct Engine {
     gate: Gate,
     budget: MemoryBudget,
     connector: Connector,
     tls: Arc<tls::Configs>,
+    pub(crate) pool: Arc<pool::Pool>,
 }
 
 impl Engine {
@@ -189,15 +211,17 @@ impl Engine {
             budget,
             connector,
             tls: Arc::new(tls::Configs::new()),
+            pool: Arc::new(pool::Pool::default()),
         }
     }
 
     /// Connect the way the proxy does: through its upstream proxy (HTTP CONNECT or SOCKS5) if one is configured,
     /// and with the proxy's loop guard, so a request pointed back at Bosun's own listeners is refused. The
     /// connection is made to the gate's pinned IP address, never to the name, so an upstream proxy cannot be
-    /// made to resolve it differently.
+    /// made to resolve it differently. Connections already pooled are dropped.
     pub fn with_connector(mut self, connector: Connector) -> Self {
         self.connector = connector;
+        self.pool = Arc::new(pool::Pool::default());
         self
     }
 
@@ -209,20 +233,27 @@ impl Engine {
         &self.budget
     }
 
-    /// Check the target with the gate, connect to the pinned addresses and (for https) do the handshake. `alpn`
-    /// is what to offer; `req` is only used to fill in the exchange.
-    pub(crate) async fn open(
+    /// Close every pooled connection (idle HTTP/1.1 ones, and shared HTTP/2 ones once their streams finish).
+    /// Call it when the project changes or the kill switch is thrown.
+    pub fn close_idle(&self) {
+        self.pool.clear();
+    }
+
+    /// Connections held for reuse right now: `(idle HTTP/1.1, shared HTTP/2)`.
+    pub fn pooled(&self) -> (usize, usize) {
+        self.pool.counts()
+    }
+
+    /// Ask the gate about a target. The gate resolves the name (blocking), so it runs off the async threads. Its
+    /// answer is the only address list a send will connect to, and the only one a pooled connection may match.
+    pub(crate) async fn check(
         &self,
         target: &Target,
         gate_path: &str,
-        req: Vec<u8>,
         opts: &SendOptions,
-        h2: bool,
-    ) -> Result<Opened, SendError> {
+    ) -> Result<Checked, SendError> {
         let started = Instant::now();
         let started_ms = now_ms();
-        // The gate resolves the name (blocking), so it runs off the async threads. Its answer is the only
-        // address list this send will connect to.
         let gate = self.gate.clone();
         let (source, scheme, host, port) = (opts.source, target.scheme, target.host.clone(), target.port);
         let pinned = tokio::task::spawn_blocking({
@@ -231,16 +262,17 @@ impl Engine {
         })
         .await
         .map_err(|e| SendError::Connect(host.clone(), e.to_string()))??;
-        let dns_ms = started.elapsed().as_millis() as u64;
-        let in_scope = self.gate.scope().contains(scheme, &host, port, gate_path);
+        Ok(Checked {
+            dns_ms: started.elapsed().as_millis() as u64,
+            in_scope: self.gate.scope().contains(scheme, &host, port, gate_path),
+            pinned,
+            started_ms,
+            started,
+        })
+    }
 
-        let t0 = Instant::now();
-        let (tcp, reg, peer) = self
-            .connect_pinned(&pinned.addrs, opts.connect_timeout)
-            .await
-            .map_err(|e| SendError::Connect(format!("{}:{}", pinned.host, pinned.port), e))?;
-        let connect_ms = t0.elapsed().as_millis() as u64;
-        let mut ex = Exchange {
+    pub(crate) fn blank_exchange(c: &Checked, target: &Target, req: Vec<u8>, peer: SocketAddr) -> Exchange {
+        Exchange {
             target: target.clone(),
             request: req,
             response: Vec::new(),
@@ -250,33 +282,74 @@ impl Engine {
             peer,
             tls: None,
             timings: Timings {
-                dns_ms,
-                connect_ms,
+                dns_ms: c.dns_ms,
                 ..Timings::default()
             },
-            started_ms,
-            in_scope,
+            started_ms: c.started_ms,
+            in_scope: c.in_scope,
             leftover: Vec::new(),
             h2: None,
-        };
-        let io: Box<dyn Io> = match scheme {
+            reused: false,
+        }
+    }
+
+    /// Get a connection to a checked target: a pooled idle one if `reuse` and one matches, else a new one (with
+    /// the TLS handshake for https). `h2` selects the ALPN offer; pooled HTTP/1.1 connections are never used for it.
+    pub(crate) async fn open(
+        &self,
+        c: &Checked,
+        target: &Target,
+        req: Vec<u8>,
+        opts: &SendOptions,
+        h2: bool,
+        reuse: bool,
+    ) -> Result<Opened, SendError> {
+        let key = pool::Key::new(target, opts.verify_tls);
+        if reuse
+            && !h2
+            && let Some(idle) = self.pool.take_idle(&key, &c.pinned.addrs).await
+        {
+            let mut ex = Self::blank_exchange(c, target, req, idle.peer);
+            ex.tls = idle.tls;
+            ex.reused = true;
+            return Ok(Opened {
+                io: idle.io,
+                _reg: idle.reg,
+                ex,
+                key,
+                uses: idle.uses + 1,
+            });
+        }
+        let t0 = Instant::now();
+        let (tcp, reg, peer) = self
+            .connect_pinned(&c.pinned.addrs, opts.connect_timeout)
+            .await
+            .map_err(|e| SendError::Connect(format!("{}:{}", c.pinned.host, c.pinned.port), e))?;
+        let mut ex = Self::blank_exchange(c, target, req, peer);
+        ex.timings.connect_ms = t0.elapsed().as_millis() as u64;
+        let io: Box<dyn Io> = match target.scheme {
             Scheme::Http => Box::new(tcp),
             Scheme::Https => {
                 let cfg = self.tls.get(opts.verify_tls, h2);
-                let name =
-                    tls::server_name(&pinned.host).map_err(|e| SendError::Tls(pinned.host.clone(), e))?;
+                let host = &c.pinned.host;
+                let name = tls::server_name(host).map_err(|e| SendError::Tls(host.clone(), e))?;
                 let t1 = Instant::now();
-                let conn =
-                    tokio::time::timeout(opts.connect_timeout, TlsConnector::from(cfg).connect(name, tcp))
-                        .await
-                        .map_err(|_| SendError::Tls(pinned.host.clone(), "timed out".into()))?
-                        .map_err(|e| SendError::Tls(pinned.host.clone(), e.to_string()))?;
+                let conn = tokio::time::timeout(opts.connect_timeout, TlsConnector::from(cfg).connect(name, tcp))
+                    .await
+                    .map_err(|_| SendError::Tls(host.clone(), "timed out".into()))?
+                    .map_err(|e| SendError::Tls(host.clone(), e.to_string()))?;
                 ex.timings.tls_ms = Some(t1.elapsed().as_millis() as u64);
                 ex.tls = Some(tls::info(conn.get_ref().1));
                 Box::new(conn)
             }
         };
-        Ok(Opened { io, _reg: reg, ex })
+        Ok(Opened {
+            io,
+            _reg: reg,
+            ex,
+            key,
+            uses: 1,
+        })
     }
 
     /// Try each pinned address in turn; the first that accepts wins.
@@ -287,9 +360,7 @@ impl Engine {
     ) -> Result<(TcpStream, Registration, SocketAddr), String> {
         let mut last = "no addresses".to_string();
         for a in addrs {
-            match tokio::time::timeout(timeout, self.connector.connect_tcp(&a.ip().to_string(), a.port()))
-                .await
-            {
+            match tokio::time::timeout(timeout, self.connector.connect_tcp(&a.ip().to_string(), a.port())).await {
                 Ok(Ok((s, reg))) => {
                     let _ = s.set_nodelay(true);
                     return Ok((s, reg, *a));
@@ -302,8 +373,11 @@ impl Engine {
     }
 
     /// Send `raw` to `target` and read the response.
+    ///
+    /// With `opts.reuse` the connection comes from (and, if the exchange left it clean, goes back to) a pool. The
+    /// gate is asked every time, and a pooled connection is used only if its address is among the ones the gate
+    /// just pinned, so a name that now resolves elsewhere does not reach an old connection.
     pub async fn send(&self, target: &Target, raw: &[u8], opts: &SendOptions) -> Result<Exchange, SendError> {
-        let started = Instant::now();
         let (method, path, _) = request_line(raw);
         if method.is_empty() {
             return Err(SendError::BadRequest("no request line"));
@@ -313,18 +387,38 @@ impl Engine {
         } else {
             raw.to_vec()
         };
-        let mut o = self.open(target, &gate_path(&path), request, opts, false).await?;
-        let deadline = started + opts.total_timeout;
-        self.exchange(
-            &mut o.io,
-            &mut o.ex,
-            method.eq_ignore_ascii_case("HEAD"),
-            opts,
-            deadline,
-        )
-        .await?;
-        o.ex.timings.total_ms = started.elapsed().as_millis() as u64;
-        Ok(o.ex)
+        let checked = self.check(target, &gate_path(&path), opts).await?;
+        let wants_close = pool::request_closes(&request);
+        let idempotent = matches!(
+            method.to_ascii_uppercase().as_str(),
+            "GET" | "HEAD" | "OPTIONS" | "TRACE" | "PUT" | "DELETE"
+        );
+        let mut attempt = 0;
+        loop {
+            let reuse = opts.reuse && !wants_close && attempt == 0;
+            let mut o = self.open(&checked, target, request.clone(), opts, false, reuse).await?;
+            let deadline = checked.started + opts.total_timeout;
+            let r = self
+                .exchange(&mut o.io, &mut o.ex, method.eq_ignore_ascii_case("HEAD"), opts, deadline)
+                .await;
+            // A pooled connection the server closed while it sat idle fails before any response byte. For a
+            // request that is safe to repeat, try once more on a new connection.
+            let stale = o.ex.reused
+                && idempotent
+                && (matches!(r, Err(SendError::Write(_))) || (o.ex.response.is_empty() && o.ex.error.is_some()));
+            if stale && attempt == 0 {
+                attempt += 1;
+                continue;
+            }
+            let clean = r?;
+            o.ex.timings.total_ms = checked.started.elapsed().as_millis() as u64;
+            if opts.reuse && clean && !wants_close {
+                let ex = o.ex.clone();
+                self.pool.put_idle(o);
+                return Ok(ex);
+            }
+            return Ok(o.ex);
+        }
     }
 
     /// Send, and follow redirects (`301`, `302`, `303`, `307`, `308`) up to `max_redirects` times. Returns every
@@ -344,20 +438,11 @@ impl Engine {
         let mut seen = std::collections::HashSet::new();
         let (mut target, mut raw) = (target.clone(), raw.to_vec());
         while chain.len() <= max_redirects as usize {
-            let last = chain
-                .last()
-                .map(|e| (e.status, e.response.clone()))
-                .unwrap_or_default();
-            let Some(status @ (301 | 302 | 303 | 307 | 308)) = last.0 else {
-                break;
-            };
-            let Some(loc) = response_header(&last.1, "location") else {
-                break;
-            };
+            let last = chain.last().map(|e| (e.status, e.response.clone())).unwrap_or_default();
+            let Some(status @ (301 | 302 | 303 | 307 | 308)) = last.0 else { break };
+            let Some(loc) = response_header(&last.1, "location") else { break };
             let (method, req_target, _) = request_line(&raw);
-            let Some(url) = redirect::resolve(&target, &req_target, &loc) else {
-                break;
-            };
+            let Some(url) = redirect::resolve(&target, &req_target, &loc) else { break };
             if !seen.insert(url.clone()) {
                 if let Some(e) = chain.last_mut() {
                     e.error = Some(format!("redirect loop at {}", url.path));
@@ -383,7 +468,8 @@ impl Engine {
         Ok(chain)
     }
 
-    /// Write the request on `io` and read one response into `ex`.
+    /// Write the request on `io` and read one response into `ex`. `Ok(true)` if the connection is clean enough
+    /// to be used for another request.
     pub(crate) async fn exchange(
         &self,
         io: &mut Box<dyn Io>,
@@ -391,7 +477,7 @@ impl Engine {
         head_only: bool,
         opts: &SendOptions,
         deadline: Instant,
-    ) -> Result<(), SendError> {
+    ) -> Result<bool, SendError> {
         let written = Instant::now();
         let w = async {
             io.write_all(&ex.request).await?;
@@ -410,7 +496,7 @@ impl Engine {
         ex.error = out.error;
         ex.leftover = out.leftover;
         ex.timings.first_byte_ms = out.first_byte_ms;
-        Ok(())
+        Ok(out.reusable)
     }
 }
 
@@ -422,6 +508,8 @@ struct Read {
     first_byte_ms: Option<u64>,
     /// Bytes that arrived after the head of a `101` (the start of the upgraded stream).
     leftover: Vec<u8>,
+    /// The message ended exactly where its framing says, the server did not ask to close, and nothing else came.
+    reusable: bool,
 }
 
 /// Read one response (skipping `100 Continue` and other interim ones, which stay in the bytes).
@@ -444,12 +532,14 @@ where
         error: None,
         first_byte_ms: None,
         leftover: Vec::new(),
+        reusable: false,
     };
     let mut chunk = vec![0u8; 16 * 1024];
     // Start of the message being read (interim responses come before it), and its parsed shape.
     let mut msg_start = 0usize;
     let mut body_start: Option<usize> = None;
     let mut framing = Framing::None;
+    let mut keep_alive = false;
     let mut scanner = ChunkScanner::default();
     loop {
         // Is the response complete with what we have?
@@ -464,6 +554,7 @@ where
                 }
                 Ok(h) => {
                     out.status = Some(h.status);
+                    keep_alive = h.http11 && !h.close && h.status != 101;
                     framing = if head_only || h.status == 101 || h.status == 204 || h.status == 304 {
                         Framing::None
                     } else {
@@ -493,6 +584,7 @@ where
             };
             if done {
                 // Anything past the end of this message is not part of the response.
+                let before = out.bytes.len();
                 match framing {
                     Framing::Length(n) => out.bytes.truncate(bs + n as usize),
                     Framing::None => {
@@ -505,6 +597,11 @@ where
                     }
                     Framing::UntilClose => {}
                 }
+                out.reusable = keep_alive
+                    && framing != Framing::UntilClose
+                    && out.bytes.len() == before
+                    && out.leftover.is_empty()
+                    && out.error.is_none();
                 return out;
             }
         }
@@ -562,6 +659,10 @@ where
 struct Head {
     status: u16,
     framing: Framing,
+    /// `HTTP/1.1` (so the connection is persistent unless it says otherwise).
+    http11: bool,
+    /// `Connection: close` was present.
+    close: bool,
 }
 
 fn parse_head(head: &[u8]) -> Result<Head, &'static str> {
@@ -590,7 +691,16 @@ fn parse_head(head: &[u8]) -> Result<Head, &'static str> {
     } else {
         Framing::UntilClose
     };
-    Ok(Head { status, framing })
+    let close = r.headers.iter().any(|h| {
+        h.name.eq_ignore_ascii_case("connection")
+            && std::str::from_utf8(h.value).is_ok_and(|v| v.to_ascii_lowercase().contains("close"))
+    });
+    Ok(Head {
+        status,
+        framing,
+        http11: r.version == Some(1),
+        close,
+    })
 }
 
 /// The value of a response header, from raw response bytes (first match, lossy).

@@ -190,7 +190,25 @@ This document says what is protected, from whom, and how. Code comments refer ba
     first and a panic is caught, so server bytes cannot take the caller down.
   - Certificate checking is off by default for tools, because test targets often have bad certificates;
     `verify_tls` turns it on.
+  - *Connection reuse and multiplexing.* Pooling is off unless a send asks for it. The gate is asked on every
+    send, whether or not a connection is pooled, and a pooled HTTP/1.1 connection or the shared HTTP/2 connection
+    is used only if its peer address is one the gate has just pinned for that name, so a name that now resolves
+    elsewhere (DNS rebinding) never reaches an old connection. A connection is also keyed by scheme, host, port
+    and whether the certificate is checked, so a send that asked for checking never rides one made without it.
+    Only a connection the last exchange left clean goes back (no `Connection: close`, framed body, no extra
+    bytes); idle ones expire after 30 s, are checked for liveness before use and are dropped when a project is
+    opened. A stale one is retried once, for idempotent methods only. The HTTP/2 driver keeps both flow-control
+    windows, honours the server's stream limit, reserves response bytes from the memory budget as they arrive,
+    cuts off a response over the cap with `RST_STREAM`, cancels streams whose caller gave up, and stops using a
+    connection after `GOAWAY`. A batch passes the gate for every `:path` before any byte is written.
   - The framing code has a fuzz target (`raw_framing`).
+- *The Repeater API (`/repeater/send`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
+  the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
+  unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a
+  project is opened, and changing it is audited. Each send is audited (target, count, mode) and recorded as a flow
+  with source `repeater`, so nothing the Repeater sends is hidden from history. The kill switch stops it. Counts
+  are capped (100; 50 for a single-packet batch), and so are the request (4 MiB) and, by the engine, the
+  response. The UI keeps tabs in `sessionStorage` only, because a request can hold credentials.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

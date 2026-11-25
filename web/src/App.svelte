@@ -9,10 +9,11 @@
   import Target from './pages/Target.svelte';
   import Settings from './pages/Settings.svelte';
   import Projects from './pages/Projects.svelte';
+  import Repeater from './pages/Repeater.svelte';
 
-  type Page = 'intercept' | 'history' | 'rules' | 'target' | 'projects' | 'settings';
+  type Page = 'intercept' | 'history' | 'repeater' | 'rules' | 'target' | 'projects' | 'settings';
   const pages: [Page, string][] = [
-    ['intercept', 'Intercept'], ['history', 'HTTP history'], ['rules', 'Match & replace'], ['target', 'Target'], ['projects', 'Projects'], ['settings', 'Settings'],
+    ['intercept', 'Intercept'], ['history', 'HTTP history'], ['repeater', 'Repeater'], ['rules', 'Match & replace'], ['target', 'Target'], ['projects', 'Projects'], ['settings', 'Settings'],
   ];
   const fromHash = (): Page => {
     const h = location.hash.slice(1) as Page;
@@ -45,7 +46,9 @@
 
   onMount(() => {
     session.init();
-    return session.on((e) => {
+    const onHash = () => { page = fromHash(); };
+    window.addEventListener('hashchange', onHash);
+    const off = session.on((e) => {
       if (e.type === 'reload') {
         api.get<{ requests: boolean; responses: boolean }>('/intercept').then((s: { requests: boolean; responses: boolean }) => (held = (s.requests ? 1 : 0) + (s.responses ? 1 : 0)));
       } else if (e.type === 'project_switched') {
@@ -55,6 +58,10 @@
       } else if (e.type === 'intercept_state') held = (e.requests ? 1 : 0) + (e.responses ? 1 : 0);
       else if (e.type === 'recorder_failed') lost = { n: (lost?.n ?? 0) + e.lost, error: e.error };
     });
+    return () => {
+      off();
+      window.removeEventListener('hashchange', onHash);
+    };
   });
 </script>
 
@@ -89,6 +96,7 @@
       {#key generation}
         {#if page === 'intercept'}<Intercept />
         {:else if page === 'history'}<History />
+        {:else if page === 'repeater'}<Repeater />
         {:else if page === 'rules'}<Rules />
         {:else if page === 'target'}<Target />
         {:else if page === 'projects'}<Projects />

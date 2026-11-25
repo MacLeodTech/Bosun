@@ -264,6 +264,26 @@ impl Proxy {
         self.shared.active().recorder.flush();
     }
 
+    /// Record a flow made by a tool (the Repeater) in the open project, through the same recorder as proxied ones.
+    pub fn record(&self, f: bosun_store::NewFlow) {
+        self.shared.active().recorder.flow(f);
+    }
+
+    /// Record a WebSocket message of a flow made by a tool.
+    pub fn record_ws(&self, m: bosun_store::NewWsMessage) {
+        self.shared.active().recorder.ws(m);
+    }
+
+    /// The memory budget shared by the proxy and the tools.
+    pub fn budget(&self) -> MemoryBudget {
+        self.shared.budget.clone()
+    }
+
+    /// A plain-TCP connector with the proxy's upstream proxy and loop guard, for tools that make their own requests.
+    pub fn tool_connector(&self) -> Connector {
+        self.shared.tcp.clone()
+    }
+
     /// The project flows are being recorded to.
     pub fn project(&self) -> Arc<Project> {
         self.shared.active().project.clone()

@@ -399,6 +399,7 @@ dependencies = [
  "base64 0.23.1",
  "bosun-ca",
  "bosun-client",
+ "bosun-http",
  "bosun-model",
  "bosun-proxy",
  "bosun-scope",

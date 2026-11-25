@@ -1,5 +1,6 @@
 //! The raw engine's parsers on arbitrary input. None may panic, and:
 //! - the chunked scanner gives the same answer however the bytes are split across reads;
+//! - an HTTP/1.1 request converted to HTTP/2 encodes to a header block that decodes;
 //! - rewriting `Content-Length` twice is the same as once;
 //! - WebSocket and HTTP/2 frames that parse encode back to something that parses to the same frame;
 //! - header blocks from HTTP/2 frames decode (or fail) without panicking;
@@ -15,6 +16,11 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
     if let Some(end) = head_end(data) {
         assert!(end <= data.len());
+    }
+    // Converting a request to HTTP/2 never panics, and what it makes encodes to a header block that decodes again.
+    if let Ok(r) = h2::H2Request::from_http1(data, "http") {
+        let frames = r.frames(1);
+        assert!(h2::decode_plan_headers(&frames).is_ok());
     }
     let once = update_content_length(data);
     assert_eq!(update_content_length(&once), once);

@@ -253,8 +253,9 @@ impl Engine {
         if method.is_empty() {
             return Err(SendError::BadRequest("no request line"));
         }
+        let checked = self.check(target, &gate_path(&path), opts).await?;
         let mut o = self
-            .open(target, &gate_path(&path), raw_handshake.to_vec(), opts, false)
+            .open(&checked, target, raw_handshake.to_vec(), opts, false, false)
             .await?;
         self.exchange(&mut o.io, &mut o.ex, false, opts, started + opts.total_timeout)
             .await?;

@@ -2441,6 +2441,207 @@
         }
       }
     },
+    "/repeater/send": {
+      "post": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Send a raw request once or many times (sequentially, in parallel, or as an HTTP/2 single-packet batch). Every send passes the scope gate and is recorded as a flow with source repeater. A send that is refused or fails comes back as a result with an error, not as an HTTP error. Needs the tester role or above.",
+        "operationId": "repeater_send",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/repeater/settings": {
+      "get": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Whether the Repeater may send out of scope.",
+        "operationId": "get_repeater_settings",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepeaterSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Allow or refuse out-of-scope sends from the Repeater (audited; goes back to refuse when a project is opened). Needs the tester role or above.",
+        "operationId": "put_repeater_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepeaterSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepeaterSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rules": {
       "get": {
         "tags": [
@@ -4433,6 +4634,14 @@
           }
         }
       },
+      "Mode": {
+        "type": "string",
+        "enum": [
+          "sequential",
+          "parallel",
+          "single_packet"
+        ]
+      },
       "NewProject": {
         "type": "object",
         "required": [
@@ -4621,6 +4830,13 @@
             "description": "Names last opened, newest first."
           }
         }
+      },
+      "Protocol": {
+        "type": "string",
+        "enum": [
+          "http1",
+          "h2"
+        ]
       },
       "ProxyEvent": {
         "oneOf": [
@@ -4930,6 +5146,18 @@
           }
         }
       },
+      "RepeaterSettings": {
+        "type": "object",
+        "required": [
+          "allow_out_of_scope"
+        ],
+        "properties": {
+          "allow_out_of_scope": {
+            "type": "boolean",
+            "description": "Let the Repeater send to hosts outside the scope. Starts off, and goes back off when a project is opened."
+          }
+        }
+      },
       "Revoked": {
         "type": "object",
         "required": [
@@ -5038,6 +5266,188 @@
             "items": {
               "$ref": "#/components/schemas/ScopeRule"
             }
+          }
+        }
+      },
+      "SendBody": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "request"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many times to send it (1 to 100).",
+            "minimum": 0
+          },
+          "follow_redirects": {
+            "type": "boolean",
+            "description": "Follow redirects (HTTP/1.1 only), recording each hop."
+          },
+          "host": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/Protocol"
+          },
+          "request": {
+            "type": "string",
+            "description": "The request as written, base64."
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          },
+          "update_content_length": {
+            "type": "boolean",
+            "description": "Rewrite `Content-Length` to match the body. Off by default: what you wrote is what is sent."
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SendReply": {
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SendResult"
+            }
+          }
+        }
+      },
+      "SendResult": {
+        "type": "object",
+        "required": [
+          "index",
+          "hop",
+          "refused",
+          "truncated",
+          "reused",
+          "request",
+          "response"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no (or only a partial) response."
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The recorded flow, when something was sent."
+          },
+          "h2_frames": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Number of HTTP/2 frames written and read, when the exchange was HTTP/2."
+          },
+          "hop": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Which redirect hop (0 is the request itself).",
+            "minimum": 0
+          },
+          "in_scope": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Which of the `count` sends this is (0-based).",
+            "minimum": 0
+          },
+          "peer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refused": {
+            "type": "boolean",
+            "description": "The scope gate or the kill switch stopped it; nothing was sent."
+          },
+          "request": {
+            "type": "string",
+            "description": "What was written, base64."
+          },
+          "response": {
+            "type": "string",
+            "description": "What was read, base64."
+          },
+          "reused": {
+            "type": "boolean",
+            "description": "The connection came from the pool or was shared."
+          },
+          "started_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "timings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimingsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tls": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TlsSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
           }
         }
       },
@@ -5226,6 +5636,68 @@
           }
         }
       },
+      "TimingsOut": {
+        "type": "object",
+        "required": [
+          "dns_ms",
+          "connect_ms",
+          "total_ms"
+        ],
+        "properties": {
+          "connect_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "dns_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "first_byte_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "tls_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TlsSummary": {
+        "type": "object",
+        "required": [
+          "version",
+          "cipher"
+        ],
+        "properties": {
+          "alpn": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cipher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "TokenScope": {
         "type": "string",
         "description": "What an API token may do. A `Read` token can only make requests that don't change anything (GET, HEAD).",
@@ -5325,6 +5797,9 @@
     },
     {
       "name": "proxy"
+    },
+    {
+      "name": "repeater"
     },
     {
       "name": "accounts"

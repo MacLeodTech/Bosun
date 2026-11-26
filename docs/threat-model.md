@@ -170,6 +170,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *The CA's reach.* One CA per install, never shared. The launched browser trusts it by SPKI pin
   (`--ignore-certificate-errors-spki-list`) in its own profile, so it never needs installing system-wide.
   `doctor` warns if it finds the CA in a system bundle.
+  *Lifetime and rotation.* The CA lasts three years. `doctor` and the Settings page warn 30 days before expiry
+  (`doctor` fails once it has expired). `bosun ca rotate` makes a new CA and keeps only the old certificate (in
+  `ca/previous/`), deleting the old key so a retired key cannot be stolen later; it is a local command on the
+  data directory and needs a restart. Rotate after the data key or the data directory may have leaked, and
+  replace the CA wherever it was installed by hand. `--permit-domain` makes the new CA name-constrained (DNS
+  names under the listed domains only, all IP addresses excluded), which limits what a stolen key can
+  impersonate on test devices to the scope's own domains; it relies on the client enforcing the constraint
+  (current browsers and OSes do, some embedded TLS stacks do not).
 - *Secrets in child processes.* The launched browser (and any later child: crawler browsers, plugins) starts from an
   empty environment plus an allowlist (`PATH`, `HOME`, display and `XDG_*` variables and similar), so
   `BOSUN_DATA_KEY` never reaches a process that loads hostile pages. Every spawn goes through

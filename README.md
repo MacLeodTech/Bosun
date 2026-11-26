@@ -149,7 +149,7 @@ See [docs/testing.md](docs/testing.md) for the details.
 |---|---|
 | `bosun serve [--project NAME] [--proxy ADDR] [--listen ADDR]` | Run the proxy and the UI/API |
 | `bosun doctor` | Check the install (permissions, keys, CA trust, exposure) |
-| `bosun ca export [--der] [--out FILE]`, `ca info` | The CA certificate and its fingerprints |
+| `bosun ca export [--der] [--out FILE]`, `ca info`, `ca rotate [--permit-domain D]...` | The CA certificate, its fingerprints and expiry; replace it, optionally limited to some domains |
 | `bosun user add NAME [--role viewer\|tester\|admin]`, `user passwd NAME`, `user totp-reset NAME`, `user list` | Accounts (password on stdin) |
 | `bosun user role NAME ROLE`, `user delete NAME [--yes]`, `user sessions NAME [--revoke]`, `user list --json` | More account administration |
 | `bosun token create USER --name N [--scope read\|full] [--expires-days D]`, `token list [USER]`, `token revoke ID` | API tokens (`--json` on create and list) |
@@ -160,6 +160,13 @@ See [docs/testing.md](docs/testing.md) for the details.
 | `bosun login --server URL [--profile NAME] [-u USER]` | Sign in to an engine and keep an API token in a profile (password on stdin) |
 | `bosun status [--server URL] [--profile NAME] [--json]` | Show the engine you are signed in to |
 | `bosun repeater send TARGET [FILE] [--http2] [--count N] [--mode sequential\|parallel\|single-packet] [-i] [--json]` | Send a raw request file (or stdin) through the Repeater; exit code 3 when the scope refused it, 4 when nothing came back |
+
+Which CA to use: the default CA (valid for any name) is for the launched browser, which pins it without
+installing it. For a device you have to install a CA on (a phone, a VM), run
+`bosun ca rotate --permit-domain target.example --permit-domain other.example` first: the new CA is accepted only
+for those domains and never for IP addresses, so a leaked key cannot impersonate anything else to that device.
+The CA lasts three years; `doctor` and the Settings page warn 30 days before it ends. Rotate, restart Bosun and
+replace the installed copy (`bosun ca export`). The old certificate stays in `ca/previous/`, its key is deleted.
 
 Configuration: `--config FILE` or `BOSUN_CONFIG`. Data: `--data-dir`, `BOSUN_DATA_DIR`, else the platform data
 directory. The data key: `BOSUN_DATA_KEY` (base64) or `BOSUN_DATA_KEY_FILE`, else `<data>/data.key`.

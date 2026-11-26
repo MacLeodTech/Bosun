@@ -7,7 +7,7 @@
   import type { ApiToken, AuditEntry, Role, SessionInfo, User } from '../lib/types';
 
   interface ProxyInfo { listen: string; http2: boolean; invisible: boolean; verify_upstream_tls: boolean; auth_required: boolean; tools_stopped: boolean; tls_passthrough: string[] }
-  interface CaInfo { fingerprint_sha256: string; spki_sha256: string }
+  interface CaInfo { fingerprint_sha256: string; spki_sha256: string; days_left: number; expiring: boolean; permitted_domains: string[] }
 
   let proxy = $state<ProxyInfo | null>(null);
   let ca = $state<CaInfo | null>(null);
@@ -104,6 +104,12 @@
     <h2>Certificate authority</h2>
     {#if ca}
       <p class="small">SHA-256 <code>{ca.fingerprint_sha256}</code></p>
+      {#if ca.expiring}
+        <p class="error" role="alert" data-testid="ca-expiring">{ca.days_left < 0 ? 'This CA has expired.' : `This CA expires in ${ca.days_left} days.`} Run <code>bosun ca rotate</code>, restart Bosun, and replace the CA wherever you installed it.</p>
+      {/if}
+      {#if ca.permitted_domains.length > 0}
+        <p class="small">Name-constrained to: <code>{ca.permitted_domains.join(', ')}</code></p>
+      {/if}
       <p><a href="/api/v1/ca/cert.pem" download>Download CA certificate (PEM)</a> or browse to <code>http://bosun/</code> through the proxy.</p>
       <p class="small muted">This CA is unique to this install. Install it only in a separate browser profile, never system-wide; anyone with the data key could impersonate any site to a device that trusts it.</p>
     {/if}

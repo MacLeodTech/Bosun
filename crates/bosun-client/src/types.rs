@@ -355,6 +355,10 @@ pub struct CaInfo {
     pub fingerprint_sha256: String,
     pub spki_sha256: String,
     pub pem: String,
+    pub not_after: i64,
+    pub days_left: i64,
+    pub expiring: bool,
+    pub permitted_domains: Vec<String>,
 }
 
 /// One message on the event stream, without its sequence number (see [`crate::Sequenced`]).

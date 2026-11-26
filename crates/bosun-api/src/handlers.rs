@@ -908,6 +908,10 @@ pub async fn ca_info(State(st): State<AppState>, caller: Caller) -> R {
         "fingerprint_sha256": st.inner.ca.fingerprint(),
         "spki_sha256": st.inner.ca.spki_hash(),
         "pem": st.inner.ca.cert_pem(),
+        "not_after": st.inner.ca.not_after().unix_timestamp(),
+        "days_left": st.inner.ca.days_left(),
+        "expiring": st.inner.ca.days_left() <= bosun_ca::EXPIRY_WARN_DAYS,
+        "permitted_domains": st.inner.ca.permitted_domains(),
     }))
     .into_response())
 }

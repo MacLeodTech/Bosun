@@ -80,6 +80,17 @@ pub fn load_ca(cfg: &Config, paths: &Paths) -> Result<CertificateAuthority> {
     CertificateAuthority::load_or_create(&paths.ca(), &key).context("cannot load the CA")
 }
 
+/// Replace the CA with a new one (see `CertificateAuthority::rotate`).
+pub fn rotate_ca(
+    cfg: &Config,
+    paths: &Paths,
+    opts: &bosun_ca::CaOptions,
+) -> Result<(CertificateAuthority, bosun_ca::Rotation)> {
+    let key = load_key(cfg, paths)?;
+    private_dir(&paths.ca())?;
+    CertificateAuthority::rotate(&paths.ca(), &key, opts).context("cannot rotate the CA")
+}
+
 /// A running engine.
 #[derive(Debug)]
 pub struct Engine {

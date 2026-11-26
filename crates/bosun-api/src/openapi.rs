@@ -84,6 +84,14 @@ pub struct CaInfo {
     pub fingerprint_sha256: String,
     pub spki_sha256: String,
     pub pem: String,
+    /// Expiry, seconds since the Unix epoch.
+    pub not_after: i64,
+    /// Whole days until expiry (negative once expired).
+    pub days_left: i64,
+    /// True when the CA expires within 30 days or already has.
+    pub expiring: bool,
+    /// Domains a name-constrained CA is limited to; empty when unconstrained.
+    pub permitted_domains: Vec<String>,
 }
 #[derive(ToSchema, Serialize)]
 pub struct NewTokenReply {

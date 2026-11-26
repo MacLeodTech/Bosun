@@ -1430,8 +1430,22 @@ export interface components {
          */
         Bytes: string;
         CaInfo: {
+            /**
+             * Format: int64
+             * @description Whole days until expiry (negative once expired).
+             */
+            days_left: number;
+            /** @description True when the CA expires within 30 days or already has. */
+            expiring: boolean;
             fingerprint_sha256: string;
+            /**
+             * Format: int64
+             * @description Expiry, seconds since the Unix epoch.
+             */
+            not_after: number;
             pem: string;
+            /** @description Domains a name-constrained CA is limited to; empty when unconstrained. */
+            permitted_domains: string[];
             spki_sha256: string;
         };
         CaptureBody: {

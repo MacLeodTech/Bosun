@@ -284,38 +284,67 @@ mod tests {
         }
     }
 
+    /// The writer is stuck (a slow disk). The caller is never held up; what does not fit is counted, and what
+    /// was accepted is written once the writer is free. Deterministic: the test waits until the writer is
+    /// stuck inside its first write, so how fast the pushes run cannot change what happens.
     #[test]
-    fn a_stalled_writer_never_blocks_the_caller_and_bodies_are_dropped() {
+    fn a_stalled_writer_never_blocks_the_caller_and_every_drop_is_counted() {
         let (events, _) = crate::events::EventBus::channel(4);
         let gate = Arc::new(Mutex::new(()));
         let held = gate.lock().unwrap();
         let written = Arc::new(Mutex::new(Vec::<usize>::new()));
+        let (stuck_tx, stuck_rx) = mpsc::channel::<()>();
         let (g, w) = (gate.clone(), written.clone());
         let rec = Recorder::spawn(
             4,
-            MemoryBudget::new(1 << 20),
+            MemoryBudget::new(64 << 20),
             events,
             None,
             Box::new(move |flows, _| {
+                let _ = stuck_tx.send(());
                 let _wait = g.lock().unwrap(); // stalls until the test lets go
                 w.lock().unwrap().extend(flows.iter().map(|f| f.request.len()));
                 Ok(())
             }),
         );
+        rec.flow(flow(0, 20_000));
+        stuck_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the writer picked up the first flow");
         let t = std::time::Instant::now();
-        for i in 0..200 {
+        for i in 1..200 {
             rec.flow(flow(i, 20_000));
         }
-        assert!(t.elapsed() < Duration::from_secs(2), "recording must not block");
-        let dropped = rec.stats().bodies_dropped.load(Ordering::Relaxed);
-        assert!(dropped > 0, "some bodies must have been dropped");
+        assert!(t.elapsed() < Duration::from_secs(5), "recording must not block");
+        let dropped = rec.stats().records_dropped.load(Ordering::Relaxed);
+        // One in the writer's hands, four in the queue; the other 195 did not fit.
+        assert_eq!(dropped, 195);
         drop(held);
         rec.flush();
-        let written = written.lock().unwrap();
-        assert!(
-            written.iter().any(|&n| n < 100),
-            "the dropped ones were written as heads only: {written:?}"
+        assert_eq!(written.lock().unwrap().len() as u64 + dropped, 200);
+    }
+
+    #[test]
+    fn flows_that_do_not_fit_the_memory_budget_are_written_as_heads_only() {
+        let (events, _) = crate::events::EventBus::channel(4);
+        let written = Arc::new(Mutex::new(Vec::<usize>::new()));
+        let w = written.clone();
+        let rec = Recorder::spawn(
+            64,
+            MemoryBudget::new(1000),
+            events,
+            None,
+            Box::new(move |flows, _| {
+                w.lock().unwrap().extend(flows.iter().map(|f| f.request.len()));
+                Ok(())
+            }),
         );
+        rec.flow(flow(1, 50_000));
+        rec.flush();
+        assert_eq!(rec.stats().bodies_dropped.load(Ordering::Relaxed), 1);
+        let written = written.lock().unwrap();
+        assert_eq!(written.len(), 1);
+        assert!(written[0] < 100, "only the head was written: {written:?}");
     }
 
     #[test]

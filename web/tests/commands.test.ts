@@ -273,3 +273,47 @@ test('server byte offsets map to string positions', () => {
   assert.equal(byteToIndex(s, 7), 4);
   assert.equal(byteToIndex(s, 99), s.length);
 });
+
+// ---- the History table
+
+import { COLS, DEFAULT_COLS, HL_COLORS, highlightOf, nextSort, normalizeCols, plainTags, template } from '../src/lib/histcols.ts';
+
+test('a stored column list is made safe: known, unique, in table order, path kept', () => {
+  assert.deepEqual(normalizeCols(undefined), DEFAULT_COLS);
+  assert.deepEqual(normalizeCols([]), DEFAULT_COLS);
+  assert.deepEqual(normalizeCols('x'), DEFAULT_COLS);
+  assert.deepEqual(normalizeCols(['time', 'host', 'host', 'nope', 7]), ['host', 'path', 'time']);
+  assert.deepEqual(normalizeCols(['tags']), ['path', 'tags']);
+  const r = rng(3);
+  for (let n = 0; n < 500; n++) {
+    const pool = [...COLS.map((c) => c.key), 'zzz', 5, null];
+    const got = normalizeCols(Array.from({ length: Math.floor(r() * 8) }, () => pool[Math.floor(r() * pool.length)]));
+    assert.ok(got.includes('path'));
+    assert.equal(new Set(got).size, got.length);
+  }
+  assert.ok(template(['id', 'path']).includes('minmax(8rem, 1fr)'));
+});
+
+test('highlights are reserved tags and stay out of the editable tag list', () => {
+  assert.equal(highlightOf(['x', 'hl:Red']), 'red');
+  assert.equal(highlightOf(['hl:pink']), null);
+  assert.equal(highlightOf(undefined), null);
+  assert.deepEqual(plainTags(['a', 'hl:red', 'HL:blue', 'b']), ['a', 'b']);
+  assert.equal(HL_COLORS.length, 6);
+});
+
+test('clicking a header: descending, ascending, then back to the id order', () => {
+  let s = { key: 'id' as const, asc: false } as { key: import('../src/lib/histcols.ts').SortKey; asc: boolean };
+  s = nextSort(s, 'status');
+  assert.deepEqual(s, { key: 'status', asc: false });
+  s = nextSort(s, 'status');
+  assert.deepEqual(s, { key: 'status', asc: true });
+  s = nextSort(s, 'status');
+  assert.deepEqual(s, { key: 'id', asc: false });
+  s = nextSort(s, 'id');
+  assert.deepEqual(s, { key: 'id', asc: true });
+  s = nextSort(s, 'host');
+  assert.deepEqual(s, { key: 'host', asc: false });
+  s = nextSort(s, 'path');
+  assert.deepEqual(s, { key: 'path', asc: false });
+});

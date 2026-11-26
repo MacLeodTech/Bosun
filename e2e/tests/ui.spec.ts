@@ -683,6 +683,57 @@ test('query bar: or, not and groups run on the server, keys complete, a mistake 
   await applyFilter('');
 });
 
+test('history table: sort by a column on the server, choose columns, highlight and tag the selection', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/t-alpha`);
+  await viaProxy(PROXY_PORT, `${TARGET}/t-beta`);
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:/t-');
+  const rows = page.getByRole('listbox', { name: 'HTTP history' }).getByRole('option');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText('/t-beta'); // newest first
+
+  // Sorting is the server's: descending first, then ascending, then back to the newest-first order.
+  const pathHead = page.getByRole('columnheader', { name: /^Path/ });
+  await pathHead.getByRole('button').click();
+  await expect(pathHead).toHaveAttribute('aria-sort', 'descending');
+  await expect(rows.first()).toContainText('/t-beta');
+  await pathHead.getByRole('button').click();
+  await expect(pathHead).toHaveAttribute('aria-sort', 'ascending');
+  await expect(rows.first()).toContainText('/t-alpha');
+  await pathHead.getByRole('button').click();
+  await expect(pathHead).toHaveAttribute('aria-sort', 'none');
+  await expect(rows.first()).toContainText('/t-beta');
+
+  // Columns: Host can go, Duration can come, and the choice survives a reload (it is a preference of the browser).
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toBeVisible();
+  await page.getByRole('button', { name: 'Columns' }).click();
+  await page.getByRole('menuitemradio', { name: 'Host' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Columns' }).click();
+  await page.getByRole('menuitemradio', { name: 'Host' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toBeVisible();
+
+  // Highlight one row from its menu, tag both from the selection bar, and find them again by tag.
+  await applyFilter('path:/t-');
+  await rows.first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Green', exact: true }).click();
+  await expect(rows.first()).toHaveAttribute('data-hl', 'green');
+  await rows.first().click();
+  await rows.nth(1).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Tag…' }).click();
+  await page.getByLabel(/Tag for 2 requests/).fill('review');
+  await page.getByRole('button', { name: 'Add tag' }).click();
+  await applyFilter('tag:review');
+  await expect(rows).toHaveCount(2);
+  await applyFilter('tag:hl:green');
+  await expect(rows).toHaveCount(1);
+  await applyFilter('');
+});
+
 test('history: shift-click and Ctrl+A select several, delete can be undone, and an undone delete changes nothing', async () => {
   await page.mouse.move(2, 2);
   for (const p of ['ms-a', 'ms-b', 'ms-c']) await viaProxy(PROXY_PORT, `${TARGET}/${p}`);

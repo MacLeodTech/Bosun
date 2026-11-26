@@ -147,3 +147,16 @@ export function searchHistory(text: string) {
   v.setQuery(withText(v.query, text));
   workspace.open('history');
 }
+
+/** Add and remove tags on flows (the server does it in one step). Returns whether it worked. */
+export async function changeTags(ids: number[], add: string[], remove: string[]): Promise<boolean> {
+  if (!ids.length) return false;
+  try {
+    await api.post('/flows/tags', { ids, add, remove });
+    v.tagged(ids, add, remove);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}

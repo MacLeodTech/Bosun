@@ -6,7 +6,8 @@
   import { css } from '../lib/style';
   import { commands, currentCtx } from '../lib/commands.svelte';
   import { contextMenu } from '../lib/contextmenu.svelte';
-  import { deleteFlows } from '../lib/flowactions';
+  import { changeTags, deleteFlows } from '../lib/flowactions';
+  import { colOf, highlightOf, HL_COLORS, HL_PREFIX, COLS, nextSort, plainTags, template, type ColKey } from '../lib/histcols';
   import { historyView as v } from '../lib/historyView.svelte';
   import { tidyMenu, type MenuItem } from '../lib/menu';
   import { usePanel } from '../lib/panelctx';
@@ -18,6 +19,7 @@
   import type { FlowSummary } from '../lib/types';
   import VirtualList from '../components/VirtualList.svelte';
   import FilterBar from '../components/FilterBar.svelte';
+  import Menu from '../components/Menu.svelte';
 
   /** Row height in px: the one source for the list maths and the row CSS (--row-h). */
   const ROW_H = 22;
@@ -47,13 +49,16 @@
   let bar = $state<{ focus(): void } | undefined>();
   let root = $state<HTMLElement | undefined>();
   const waiting = $derived(held.length + unmatched);
-  const simpleFilter = $derived(!filter.text && !filter.serverOnly);
+  // A sorted list is a snapshot: a new flow has no place in it that this side can work out.
+  const simpleFilter = $derived(!filter.text && !filter.serverOnly && v.sort.key === 'id' && !v.sort.asc);
+  const cols = $derived(v.cols);
+  const gridCols = $derived(template(cols));
   const activeIndex = $derived(v.selectedId === null ? -1 : shown.findIndex((f) => f.id === v.selectedId));
   const canEdit = $derived(session.can('tester'));
 
   function params(extra: Record<string, number | undefined> = {}) {
     // The whole line goes to the server, which owns the grammar (docs/query-language.md).
-    return qs({ q: v.query.trim() || undefined, limit: 500, ...extra });
+    return qs({ q: v.query.trim() || undefined, sort: v.sort.key === 'id' ? undefined : v.sort.key, asc: v.sort.asc || undefined, limit: 500, ...extra });
   }
 
   async function reload() {
@@ -67,7 +72,9 @@
     if (loadingMore || exhausted || !flows.length) return;
     loadingMore = true;
     try {
-      const next = await api.get<FlowSummary[]>(`/flows${params({ before: flows[flows.length - 1]!.id })}`);
+      // The id order pages by the last id; any other order pages by how many rows are already loaded.
+      const at = v.sort.key === 'id' ? { before: flows[flows.length - 1]!.id } : { offset: flows.length };
+      const next = await api.get<FlowSummary[]>(`/flows${params(at)}`);
       if (!next.length) exhausted = true;
       flows = [...flows, ...next];
     } finally {
@@ -165,6 +172,56 @@
     });
   });
 
+  // Tags changed on the server (a menu, the selection bar, the detail panel): patch the rows that are loaded.
+  let seenTag = untrack(() => v.tagTick);
+  $effect(() => {
+    const tick = v.tagTick;
+    untrack(() => {
+      if (tick === seenTag || !v.tagChange) return;
+      seenTag = tick;
+      const { ids, add, remove } = v.tagChange;
+      const set = new Set(ids);
+      const low = (t: string) => t.toLowerCase();
+      flows = flows.map((f) => {
+        if (!set.has(f.id)) return f;
+        const kept = f.tags.filter((t) => !remove.some((r) => low(r) === low(t)));
+        for (const a of add) if (!kept.some((t) => low(t) === low(a))) kept.push(a);
+        return { ...f, tags: kept };
+      });
+    });
+  });
+
+  // ---- columns, sorting, highlights, bulk tags
+  const colItems = $derived<MenuItem[]>([
+    { kind: 'heading', label: 'Columns' },
+    ...COLS.map((c): MenuItem => ({
+      label: c.title === '#' ? 'Number' : c.title,
+      checked: cols.includes(c.key),
+      disabled: !!c.required,
+      run: () => v.setCols(cols.includes(c.key) ? cols.filter((k) => k !== c.key) : [...cols, c.key]),
+    })),
+  ]);
+  const sortLabel = (k: ColKey): 'ascending' | 'descending' | 'none' => {
+    const s = colOf(k).sort;
+    return s && v.sort.key === s ? (v.sort.asc ? 'ascending' : 'descending') : 'none';
+  };
+  function sortBy(k: ColKey) {
+    const s = colOf(k).sort;
+    if (s) v.setSort(nextSort(v.sort, s));
+  }
+  let tagging = $state(false);
+  let tagText = $state('');
+  let tagBox = $state<HTMLInputElement | undefined>();
+  async function addTag(e: Event) {
+    e.preventDefault();
+    const t = tagText.trim();
+    if (!t || !(await changeTags(v.ids, [t], []))) return;
+    tagText = '';
+    tagging = false;
+  }
+  /** Set (or with null clear) the highlight colour of the selection. */
+  const highlight = (c: (typeof HL_COLORS)[number] | null) => changeTags(v.ids, c ? [HL_PREFIX + c] : [], HL_COLORS.filter((x) => x !== c).map((x) => HL_PREFIX + x));
+
   // ---- context menu
 
   function menuFor(): MenuItem[] {
@@ -178,6 +235,7 @@
       { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'),
       { kind: 'sep' }, { kind: 'heading', label: 'Copy' },
       c('flow.copy-url', 'URL'), c('flow.copy-curl', 'as cURL'), c('flow.copy-request', 'Request'), c('flow.copy-response', 'Response'),
+      ...(canEdit ? [{ kind: 'sep' } as MenuItem, { kind: 'heading', label: 'Highlight' } as MenuItem, ...HL_COLORS.map((c): MenuItem => ({ label: c[0]!.toUpperCase() + c.slice(1), run: () => void highlight(c) })), { label: 'No highlight', run: () => void highlight(null) } as MenuItem, { label: 'Add a tag…', run: () => { tagging = true; setTimeout(() => tagBox?.focus(), 0); } } as MenuItem] : []),
       { kind: 'sep' }, { kind: 'heading', label: 'Scope' }, c('flow.scope.include', 'Add host to scope'), c('flow.scope.exclude', 'Exclude host from scope'),
       { kind: 'sep' }, c('flow.delete', 'Delete'),
     ]);
@@ -240,7 +298,8 @@
     if (f.edited) { g.push('✎'); t.push('edited'); }
     if (f.status === 101) { g.push('⇄'); t.push('WebSocket'); }
     if (f.note) { g.push('¶'); t.push('has a note'); }
-    if (f.tags?.length) { g.push('#'); t.push(`tags: ${f.tags.join(', ')}`); }
+    const tg = plainTags(f.tags);
+    if (tg.length) { g.push('#'); t.push(`tags: ${tg.join(', ')}`); }
     return { glyphs: g.join(''), title: t.join(', ') };
   }
 
@@ -299,6 +358,7 @@
     <div class="selbar" role="region" aria-label="Selection">
       <strong class="tnum">{v.selected.length} selected</strong>
       {#if canEdit}<button onclick={() => commands.run('flow.repeater')}>Send to Repeater</button>{/if}
+      {#if canEdit}<button onclick={() => { tagging = true; setTimeout(() => tagBox?.focus(), 0); }}>Tag…</button>{/if}
       <button onclick={() => commands.run('flow.copy-url')}>Copy URLs</button>
       {#if canEdit}<button class="danger" onclick={deleteSelected}>Delete</button>{/if}
       <span class="spacer"></span>
@@ -306,11 +366,27 @@
     </div>
   {/if}
 
-  <div class="table" use:css={{ '--row-h': `${ROW_H}px` }}>
+  {#if tagging}
+    <form class="selbar" onsubmit={addTag} aria-label="Add a tag">
+      <input aria-label="Tag for {v.ids.length} request{v.ids.length === 1 ? '' : 's'}" placeholder="Tag for {v.ids.length} request{v.ids.length === 1 ? '' : 's'}" maxlength="64" bind:value={tagText} bind:this={tagBox} onkeydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); tagging = false; } }} />
+      <button class="primary">Add tag</button>
+      <button type="button" onclick={() => (tagging = false)}>Cancel</button>
+    </form>
+  {/if}
+  <div class="table" use:css={{ '--row-h': `${ROW_H}px`, '--cols': gridCols }}>
     <div class="head-wrap">
-      <div class="row head">
-        <span class="c-id">#</span><span class="c-m">Method</span><span class="c-mk" title="Marks: edited, WebSocket, note, tags"></span><span class="c-host">Host</span><span class="c-path">Path</span>
-        <span class="c-st">Status</span><span class="c-len">Length</span><span class="c-mime">MIME</span><span class="c-t">Time</span>
+      <div class="row head" role="row">
+        {#each cols as k (k)}
+          {@const c = colOf(k)}
+          {#if c.sort}
+            <span class="c-{k}" role="columnheader" aria-sort={sortLabel(k)}>
+              <button type="button" class="sorter" title="Sort by {c.title}" onclick={() => sortBy(k)}>{c.title}{#if sortLabel(k) !== 'none'}<span aria-hidden="true">{v.sort.asc ? ' ▲' : ' ▼'}</span>{/if}</button>
+            </span>
+          {:else}
+            <span class="c-{k}" role="columnheader" title={k === 'marks' ? 'Marks: edited, WebSocket, note, tags' : undefined}>{k === 'marks' ? '' : c.title}</span>
+          {/if}
+        {/each}
+        <span class="c-pick"><Menu label="Columns" title="Choose the columns" items={colItems} /></span>
       </div>
     </div>
     <div class="body" role="presentation" onpointerenter={() => (hovering = true)} onpointerleave={() => { hovering = false; follow(); }} oncontextmenu={onContext}>
@@ -341,21 +417,28 @@
             class:active={selSet.has(f.id)}
             class:focus={v.selectedId === f.id}
             class:oos={!f.in_scope}
+            data-hl={highlightOf(f.tags) ?? undefined}
             title={flowUrl(f)}
             draggable="true"
             ondragstart={(e) => onDragStart(e, f)}
             onclick={(e) => onRowClick(e, f, i)}
             tabindex="-1"
           >
-            <span class="c-id tnum">{f.id}</span>
-            <span class="c-m {methodClass(f.method)}">{f.method}</span>
-            <span class="c-mk" title={mk.title}>{mk.glyphs}</span>
-            <span class="c-host">{hostLabel(f)}</span>
-            <span class="c-path">{f.path}</span>
-            <span class="c-st tnum {statusClass(f.status ?? null)}">{f.error ? '✕ error' : (f.status ?? '…')}</span>
-            <span class="c-len tnum">{fmtSize(f.response_len ?? 0)}</span>
-            <span class="c-mime">{f.mime ?? ''}</span>
-            <span class="c-t tnum">{fmtTime(f.started_ms)}</span>
+            {#each cols as k (k)}
+              {#if k === 'id'}<span class="c-id tnum">{f.id}</span>
+              {:else if k === 'method'}<span class="c-method {methodClass(f.method)}">{f.method}</span>
+              {:else if k === 'marks'}<span class="c-marks" title={mk.title}>{mk.glyphs}</span>
+              {:else if k === 'host'}<span class="c-host">{hostLabel(f)}</span>
+              {:else if k === 'path'}<span class="c-path">{f.path}</span>
+              {:else if k === 'status'}<span class="c-status tnum {statusClass(f.status ?? null)}">{f.error ? '✕ error' : (f.status ?? '…')}</span>
+              {:else if k === 'length'}<span class="c-length tnum">{fmtSize(f.response_len ?? 0)}</span>
+              {:else if k === 'mime'}<span class="c-mime">{f.mime ?? ''}</span>
+              {:else if k === 'time'}<span class="c-time tnum">{fmtTime(f.started_ms)}</span>
+              {:else if k === 'duration'}<span class="c-duration tnum">{f.duration_ms == null ? '' : `${f.duration_ms} ms`}</span>
+              {:else if k === 'source'}<span class="c-source">{f.source}</span>
+              {:else if k === 'tags'}<span class="c-tags">{plainTags(f.tags).join(', ')}</span>
+              {/if}
+            {/each}
           </div>
         {/snippet}
       </VirtualList>
@@ -370,24 +453,26 @@
   .selbar { display: flex; align-items: center; gap: .4rem; padding: .2rem .5rem; background: var(--surface-sel); border-bottom: 1px solid var(--border-subtle); }
   /* The header reserves the same scrollbar gutter as the list below it, so their columns always line up. */
   .head-wrap { overflow-y: hidden; scrollbar-gutter: stable; background: var(--surface-1); border-bottom: 1px solid var(--border-subtle); }
-  .row { display: grid; grid-template-columns: 3rem 4.6rem 2.4rem 13rem 1fr 4.6rem 6.2rem 6rem 7.8rem; gap: .5rem; align-items: center; height: var(--row-h); width: 100%; padding: 0 .5rem; text-align: left; font-family: var(--font-mono); font-size: var(--fs-data); cursor: default; }
+  /* The columns come from --cols (the chooser); the last track is the header's Columns button. */
+  .row { display: grid; grid-template-columns: var(--cols) 4.8rem; gap: .5rem; align-items: center; height: var(--row-h); width: 100%; padding: 0 .5rem; text-align: left; font-family: var(--font-mono); font-size: var(--fs-data); cursor: default; }
   .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row.head { font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
   .row:not(.head):hover { background: var(--surface-2); }
   .row.active { background: var(--surface-sel); }
   .row.focus { box-shadow: inset 2px 0 0 var(--accent); }
   .row.oos { color: var(--text-2); }
-  /* In a narrow panel the least useful columns go first, so the path keeps room. */
-  @container (max-width: 940px) {
-    .row { grid-template-columns: 3rem 4.6rem 2.4rem 11rem 1fr 4.6rem 6.2rem 7.8rem; }
-    .c-mime { display: none; }
-  }
-  @container (max-width: 720px) {
-    .row { grid-template-columns: 3rem 4.6rem 2.4rem 9rem 1fr 4.6rem 7.8rem; }
-    .c-len { display: none; }
-  }
-  .c-mk { color: var(--text-2); letter-spacing: .1em; }
-  .c-m { font-weight: 600; }
+  .row[data-hl='red'] { background: color-mix(in srgb, var(--bad) 20%, transparent); }
+  .row[data-hl='orange'] { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+  .row[data-hl='yellow'] { background: color-mix(in srgb, #e6c200 20%, transparent); }
+  .row[data-hl='green'] { background: color-mix(in srgb, var(--ok) 20%, transparent); }
+  .row[data-hl='blue'] { background: color-mix(in srgb, var(--info) 20%, transparent); }
+  .row[data-hl='purple'] { background: color-mix(in srgb, #9b6bd6 22%, transparent); }
+  .row.active[data-hl] { background: var(--surface-sel); box-shadow: inset 4px 0 0 var(--text-2); }
+  .sorter { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+  .sorter:hover { color: var(--text-1); }
+  .c-pick { overflow: visible !important; text-align: right; }
+  .c-marks { color: var(--text-2); letter-spacing: .1em; }
+  .c-method { font-weight: 600; }
   .st-2 { color: var(--st-2xx); } .st-3 { color: var(--st-3xx); }
   .st-4 { color: var(--st-4xx); font-weight: 600; } .st-5, .st-none { color: var(--st-5xx); font-weight: 600; }
 </style>

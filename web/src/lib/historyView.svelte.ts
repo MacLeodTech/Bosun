@@ -2,6 +2,16 @@
 // the list, the flow-detail panel and the command palette agree on what is selected and open.
 
 import { DEFAULT_QUERY } from './query';
+import { normalizeCols, type ColKey, type SortKey } from './histcols';
+
+const COLS_KEY = 'bosun.history.columns.v1';
+function readCols(): ColKey[] {
+  try {
+    return normalizeCols(JSON.parse(localStorage.getItem(COLS_KEY) ?? 'null'));
+  } catch {
+    return normalizeCols(null);
+  }
+}
 
 export type DetailTab = 'messages' | 'original' | 'diff' | 'ws';
 
@@ -24,6 +34,13 @@ class HistoryView {
   removedTick = $state(0);
   /** Flows hidden during the undo window of a delete; they are removed on the server only when it passes. */
   pending = $state.raw<number[]>([]);
+  /** The columns shown, in table order. A preference of this browser. */
+  cols = $state<ColKey[]>(readCols());
+  /** What the list is ordered by. The id, newest first, is the live view; anything else is a snapshot. */
+  sort = $state<{ key: SortKey; asc: boolean }>({ key: 'id', asc: false });
+  /** Tags just changed on the server: the list patches its rows instead of reloading. */
+  tagChange = $state.raw<{ ids: number[]; add: string[]; remove: string[] } | null>(null);
+  tagTick = $state(0);
   /** Bumped when something outside the list changes the filter and wants it applied. */
   applyTick = $state(0);
 
@@ -32,6 +49,25 @@ class HistoryView {
     this.draft = q;
     this.query = q;
     this.applyTick++;
+  }
+
+  setCols(cols: ColKey[]) {
+    this.cols = normalizeCols(cols);
+    try {
+      localStorage.setItem(COLS_KEY, JSON.stringify(this.cols));
+    } catch {
+      // A column choice is never worth an error.
+    }
+  }
+
+  setSort(s: { key: SortKey; asc: boolean }) {
+    this.sort = s;
+    this.applyTick++;
+  }
+
+  tagged(ids: number[], add: string[], remove: string[]) {
+    this.tagChange = { ids, add, remove };
+    this.tagTick++;
   }
 
   /** The flows commands act on: the selection, or the focused row when nothing is picked. */

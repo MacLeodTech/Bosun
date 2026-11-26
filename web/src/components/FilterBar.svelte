@@ -2,7 +2,7 @@
   // One line for every History filter: `host:example.com (login or signup) -ext:css tag:x`. The server owns the
   // grammar (docs/query-language.md): this bar asks it what the line means, draws a chip for each recognised term
   // and shows its mistakes. Enter applies a line that has none. Filters can be saved by name for the whole project.
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, tick, type Snippet } from 'svelte';
   import { api, qs } from '../lib/api';
   import { historyView as v } from '../lib/historyView.svelte';
   import { parseQuery } from '../lib/query';
@@ -137,18 +137,18 @@
   function sync() {
     caret = box?.selectionStart ?? v.draft.length;
   }
-  function accept(i: number) {
+  async function accept(i: number) {
     const s = comp.items[i];
     if (!s) return;
     const r = applyCompletion(v.draft, comp, s);
     v.draft = r.line;
     active = -1;
     // Keys end in a colon, so the value list follows at once; a finished value closes the list.
-    queueMicrotask(() => {
-      box?.focus();
-      box?.setSelectionRange(r.caret, r.caret);
-      caret = r.caret;
-    });
+    // Wait for the input to hold the new text before placing the caret in it.
+    await tick();
+    box?.focus();
+    box?.setSelectionRange(r.caret, r.caret);
+    caret = r.caret;
   }
 
   function onKey(e: KeyboardEvent) {
@@ -222,7 +222,7 @@
         role="combobox"
         aria-label="Filter"
         aria-expanded={open}
-        aria-controls="filter-suggest"
+        aria-controls={open ? 'filter-suggest' : undefined}
         aria-autocomplete="list"
         aria-activedescendant={open && active >= 0 ? `filter-opt-${active}` : undefined}
         aria-describedby={errorText.length ? 'filter-errors' : undefined}

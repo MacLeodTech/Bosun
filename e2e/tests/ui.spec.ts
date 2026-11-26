@@ -541,10 +541,10 @@ test('query bar: or, not and groups run on the server, keys complete, a mistake 
 
   // Completion: a key from a prefix, then a value; Tab takes the first suggestion.
   await filterBox().fill('meth');
-  await expect(page.getByRole('option', { name: /method:/ })).toBeVisible();
+  await expect(page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option', { name: /method:/ })).toBeVisible();
   await filterBox().press('Tab');
   await expect(filterBox()).toHaveValue('method:');
-  await expect(page.getByRole('option', { name: 'GET' })).toBeVisible();
+  await expect(page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option', { name: /^GET/ })).toBeVisible();
   await filterBox().press('ArrowDown');
   await filterBox().press('Enter');
   await expect(filterBox()).toHaveValue('method:GET');

@@ -1394,6 +1394,8 @@ test('listeners: one is added and removed live, and a live setting is saved', as
   await rows.filter({ hasText: `127.0.0.1:${extra}` }).getByRole('button', { name: 'Stop' }).click();
   await expect(rows).toHaveCount(1);
   await expect.poll(() => viaProxy(extra, `${TARGET}/listener-check`).then(() => 'open', () => 'closed')).toBe('closed');
+});
+
 test('issues: the saved HTML report runs no script and keeps no secrets', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'Issues' }).click();

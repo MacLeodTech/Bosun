@@ -924,6 +924,7 @@ fn the_client_covers_every_documented_operation() {
         ("delete", "/organizer/{id}", "delete_organizer_item"),
         ("get", "/issues", "issues"),
         ("post", "/issues/rescan", "rescan_issues"),
+        ("get", "/issues/report", "issues_report"),
         ("get", "/issues/{id}", "issue"),
         ("patch", "/issues/{id}", "change_issue"),
         ("post", "/intruder/plan", "intruder_plan"),

@@ -194,7 +194,6 @@ valid in the "Depends on" column.
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
-| [ ] | WP-38 | Proxy listeners and live config reload | 3 | M | WP-04, WP-12 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
 | [ ] | WP-20 | Data key in the OS keychain | 3 | M | |
 | [ ] | WP-21 | Browser provisioning | 3 | M | WP-01 |
@@ -211,8 +210,7 @@ valid in the "Depends on" column.
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
 | [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
 | [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
-| [ ] | WP-50 | `bosun-checks`: the check language and passive checks | 5 | L | WP-49 |
-| [ ] | WP-51 | `bosun-report` | 5 | M | WP-49 |
+| [ ] | WP-50 | `bosun-checks`: stored custom checks (API and UI) | 5 | L | WP-49 |
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
 | [ ] | WP-73 | Accessibility and keyboard shortcuts | 5 | M | WP-44 |
 | [ ] | WP-80 | Command palette and one shared message viewer | 5 | M | WP-44, WP-73 |
@@ -228,7 +226,6 @@ valid in the "Depends on" column.
 | [ ] | WP-82 | Technology fingerprint and known-vulnerable components | 6 | M | WP-49, WP-69 |
 | [ ] | WP-58 | Lookout, the OAST server | 7 | L | WP-23, WP-24 |
 | [ ] | WP-59 | OAST client, payloads and checks | 7 | M | WP-58, WP-41, WP-47, WP-54 |
-| [ ] | WP-60 | Imports (OpenAPI, GraphQL, Postman, HAR, URL lists, Burp XML) | 7 | M | WP-16 |
 | [ ] | WP-85 | Issue tracker export | 7 | S | WP-49, WP-51 |
 | [ ] | WP-61 | Plugin host | 8 | L | WP-05, WP-10, WP-69 |
 | [ ] | WP-62 | Plugin SDK and hooks | 8 | L | WP-61 |
@@ -428,17 +425,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Inflate `permessage-deflate` WebSocket messages for display.
   - Upstream SNI override and HTTP/1 header-case preservation for edited requests.
 
-### WP-38: M1 follow-up
-
-#### WP-38 Proxy follow-ups from M1 · Phase 3 · M
-
-- **Do:** response interception rules and the size and timing columns are done (see `docs/releases.md`). Left:
-  - **Listener management:** several proxy listeners, each with its own options (address, invisible mode,
-    pass-through, auth). Managed in the UI, changed live without a restart, using the connection limits from
-    WP-04. Every change is audited.
-  - **Live config reload** for the settings that can change safely; the others say a restart is needed.
-- **Done when:** API and Playwright tests cover each item; adding a listener needs no restart.
-
 #### WP-41 Repeater · Phase 3 · L
 
 - **Do:**
@@ -477,24 +463,12 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 ### WP-49 to WP-51: M4 passive scanning and reports
 
-#### WP-50 `bosun-checks`: the check language and passive checks · Phase 5 · L
+#### WP-50 `bosun-checks`: what is left · Phase 5 · M
 
-- **Do:**
-  - A YAML check language (request templates, matchers, extractors, OAST hooks), versioned and validated, with a
-    fuzz target for the loader.
-  - Import a compatible subset of Nuclei templates (MIT; keep their notices).
-  - Port ZAP's passive rules where useful (Apache-2.0; attribution in `NOTICE`).
-  - Passive checks: security headers, cookie flags, CSP weaknesses, CORS, information disclosure, mixed content,
-    vulnerable JS libraries (Retire.js-style data), JWT issues, cacheable sensitive responses, open redirect hints,
-    directory listings.
-- **Done when:** every check has a positive and a negative fixture test.
-
-#### WP-51 `bosun-report` · Phase 5 · M
-
-- **Do:**
-  - HTML (self-contained, no script), JSON, SARIF, JUnit and Markdown reports. Secrets are redacted by default.
-  - Endpoints, a `bosun report` CLI command, and a Playwright test that the HTML report runs no script.
-- **Done when:** golden-file tests for each format; the SARIF validates against its schema.
+- **Do:** the language, loader, Nuclei importer and built-in passive checks are done. Left: store custom YAML
+  checks per project (migration), CRUD and validate endpoints (audited), `bosun-client` methods and a UI; more
+  ZAP ports, a JWT weak-secret check and more header checks; a larger Retire.js-style table.
+- **Done when:** a custom check added in the UI fires on recorded traffic.
 
 ### WP-52 to WP-57, WP-68 and WP-72: M5 active scanning
 
@@ -585,12 +559,11 @@ The engine (`crates/bosun-crawl`) is done: links, forms, robots.txt, sitemaps, d
   - OAST checks in the scanner (WP-54): blind SQL injection, SSRF, XXE, RCE, blind XSS, DNS rebinding probes.
 - **Done when:** the testbed's blind SSRF is found through a local Lookout.
 
-#### WP-60 Imports · Phase 7 · M
+#### WP-60 Imports: what is left
 
-- **Do:** OpenAPI/Swagger 2 and 3, GraphQL introspection, Postman collections, HAR, plain URL lists, and Burp XML
-  exports where the format allows. Imports go through the WP-16 import path, with size caps, and fuzz targets for
-  each parser.
-- **Done when:** fixture files of each format import; hostile fixtures are refused cleanly.
+- **Do:** the parsers, API and `bosun import` are done (see `docs/releases.md`). Left: an import screen in the UI,
+  fetching GraphQL introspection live through the gate, and HAR and Burp responses (only requests are imported).
+- **Done when:** a Playwright test imports a file from the UI.
 
 ### WP-61 to WP-63: M7 plugins and advanced checks
 

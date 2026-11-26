@@ -237,6 +237,16 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Organizer and tags.* Notes, tags and the status of kept requests are text a tester wrote; they are shown as text.
   Bulk tag changes and the Organizer need the tester role, are capped (5,000 flows per call, 32 tags of 64 characters),
   and are not audited because they change no scope, rule, account or token.
+- *Passive scanner (`bosun-scan`).* A hostile target controls every byte the scanner reads. The rules only read
+  recorded flows: they send nothing, so they need no scope-gate check. They cap what they read (1 MiB of a body, 256
+  headers, no compressed bodies), copy only short, truncated strings into an issue (the cookie name, a header value of
+  at most 120 characters, the path without its query string, so tokens in URLs are not copied), and run behind
+  `catch_unwind` so a rule bug skips one flow instead of stopping the scanner. Issues are capped at 50,000 per project
+  (past that only the counts of known issues grow), and the queue is a mark on each flow in the project file, so a flood
+  of traffic cannot grow memory: the scanner works through it in batches of 32 on its own thread and pauses between
+  batches so the recorder's writes are not starved. The UI shows an issue's text and the matched excerpt only as text
+  (`<mark>` around the range, never `{@html}`). Reading issues needs the viewer role; changing a status and starting a
+  rescan need the tester role and are audited (`issue.status`, `issues.rescan`).
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
 
 ### Elevation of privilege

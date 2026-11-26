@@ -28,6 +28,11 @@ export function startTarget(port: number): Promise<http.Server> {
       // 700 KiB of text with a marker at each end: more than one page of the history view.
       const body = 'START-MARK ' + 'x'.repeat(700 * 1024) + ' END-MARK';
       res.writeHead(200, { 'content-type': 'text/plain' }).end(body);
+    } else if (url.pathname === '/leaky') {
+      // Things the passive scanner reports: a version header, a cookie without flags, a key in the body.
+      res
+        .writeHead(200, { 'content-type': 'text/plain', server: 'nginx/1.18.0', 'set-cookie': 'leaky=1; Path=/' })
+        .end('-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----\n');
     } else if (url.pathname === '/json') {
       // About 190 KiB of compact JSON: 2,500 records, and tens of thousands of lines once pretty-printed.
       const items = Array.from({ length: 2500 }, (_, i) => ({ id: i, name: `item-${i}`, tags: ['a', 'b'], ok: i % 2 === 0, score: i * 1.5, note: null }));

@@ -14,6 +14,7 @@ pub mod engage;
 pub mod events;
 pub mod handlers;
 pub mod intruder;
+pub mod issues;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
@@ -473,6 +474,9 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/intruder/attacks/{id}/results", get(intruder::results))
         .route("/intruder/attacks/{id}/stop", post(intruder::stop))
+        .route("/issues", get(issues::list))
+        .route("/issues/rescan", post(issues::rescan))
+        .route("/issues/{id}", get(issues::get).patch(issues::change))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

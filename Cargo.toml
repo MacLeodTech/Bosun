@@ -5,6 +5,7 @@ members = [
   "crates/bosun-ca",
   "crates/bosun-store",
   "crates/bosun-scope",
+  "crates/bosun-scan",
   "crates/bosun-proxy",
   "crates/bosun-http",
   "crates/bosun-codec",
@@ -23,6 +24,7 @@ default-members = [
   "crates/bosun-ca",
   "crates/bosun-store",
   "crates/bosun-scope",
+  "crates/bosun-scan",
   "crates/bosun-proxy",
   "crates/bosun-http",
   "crates/bosun-codec",
@@ -46,6 +48,7 @@ bosun-model = { path = "crates/bosun-model" }
 bosun-ca = { path = "crates/bosun-ca" }
 bosun-store = { path = "crates/bosun-store" }
 bosun-scope = { path = "crates/bosun-scope" }
+bosun-scan = { path = "crates/bosun-scan" }
 bosun-proxy = { path = "crates/bosun-proxy" }
 bosun-http = { path = "crates/bosun-http" }
 bosun-codec = { path = "crates/bosun-codec" }

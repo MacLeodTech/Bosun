@@ -566,6 +566,7 @@ dependencies = [
  "bosun-intruder",
  "bosun-model",
  "bosun-proxy",
+ "bosun-scan",
  "bosun-scope",
  "bosun-sequencer",
  "bosun-store",
@@ -740,6 +741,7 @@ dependencies = [
  "base64 0.23.1",
  "bosun-ca",
  "bosun-model",
+ "bosun-scan",
  "bosun-scope",
  "bosun-store",
  "bytes",
@@ -769,6 +771,16 @@ dependencies = [
  "tracing",
  "utoipa",
  "webpki-roots 1.0.12",
+]
+
+[[package]]
+name = "bosun-scan"
+version = "0.1.0"
+dependencies = [
+ "bosun-model",
+ "bosun-store",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

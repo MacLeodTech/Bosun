@@ -116,7 +116,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 - Gate: v0.2 for Windows, macOS and Linux; Docker and Podman images; the CLI; security review 3.
 
 **Phase 4: Intruder, Sequencer and performance. Release v0.3.**
-- WP-47, WP-48, WP-27, WP-28, WP-32, WP-33. WP-46 is optional.
+- WP-47, WP-48, WP-49, WP-27, WP-28, WP-32, WP-33. WP-46 is optional.
 - From the gap analysis: WP-75 (history query language), WP-76 (Map Local, Map Remote, throttling), WP-79 (gRPC,
   Protobuf, GraphQL).
 - Gate: footprint budgets green on storage v2; the WP-27 and WP-28 benchmarks recorded here.
@@ -211,7 +211,6 @@ valid in the "Depends on" column.
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
 | [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
 | [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
-| [ ] | WP-49 | Passive scanner, findings and the issues view | 5 | L | WP-05, WP-35 |
 | [ ] | WP-50 | `bosun-checks`: the check language and passive checks | 5 | L | WP-49 |
 | [ ] | WP-51 | `bosun-report` | 5 | M | WP-49 |
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
@@ -477,17 +476,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** tests cover each new source; the CLI runs an attack from a file.
 
 ### WP-49 to WP-51: M4 passive scanning and reports
-
-#### WP-49 Passive scanner, findings and the issues view · Phase 5 · L
-
-- **Do:**
-  - A passive scanner fed from the recorder through a bounded queue (WP-05), off the hot path, also run on
-    imports. Deduplicated.
-  - The finding model: issue type, severity, confidence, evidence (highlighted ranges in the request and
-    response), remediation, CWE and OWASP references, status (new, confirmed, false positive). Stored with a
-    migration.
-  - An issues view in the UI with filters, grouping and links back to the evidence.
-- **Done when:** a backlog of recorded traffic is scanned without slowing the proxy; findings survive a restart.
 
 #### WP-50 `bosun-checks`: the check language and passive checks · Phase 5 · L
 

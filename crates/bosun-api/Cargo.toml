@@ -12,6 +12,7 @@ build = "build.rs"
 bosun-model.workspace = true
 bosun-ca.workspace = true
 bosun-store.workspace = true
+bosun-scan.workspace = true
 bosun-scope.workspace = true
 bosun-proxy.workspace = true
 bosun-http.workspace = true

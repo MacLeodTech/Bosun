@@ -47,6 +47,8 @@ pub struct Recorder {
     tx: SyncSender<Record>,
     budget: MemoryBudget,
     stats: Arc<RecorderStats>,
+    /// The passive scanner for the project being recorded to; it stops when the last clone of the recorder goes.
+    _scanner: Option<Arc<bosun_scan::Scanner>>,
 }
 
 /// Keep only the head (request line or status line and headers) of a raw message.
@@ -80,13 +82,16 @@ fn flow_bytes(f: &NewFlow) -> usize {
 impl Recorder {
     pub fn start(project: Arc<Project>, events: EventSender, budget: MemoryBudget) -> Self {
         let p = project.clone();
-        Self::spawn(
+        let scanner = Arc::new(bosun_scan::Scanner::start(&project));
+        let mut r = Self::spawn(
             QUEUE,
             budget,
             events,
             Some(project),
             Box::new(move |f, w| p.write_batch(f, w)),
-        )
+        );
+        r._scanner = Some(scanner);
+        r
     }
 
     /// A recorder with its own writer and queue size (tests stall the writer on purpose).
@@ -104,7 +109,12 @@ impl Recorder {
             .name("bosun-recorder".into())
             .spawn(move || run(project, events, rx, write, s))
             .unwrap_or_else(|e| panic!("cannot start the recorder thread: {e}"));
-        Self { tx, budget, stats }
+        Self {
+            tx,
+            budget,
+            stats,
+            _scanner: None,
+        }
     }
 
     pub fn stats(&self) -> &RecorderStats {

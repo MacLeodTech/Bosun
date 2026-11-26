@@ -1319,3 +1319,44 @@ test('sequencer: a live capture of random cookies is rated well, a counter is no
   await nav.getByRole('button', { name: 'HTTP history' }).click();
   await expect(page.locator('.row', { hasText: '/seq-counter' }).first()).toBeVisible();
 });
+
+test('issues: the passive scanner reports what recorded traffic shows, with evidence, and triage survives a reload', async () => {
+  await layoutMenu('Reset layout');
+  const nav = page.getByRole('navigation');
+  expect(await viaProxy(PROXY_PORT, `${TARGET}/leaky`)).toMatchObject({ status: 200 });
+  await nav.getByRole('button', { name: 'Issues' }).click();
+  const panel = () => page.getByRole('tabpanel', { name: 'Issues', exact: true });
+  const key = () => panel().getByRole('row', { name: /Private key in a response/ });
+  await expect(key()).toBeVisible({ timeout: 20_000 });
+  await expect(panel().getByRole('row', { name: /Cookie set without the HttpOnly flag/ }).first()).toBeVisible();
+  await expect(panel().getByRole('row', { name: /Server software and version disclosed/ })).toBeVisible();
+
+  // The details show the matched text, highlighted.
+  await key().getByRole('button', { name: /Show issue/ }).click();
+  const details = panel().getByRole('region', { name: 'Issue details' });
+  await expect(details.locator('mark')).toHaveText('-----BEGIN RSA PRIVATE KEY-----');
+  await expect(details.getByText('CWE-200')).toBeVisible();
+
+  // Filters and grouping.
+  await panel().getByLabel('Severity').selectOption('high');
+  await expect(panel().getByRole('row', { name: /Server software/ })).toHaveCount(0);
+  await panel().getByLabel('Severity').selectOption('all');
+  await panel().getByLabel('Group by').selectOption('rule');
+  await expect(panel().getByRole('row', { name: /Private key in a response \(/ })).toBeVisible();
+  await panel().getByLabel('Group by').selectOption('none');
+
+  // Triage is stored on the server.
+  await details.getByRole('button', { name: 'Mark false positive' }).click();
+  await expect(key()).toContainText('False positive');
+  await page.reload();
+  await nav.getByRole('button', { name: 'Issues' }).click();
+  await expect(key()).toContainText('False positive');
+  await panel().getByLabel('Status').selectOption('new');
+  await expect(key()).toHaveCount(0);
+
+  // The link back to the request.
+  await panel().getByLabel('Status').selectOption('all');
+  await panel().getByRole('button', { name: /Show issue: Private key/ }).click();
+  await panel().getByRole('button', { name: 'Open request' }).click();
+  await expect(page.getByText('BEGIN RSA PRIVATE KEY').first()).toBeVisible();
+});

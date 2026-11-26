@@ -16,9 +16,11 @@
 mod client;
 mod error;
 mod events;
+mod issues;
 pub mod types;
 
 pub use client::{Client, ClientBuilder};
 pub use error::{Error, Result};
 pub use events::{EventStream, Position, Sequenced};
+pub use issues::*;
 pub use types::*;

@@ -3289,6 +3289,302 @@
         }
       }
     },
+    "/issues": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "description": "Issues the passive scanner found in recorded traffic, newest sighting first, with the number of flows it has not read yet. Filter by status, severity, confidence, rule, host, evidence flow or text. Needs the viewer role or above.",
+        "operationId": "list_issues",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "new, confirmed or false_positive",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "description": "info, low, medium or high",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confidence",
+            "in": "query",
+            "description": "tentative, firm or certain",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rule",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Text in the title, detail or path",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Up to 5000; default 1000",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues/rescan": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "description": "Queue every recorded flow for the scanner again (after a rule changed). Counts start over; statuses are kept. Needs the tester role or above; audited.",
+        "operationId": "rescan_issues",
+        "responses": {
+          "204": {
+            "description": "Queued"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues/{id}": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "description": "One issue with its evidence ranges and remediation. Needs the viewer role or above.",
+        "operationId": "get_issue",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Issue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such issue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "issues"
+        ],
+        "description": "Set an issue's status (new, confirmed or false_positive). Needs the tester role or above; audited.",
+        "operationId": "change_issue",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Changed"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such issue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/organizer": {
       "get": {
         "tags": [
@@ -7178,6 +7474,14 @@
           }
         }
       },
+      "Confidence": {
+        "type": "string",
+        "enum": [
+          "tentative",
+          "firm",
+          "certain"
+        ]
+      },
       "CurrentProject": {
         "type": "object",
         "description": "The project that is open.",
@@ -7501,6 +7805,37 @@
             "type": "string"
           }
         }
+      },
+      "Evidence": {
+        "type": "object",
+        "description": "A highlighted byte range in the stored request or response (end exclusive).",
+        "required": [
+          "part",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "part": {
+            "$ref": "#/components/schemas/EvidencePart"
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "EvidencePart": {
+        "type": "string",
+        "enum": [
+          "request",
+          "response"
+        ]
       },
       "Finding": {
         "type": "object",
@@ -7995,6 +8330,159 @@
             "type": "string"
           }
         }
+      },
+      "Issue": {
+        "type": "object",
+        "required": [
+          "id",
+          "rule",
+          "title",
+          "severity",
+          "confidence",
+          "status",
+          "scheme",
+          "host",
+          "port",
+          "path",
+          "detail",
+          "evidence",
+          "remediation",
+          "cwe",
+          "owasp",
+          "count",
+          "first_seen_ms",
+          "last_seen_ms"
+        ],
+        "properties": {
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many flows showed it."
+          },
+          "cwe": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "detail": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "first_seen_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The flow that shows the issue (the first one it was seen in); `None` once that flow is deleted."
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_seen_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "owasp": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "path": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remediation": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "scheme": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "IssueChange": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          }
+        }
+      },
+      "IssueList": {
+        "type": "object",
+        "required": [
+          "issues",
+          "pending",
+          "rules"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "description": "Newest sighting first."
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Flows the scanner has not read yet."
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The rule ids the scanner has, for filters."
+          }
+        }
+      },
+      "IssueStatus": {
+        "type": "string",
+        "enum": [
+          "new",
+          "confirmed",
+          "false_positive"
+        ]
       },
       "Launched": {
         "type": "object",
@@ -10031,6 +10519,15 @@
           }
         }
       },
+      "Severity": {
+        "type": "string",
+        "enum": [
+          "info",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
       "SiteMapEntry": {
         "type": "object",
         "description": "A host and the paths seen on it, for the site map.",
@@ -10915,6 +11412,9 @@
     },
     {
       "name": "intruder"
+    },
+    {
+      "name": "issues"
     },
     {
       "name": "sequencer"

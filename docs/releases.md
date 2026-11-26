@@ -9,6 +9,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-52 Spider engine** (`wp-43`, 2026-11-26). New crate `bosun-crawl`: follows links, frames, resources, redirects and GET forms; reads robots.txt and sitemaps; bounded by depth, pages and concurrency. Every request goes through `Engine::send`, so the gate decides. POST forms are listed, not sent, unless enabled. Fuzz target `crawl_html`. No API, CLI or UI yet.
 - **WP-28 Proxy hot path** (`wp-43`, 2026-11-26). `new_flow` no longer re-parses (method, path, version and status are
   passed through); bodies stay `Bytes`; a request that isn't recorded, held or touched by a rule isn't serialised; request
   bodies stream with a capped tee for the record when intercept and request-body rules don't need them (413 and 503

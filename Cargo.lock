@@ -755,6 +755,7 @@ dependencies = [
  "bosun-scope",
  "bosun-store",
  "bytes",
+ "flate2",
  "fluke-hpack",
  "http-body-util",
  "httparse",

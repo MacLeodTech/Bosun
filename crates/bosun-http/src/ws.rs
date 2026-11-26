@@ -7,6 +7,7 @@
 use std::time::{Duration, Instant};
 
 use bosun_model::{Direction, Target, now_ms};
+use bosun_proxy::ws::{DeflateParams, Frame as PFrame, Inflater, RECORD_LIMIT};
 use bosun_store::project::NewWsMessage;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -235,6 +236,59 @@ pub fn to_ws_message(flow_id: i64, direction: Direction, frame: &Frame, limit: u
         opcode: frame.opcode,
         payload: frame.payload[..frame.payload.len().min(limit)].to_vec(),
         truncated,
+    }
+}
+
+/// Records the frames of one connection, inflating `permessage-deflate` messages the way the proxy does (one
+/// inflater per direction, 1 MiB cap). Sent and received bytes are never altered; only the stored copy is.
+pub struct WsRecorder {
+    flow_id: i64,
+    up: Option<Inflater>,
+    down: Option<Inflater>,
+}
+
+impl WsRecorder {
+    /// For the flow of `handshake`: compression is on if the server's `101` accepted `permessage-deflate`.
+    pub fn new(flow_id: i64, handshake: &Exchange) -> Self {
+        let text = String::from_utf8_lossy(&handshake.response);
+        let params = text
+            .split("\r\n")
+            .filter_map(|l| l.split_once(':'))
+            .filter(|(n, _)| n.trim().eq_ignore_ascii_case("sec-websocket-extensions"))
+            .find_map(|(_, v)| DeflateParams::from_header(v));
+        Self {
+            flow_id,
+            up: params.map(|p| Inflater::new(p.client_no_context_takeover, RECORD_LIMIT)),
+            down: params.map(|p| Inflater::new(p.server_no_context_takeover, RECORD_LIMIT)),
+        }
+    }
+
+    /// The message to store for `frame`, if one is complete (a compressed message is stored whole, on its last
+    /// fragment).
+    pub fn message(&mut self, direction: Direction, frame: &Frame, limit: usize) -> Option<NewWsMessage> {
+        let inf = match direction {
+            Direction::ClientToServer => self.up.as_mut(),
+            _ => self.down.as_mut(),
+        };
+        let Some(inf) = inf else {
+            return Some(to_ws_message(self.flow_id, direction, frame, limit));
+        };
+        let f = inf.process(PFrame {
+            opcode: frame.opcode,
+            fin: frame.fin,
+            rsv1: frame.rsv & 0b100 != 0,
+            payload: frame.payload.clone(),
+            truncated: false,
+        })?;
+        let truncated = f.truncated || f.payload.len() > limit;
+        Some(NewWsMessage {
+            flow_id: self.flow_id,
+            time_ms: now_ms(),
+            direction,
+            opcode: f.opcode,
+            payload: f.payload[..f.payload.len().min(limit)].to_vec(),
+            truncated,
+        })
     }
 }
 

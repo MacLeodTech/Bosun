@@ -337,7 +337,8 @@ impl Proxy {
             guard.clone(),
             self_addrs.clone(),
         )
-        .map_err(ProxyError::Config)?;
+        .map_err(ProxyError::Config)?
+        .with_sni_overrides(&cfg.upstream_sni);
         let limit = ConnLimit::new("proxy", cfg.max_connections);
         let client = mk(true)?;
         let ws_client = mk(false)?;

@@ -333,7 +333,8 @@ impl Engine {
             Scheme::Https => {
                 let cfg = self.tls.get(opts.verify_tls, h2);
                 let host = &c.pinned.host;
-                let name = tls::server_name(host).map_err(|e| SendError::Tls(host.clone(), e))?;
+                let sni = self.connector.sni_for(host);
+                let name = tls::server_name(&sni).map_err(|e| SendError::Tls(host.clone(), e))?;
                 let t1 = Instant::now();
                 let conn =
                     tokio::time::timeout(opts.connect_timeout, TlsConnector::from(cfg).connect(name, tcp))

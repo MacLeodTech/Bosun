@@ -247,6 +247,12 @@ impl Connector {
         self
     }
 
+    /// The TLS server name to send for `host`: the override if one is set, else the host itself.
+    pub fn sni_for(&self, host: &str) -> String {
+        let bare = host.trim_start_matches('[').trim_end_matches(']');
+        self.sni.get(&bare.to_ascii_lowercase()).cloned().unwrap_or_else(|| bare.to_string())
+    }
+
     /// Open a TCP connection to `host:port` the way every outbound connection is opened: the self-target check,
     /// then the configured upstream (direct, HTTP CONNECT or SOCKS5), with the local address registered with the
     /// loop guard for as long as the returned [`Registration`] lives. No TLS.

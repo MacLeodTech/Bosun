@@ -129,3 +129,10 @@ path = "fuzz_targets/import_formats.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "client_cert"
+path = "fuzz_targets/client_cert.rs"
+test = false
+doc = false
+bench = false

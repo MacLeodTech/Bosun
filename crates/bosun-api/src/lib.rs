@@ -9,6 +9,7 @@
 pub mod auth;
 pub mod browser;
 pub mod checks;
+pub mod clientcerts;
 pub mod child;
 pub mod codec;
 pub mod engage;
@@ -325,6 +326,7 @@ impl AppState {
         };
         let totp_required =
             std::sync::atomic::AtomicBool::new(d.app.meta("totp_required")?.as_deref() == Some("1"));
+        clientcerts::reload(&d.proxy, &d.data_key)?;
         let loop_guard = d.proxy.loop_guard();
         let sso = match &cfg.sso {
             Some(c) => Some(sso::Sso::new(c).map_err(bosun_store::StoreError::Conflict)?),
@@ -494,6 +496,8 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/intruder/attacks/{id}/results", get(intruder::results))
         .route("/intruder/attacks/{id}/stop", post(intruder::stop))
+        .route("/client-certs", get(clientcerts::list).post(clientcerts::add))
+        .route("/client-certs/{id}", axum::routing::delete(clientcerts::delete))
         .route("/checks", get(checks::list).post(checks::add))
         .route("/checks/validate", post(checks::validate_only))
         .route(

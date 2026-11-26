@@ -335,6 +335,7 @@ impl Proxy {
         let guard = LoopGuard::default();
         let mut self_addrs = cfg.self_addrs.clone();
         self_addrs.push(cfg.listen);
+        let certs = crate::clientcert::ClientCerts::default();
         let mk = |h2: bool| -> Result<UpClient, ProxyError> {
             let conn = Connector::new(
                 cfg.upstream.as_ref(),
@@ -344,7 +345,8 @@ impl Proxy {
                 self_addrs.clone(),
             )
             .map_err(ProxyError::Config)?
-            .with_sni_overrides(&cfg.upstream_sni);
+            .with_sni_overrides(&cfg.upstream_sni)
+            .with_client_certs(certs.clone());
             let mut b = Client::builder(TokioExecutor::new());
             b.pool_idle_timeout(Duration::from_secs(60))
                 .pool_max_idle_per_host(16)
@@ -360,7 +362,8 @@ impl Proxy {
             self_addrs.clone(),
         )
         .map_err(ProxyError::Config)?
-        .with_sni_overrides(&cfg.upstream_sni);
+        .with_sni_overrides(&cfg.upstream_sni)
+            .with_client_certs(certs.clone());
         let limit = ConnLimit::new("proxy", cfg.max_connections);
         let client = mk(true)?;
         let ws_client = mk(false)?;
@@ -476,6 +479,11 @@ impl Proxy {
     /// A plain-TCP connector with the proxy's upstream proxy and loop guard, for tools that make their own requests.
     pub fn tool_connector(&self) -> Connector {
         self.shared.tcp.clone()
+    }
+
+    /// The client certificates presented to upstream hosts, shared with the tools' engine.
+    pub fn client_certs(&self) -> crate::clientcert::ClientCerts {
+        self.shared.tcp.client_certs().clone()
     }
 
     /// The project flows are being recorded to.

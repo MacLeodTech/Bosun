@@ -159,6 +159,7 @@ pub struct OrganizerItem {
 }
 
 pub mod checks;
+pub mod clientcerts;
 pub mod intruder;
 pub mod issues;
 
@@ -416,6 +417,22 @@ const MIGRATIONS: &[migrate::Migration] = &[
                 rev INTEGER NOT NULL,
                 created_ms INTEGER NOT NULL,
                 updated_ms INTEGER NOT NULL
+            );
+        "#,
+    },
+    migrate::Migration {
+        version: 8,
+        rebuild: false,
+        what: "client certificates for mutual-TLS targets (private key sealed with the data key)",
+        sql: r#"
+            CREATE TABLE client_certs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                host TEXT NOT NULL UNIQUE,
+                subject TEXT NOT NULL,
+                not_after_ms INTEGER NOT NULL,
+                chain BLOB NOT NULL,
+                sealed_key BLOB NOT NULL,
+                created_ms INTEGER NOT NULL
             );
         "#,
     },

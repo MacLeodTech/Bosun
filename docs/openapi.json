@@ -1505,6 +1505,172 @@
         }
       }
     },
+    "/client-certs": {
+      "get": {
+        "tags": [
+          "clientcerts"
+        ],
+        "description": "The project's client certificates for mutual-TLS targets: host pattern, subject and expiry. Private keys are never returned. Needs the viewer role or above.",
+        "operationId": "list_client_certs",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientCertList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "clientcerts"
+        ],
+        "description": "Add a client certificate (PEM with certificate and key, or PKCS#12 in base64 with its password) for a host pattern; the proxy and every tool present it to that host. The key is sealed with the data key. Needs the admin role; audited as `clientcert.add`.",
+        "operationId": "add_client_cert",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientCertBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientCertMeta"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a usable certificate or host; the message says what is wrong",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The host already has a certificate, or the project holds the most",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/client-certs/{id}": {
+      "delete": {
+        "tags": [
+          "clientcerts"
+        ],
+        "description": "Remove a client certificate. Needs the admin role; audited as `clientcert.remove`.",
+        "operationId": "delete_client_cert",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Row id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such certificate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/comparer/diff": {
       "post": {
         "tags": [
@@ -8804,6 +8970,85 @@
           }
         }
       },
+      "ClientCertBody": {
+        "type": "object",
+        "required": [
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "Host pattern: `api.example.com`, or `*.example.com` for every name under it."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The PKCS#12 password (may be empty)."
+          },
+          "pem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A PEM file holding the certificate (and any chain) and the private key."
+          },
+          "pkcs12_base64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A PKCS#12 file, base64."
+          }
+        }
+      },
+      "ClientCertList": {
+        "type": "object",
+        "required": [
+          "certs"
+        ],
+        "properties": {
+          "certs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientCertMeta"
+            }
+          }
+        }
+      },
+      "ClientCertMeta": {
+        "type": "object",
+        "description": "What a list shows: no key material.",
+        "required": [
+          "id",
+          "host",
+          "subject",
+          "not_after_ms",
+          "created_ms"
+        ],
+        "properties": {
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "host": {
+            "type": "string",
+            "description": "Host pattern: `api.example.com` or `*.example.com`."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "not_after_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "subject": {
+            "type": "string"
+          }
+        }
+      },
       "Confidence": {
         "type": "string",
         "enum": [
@@ -13536,6 +13781,9 @@
     },
     {
       "name": "checks"
+    },
+    {
+      "name": "clientcerts"
     },
     {
       "name": "sequencer"

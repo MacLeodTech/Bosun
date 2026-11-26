@@ -35,6 +35,8 @@ base64.workspace = true
 subtle.workspace = true
 ipnet.workspace = true
 flate2.workspace = true
+p12-keystore = "0.4.1"
+x509-parser.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

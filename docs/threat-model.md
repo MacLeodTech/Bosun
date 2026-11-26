@@ -172,6 +172,16 @@ This document says what is protected, from whom, and how. Code comments refer ba
 
 ### Information disclosure
 
+- *Client certificates (WP-33).* A project can hold a certificate and private key per host pattern
+  (`/client-certs`, table `client_certs`), for targets that require mutual TLS. The key is sealed with the data key
+  (purpose bound to the host) before it reaches the project file, so a copied or exported project does not carry a usable
+  key without the data key; the chain is public. No endpoint returns key material: a list shows host, subject and
+  expiry. Adding and removing need the admin role and are audited (`clientcert.add`, `clientcert.remove`). The key is
+  decrypted only into the proxy's in-memory registry, which the proxy's upstream connector and the tools' engine
+  share; a certificate is presented only to hosts that match its pattern (exact, or `*.` suffix), never to a host
+  chosen by target content. A PEM or PKCS#12 upload is untrusted input: 64 KiB cap, parsing off the async workers,
+  a key that does not match its certificate refused, fuzzed (`client_cert`). Anything running as the same OS user can
+  still read the data key (see above), and a target that asks for a certificate learns the subject of ours.
 - *The CA key at rest.* Sealed with ChaCha20-Poly1305 under a 32-byte data key that lives apart from it:
   `BOSUN_DATA_KEY`, a mounted secret file, or `data.key` (0600). Files and directories are created 0600/0700, and
   the key file's permissions are checked on load.

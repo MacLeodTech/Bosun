@@ -282,3 +282,26 @@ export async function saveToOrganizer(ids: number[]): Promise<void> {
     fail(e);
   }
 }
+
+/** Save a CSRF proof of concept for the request as an HTML file. It is only a download: it is never shown here. */
+export async function downloadCsrfPoc(id: number, auto: boolean): Promise<void> {
+  try {
+    const r = await fetch(`/api/v1/flows/${id}/csrf-poc${auto ? '?auto=1' : ''}`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+    if (!r.ok) {
+      const data: unknown = await r.json().catch(() => null);
+      const err = data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : '';
+      return say(err || `No proof of concept (${r.status}).`);
+    }
+    const url = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: 'application/octet-stream' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `csrf-poc-${id}.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    say(`Saved csrf-poc-${id}.html. Open it in a test browser that is signed in to the target${auto ? '; it submits at once' : ''}.`);
+  } catch (e) {
+    fail(e);
+  }
+}

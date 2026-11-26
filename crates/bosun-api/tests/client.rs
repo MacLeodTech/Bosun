@@ -347,6 +347,81 @@ async fn saved_filters_are_kept_per_project_and_must_be_valid() {
 }
 
 #[tokio::test]
+async fn engagement_helpers_report_a_response_and_build_a_csrf_page() {
+    use bosun_client::{FindingKind, ParamWhere};
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let req = b"POST /transfer?src=1 HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nto=bob&amount=5&note=%22%3E%3Cb%3E";
+    let page = b"<html><!-- admin at /old --><script src=\"/app.js\"></script><a href=\"/next\">x</a></html>";
+    let id = common::recorded_exchange(
+        &s,
+        "POST",
+        "/transfer?src=1",
+        req,
+        "Content-Type: text/html\r\n",
+        page,
+        None,
+    );
+
+    let r = c.flow_engage(id).await.unwrap();
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.kind == FindingKind::Comment && f.value == "admin at /old")
+    );
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.kind == FindingKind::ScriptSrc && f.value == "/app.js")
+    );
+    let got: Vec<_> = r.params.iter().map(|p| (p.name.as_str(), p.location)).collect();
+    assert_eq!(
+        got,
+        [
+            ("src", ParamWhere::Query),
+            ("to", ParamWhere::Form),
+            ("amount", ParamWhere::Form),
+            ("note", ParamWhere::Form)
+        ]
+    );
+
+    let html = c.flow_csrf_poc(id, true).await.unwrap();
+    assert!(
+        html.contains("action=\"https://a.test/transfer?src=1\" method=\"post\""),
+        "{html}"
+    );
+    assert!(html.contains("name=\"to\" value=\"bob\"") && html.contains("HTMLFormElement.prototype.submit"));
+    assert!(
+        html.contains("value=\"&quot;&gt;&lt;b&gt;\""),
+        "values are escaped: {html}"
+    );
+    assert!(!c.flow_csrf_poc(id, false).await.unwrap().contains("<script>"));
+
+    // A GET page cannot be a PUT, and a missing flow is a 404; neither route is open to the signed-out.
+    let put = common::recorded_exchange(
+        &s,
+        "PUT",
+        "/x",
+        b"PUT /x HTTP/1.1\r\nHost: a.test\r\n\r\n",
+        "",
+        b"",
+        None,
+    );
+    assert!(c.flow_csrf_poc(put, false).await.is_err());
+    assert!(c.flow_engage(9999).await.is_err());
+    // Signed out, neither route answers.
+    let anon = reqwest::Client::new();
+    for what in ["csrf-poc", "engage"] {
+        let r = anon
+            .get(format!("{}/api/v1/flows/{id}/{what}", url(&s)))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "{what}");
+    }
+}
+
+#[tokio::test]
 async fn history_bodies_annotations_and_sitemap() {
     let s = stack(true).await;
     let c = admin(&s).await;
@@ -771,6 +846,8 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),
         ("get", "/flows/{id}/ws", "ws_messages"),
+        ("get", "/flows/{id}/engage", "flow_engage"),
+        ("get", "/flows/{id}/csrf-poc", "flow_csrf_poc"),
         ("get", "/flows/{id}/{part}/body", "flow_body"),
         ("get", "/sitemap", "site_map"),
         ("get", "/scope", "scope"),

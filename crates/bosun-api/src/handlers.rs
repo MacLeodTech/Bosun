@@ -20,7 +20,7 @@ use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SAVED_FILTERS, S
 
 type R = Result<Response, Response>;
 
-fn internal(e: impl std::fmt::Display) -> Response {
+pub(crate) fn internal(e: impl std::fmt::Display) -> Response {
     tracing::error!(error = %e, "API error");
     reject(
         StatusCode::INTERNAL_SERVER_ERROR,

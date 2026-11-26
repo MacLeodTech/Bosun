@@ -1477,6 +1477,151 @@
         }
       }
     },
+    "/flows/{id}/csrf-poc": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "A cross-site request forgery proof of concept for the recorded request, as an HTML attachment to open in a test browser that is signed in to the target. Only a GET or POST with a form, JSON-object or multipart body can be reproduced; anything else is a 422 that says why. ?auto=1 submits on load. Needs the viewer role.",
+        "operationId": "flow_csrf_poc",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Flow id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "auto",
+            "in": "query",
+            "description": "1 to submit on load",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An HTML file",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request cannot be reproduced by a form",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/{id}/engage": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "Comments, scripts, references and URLs in the response, and the parameters of the request, for finding what to test next. Scans up to 2 MiB of each body. Needs the viewer role.",
+        "operationId": "flow_engage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Flow id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngageReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/flows/{id}/ws": {
       "get": {
         "tags": [
@@ -5417,6 +5562,41 @@
           "server_to_client"
         ]
       },
+      "EngageReport": {
+        "type": "object",
+        "required": [
+          "findings",
+          "params",
+          "truncated"
+        ],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "description": "What the response holds: comments, scripts, links, forms, resources, URLs and quoted paths."
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Param"
+            },
+            "description": "The parameters of the request: query, form body and JSON body."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The scanned body was longer than the scan limit (or the decoded body was cut)."
+          },
+          "undecoded": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The response has a Content-Encoding Bosun cannot undo, so only the request side is reported."
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": [
@@ -5427,6 +5607,40 @@
             "type": "string"
           }
         }
+      },
+      "Finding": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value",
+          "offset"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/FindingKind"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset into the text that was scanned.",
+            "minimum": 0
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "FindingKind": {
+        "type": "string",
+        "enum": [
+          "comment",
+          "inline_script",
+          "script_src",
+          "link",
+          "form_action",
+          "resource",
+          "url",
+          "path"
+        ]
       },
       "FlowMeta": {
         "allOf": [
@@ -5996,6 +6210,33 @@
           "in_progress",
           "done",
           "ignored"
+        ]
+      },
+      "Param": {
+        "type": "object",
+        "required": [
+          "name",
+          "where",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "where": {
+            "$ref": "#/components/schemas/ParamWhere"
+          }
+        }
+      },
+      "ParamWhere": {
+        "type": "string",
+        "enum": [
+          "query",
+          "form",
+          "json"
         ]
       },
       "PartInfo": {

@@ -312,6 +312,40 @@ export interface paths {
         patch: operations["annotate_flow"];
         trace?: never;
     };
+    "/flows/{id}/csrf-poc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description A cross-site request forgery proof of concept for the recorded request, as an HTML attachment to open in a test browser that is signed in to the target. Only a GET or POST with a form, JSON-object or multipart body can be reproduced; anything else is a 422 that says why. ?auto=1 submits on load. Needs the viewer role. */
+        get: operations["flow_csrf_poc"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flows/{id}/engage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Comments, scripts, references and URLs in the response, and the parameters of the request, for finding what to test next. Scans up to 2 MiB of each body. Needs the viewer role. */
+        get: operations["flow_engage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/flows/{id}/ws": {
         parameters: {
             query?: never;
@@ -1083,9 +1117,27 @@ export interface components {
         };
         /** @enum {string} */
         Direction: "client_to_server" | "server_to_client";
+        EngageReport: {
+            /** @description What the response holds: comments, scripts, links, forms, resources, URLs and quoted paths. */
+            findings: components["schemas"]["Finding"][];
+            /** @description The parameters of the request: query, form body and JSON body. */
+            params: components["schemas"]["Param"][];
+            /** @description The scanned body was longer than the scan limit (or the decoded body was cut). */
+            truncated: boolean;
+            /** @description The response has a Content-Encoding Bosun cannot undo, so only the request side is reported. */
+            undecoded?: string | null;
+        };
         Error: {
             error: string;
         };
+        Finding: {
+            kind: components["schemas"]["FindingKind"];
+            /** @description Byte offset into the text that was scanned. */
+            offset: number;
+            value: string;
+        };
+        /** @enum {string} */
+        FindingKind: "comment" | "inline_script" | "script_src" | "link" | "form_action" | "resource" | "url" | "path";
         /** @description A flow without its bodies: its summary, and each stored message's head and size. */
         FlowMeta: components["schemas"]["FlowSummary"] & {
             original_request?: components["schemas"]["PartInfo"] | null;
@@ -1249,6 +1301,13 @@ export interface components {
          * @enum {string}
          */
         OrganizerStatus: "todo" | "in_progress" | "done" | "ignored";
+        Param: {
+            name: string;
+            value: string;
+            where: components["schemas"]["ParamWhere"];
+        };
+        /** @enum {string} */
+        ParamWhere: "query" | "form" | "json";
         /** @description The head of one stored message and how big it is, which is all the flow overview needs. */
         PartInfo: {
             /**
@@ -2867,6 +2926,118 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    flow_csrf_poc: {
+        parameters: {
+            query?: {
+                /** @description 1 to submit on load */
+                auto?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Flow id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An HTML file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such flow */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The request cannot be reproduced by a form */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    flow_engage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Flow id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngageReport"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such flow */
             404: {
                 headers: {
                     [name: string]: unknown;

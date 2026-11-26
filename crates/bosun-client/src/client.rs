@@ -360,6 +360,21 @@ impl Client {
         .await
     }
 
+    /// Comments, scripts and references in the response, and the request's parameters.
+    pub async fn flow_engage(&self, id: FlowId) -> Result<EngageReport> {
+        self.json(self.req(Method::GET, &format!("/flows/{id}/engage")))
+            .await
+    }
+
+    /// A CSRF proof of concept for the request, as HTML text.
+    pub async fn flow_csrf_poc(&self, id: FlowId, auto_submit: bool) -> Result<String> {
+        let mut rb = self.req(Method::GET, &format!("/flows/{id}/csrf-poc"));
+        if auto_submit {
+            rb = rb.query(&[("auto", "1")]);
+        }
+        Ok(self.check(rb.send().await?).await?.text().await?)
+    }
+
     /// A whole message body. `decoded` undoes the response's `Content-Encoding`.
     pub async fn flow_body(&self, id: FlowId, part: Part, decoded: bool) -> Result<Bytes> {
         let mut rb = self.req(Method::GET, &format!("/flows/{id}/{}/body", part.path()));

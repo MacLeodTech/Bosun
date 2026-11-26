@@ -126,6 +126,27 @@ impl Stack {
 }
 
 pub fn recorded(s: &Stack, path: &str, head: &str, body: &[u8], original: Option<Vec<u8>>) -> i64 {
+    recorded_exchange(
+        s,
+        "GET",
+        path,
+        b"GET / HTTP/1.1\r\nHost: a.test\r\n\r\n",
+        head,
+        body,
+        original,
+    )
+}
+
+/// Like `recorded`, with the request given whole (method, target in `path`, and the raw bytes).
+pub fn recorded_exchange(
+    s: &Stack,
+    method: &str,
+    path: &str,
+    request: &[u8],
+    head: &str,
+    body: &[u8],
+    original: Option<Vec<u8>>,
+) -> i64 {
     use bosun_model::{FlowSource, Scheme};
     let mut resp = format!("HTTP/1.1 200 OK\r\n{head}Content-Length: {}\r\n\r\n", body.len()).into_bytes();
     resp.extend_from_slice(body);
@@ -141,14 +162,14 @@ pub fn recorded(s: &Stack, path: &str, head: &str, body: &[u8], original: Option
                 scheme: Scheme::Https,
                 host: "a.test".into(),
                 port: 443,
-                method: "GET".into(),
+                method: method.into(),
                 path: path.into(),
                 http_version: "HTTP/1.1".into(),
                 status: Some(200),
                 in_scope: true,
                 edited: original.is_some(),
                 error: None,
-                request: b"GET / HTTP/1.1\r\nHost: a.test\r\n\r\n".to_vec(),
+                request: request.to_vec(),
                 original_request: None,
                 response: Some(resp),
                 original_response: original,

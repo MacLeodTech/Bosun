@@ -244,6 +244,7 @@
       { label: 'Keep cookies and authorization values', checked: prefs.exportSecrets, run: () => prefs.setExportSecrets(!prefs.exportSecrets) }, c('flow.copy-request', 'Request'), c('flow.copy-response', 'Response'),
       ...(canEdit ? [{ kind: 'sep' } as MenuItem, { kind: 'heading', label: 'Highlight' } as MenuItem, ...HL_COLORS.map((c): MenuItem => ({ label: c[0]!.toUpperCase() + c.slice(1), run: () => void highlight(c) })), { label: 'No highlight', run: () => void highlight(null) } as MenuItem, { label: 'Add a tag…', run: () => { tagging = true; setTimeout(() => tagBox?.focus(), 0); } } as MenuItem] : []),
       { kind: 'sep' }, { kind: 'heading', label: 'Scope' }, c('flow.scope.include', 'Add host to scope'), c('flow.scope.exclude', 'Exclude host from scope'),
+      { kind: 'sep' }, { kind: 'heading', label: 'Engage' }, c('flow.findings', 'Comments, scripts and references'), c('flow.csrf-poc', 'CSRF proof of concept…'), c('flow.csrf-poc-auto', 'CSRF proof of concept, auto-submit…'),
       { kind: 'sep' }, c('flow.export-har', 'Export as HAR…'), c('flow.delete', 'Delete'),
     ]);
   }

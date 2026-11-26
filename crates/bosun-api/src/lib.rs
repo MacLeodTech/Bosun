@@ -10,6 +10,7 @@ pub mod auth;
 pub mod browser;
 pub mod child;
 pub mod codec;
+pub mod engage;
 pub mod events;
 pub mod handlers;
 pub mod openapi;
@@ -370,6 +371,8 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/flows/{id}", get(h::get_flow).patch(h::annotate_flow))
         .route("/flows/{id}/ws", get(h::ws_messages))
+        .route("/flows/{id}/engage", get(engage::flow_engage))
+        .route("/flows/{id}/csrf-poc", get(engage::flow_csrf_poc))
         .route("/flows/{id}/{part}/body", get(h::flow_body))
         .route("/sitemap", get(h::site_map))
         .route("/scope", get(h::get_scope).put(h::put_scope))

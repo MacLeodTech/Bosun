@@ -460,3 +460,48 @@ pub struct OrganizerItem {
     pub updated_ms: i64,
     pub flow: FlowSummary,
 }
+
+/// What a response holds that is worth a look (WP-45).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingKind {
+    Comment,
+    InlineScript,
+    ScriptSrc,
+    Link,
+    FormAction,
+    Resource,
+    Url,
+    Path,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    pub kind: FindingKind,
+    pub value: String,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamWhere {
+    Query,
+    Form,
+    Json,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Param {
+    pub name: String,
+    #[serde(rename = "where")]
+    pub location: ParamWhere,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EngageReport {
+    pub findings: Vec<Finding>,
+    pub params: Vec<Param>,
+    pub truncated: bool,
+    pub undecoded: Option<String>,
+}

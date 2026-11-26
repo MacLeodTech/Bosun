@@ -851,6 +851,33 @@ test('export: a HAR file is saved with secrets redacted, and keeps them only whe
   await applyFilter('');
 });
 
+test('findings: a response is searched for scripts and resources, shown as text, and a CSRF page is downloaded', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:/evil');
+  const row = page.locator('.row', { hasText: '/evil' }).first();
+  await expect(row).toBeVisible();
+  const before = hits.length;
+  await row.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'Request actions' });
+  await menu.getByRole('menuitem', { name: 'Comments, scripts and references' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Findings' });
+  await expect(panel.getByRole('row', { name: /Inline script.*from=inline-script/ })).toBeVisible();
+  await expect(panel.getByRole('row', { name: /Resource.*\/missing\.png/ })).toBeVisible();
+  // The hostile page's text is only text: nothing in it ran or was fetched.
+  await page.waitForTimeout(300);
+  expect(hits.length).toBe(before);
+  await panel.getByRole('searchbox', { name: 'Filter findings' }).fill('missing');
+  await expect(panel.getByRole('row', { name: /Inline script/ })).toHaveCount(0);
+
+  const [dl] = await Promise.all([page.waitForEvent('download'), panel.getByRole('button', { name: 'CSRF proof of concept' }).click()]);
+  expect(dl.suggestedFilename()).toMatch(/^csrf-poc-\d+\.html$/);
+  const html = fs.readFileSync((await dl.path())!, 'utf8');
+  expect(html).toContain('method="get"');
+  expect(html).not.toContain('<script>');
+  await applyFilter('');
+});
+
 test('organizer: a request is saved for follow-up with a status and a note, and both survive a reload', async () => {
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();

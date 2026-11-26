@@ -3,8 +3,9 @@
 
 import { api } from './api';
 import { commands, type Command } from './commands.svelte';
-import { copyAsCurl, copyMessage, copyRequestAs, copyUrls, deleteFlows, exportHar, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
+import { copyAsCurl, copyMessage, copyRequestAs, copyUrls, deleteFlows, downloadCsrfPoc, exportHar, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
 import { SNIPPETS } from './export';
+import { historyView } from './historyView.svelte';
 import { panels } from './panels';
 import { prefs } from './prefs.svelte';
 import { session } from './session.svelte';
@@ -127,6 +128,9 @@ export function registerBuiltins(): () => void {
       })),
     ),
     { id: 'flow.organize', title: 'Save to Organizer', group: 'Request', when: (c) => tester() && hasFlows(c), run: (c) => saveToOrganizer(c.flows) },
+    { id: 'flow.findings', title: 'Find comments, scripts and references', group: 'Request', when: (c) => c.focus !== null, run: (c) => { historyView.openId = c.focus; workspace.reveal('findings', 'flow'); } },
+    { id: 'flow.csrf-poc', title: 'Download CSRF proof of concept', group: 'Request', when: (c) => c.focus !== null, run: (c) => downloadCsrfPoc(c.focus!, false) },
+    { id: 'flow.csrf-poc-auto', title: 'Download CSRF proof of concept (submits on load)', group: 'Request', when: (c) => c.focus !== null, run: (c) => downloadCsrfPoc(c.focus!, true) },
     { id: 'flow.copy-curl-powershell', title: 'Copy as PowerShell command', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyRequestAs(c.focus!, 'curl-powershell') },
     ...SNIPPETS.map((sn): Command => ({ id: `flow.snippet.${sn.id}`, title: `Copy as ${sn.label}`, group: 'Request', when: (c) => c.focus !== null, run: (c) => copyRequestAs(c.focus!, sn.id) })),
     { id: 'flow.export-har', title: 'Export requests as HAR', group: 'Request', when: hasFlows, run: (c) => exportHar(c.flows) },

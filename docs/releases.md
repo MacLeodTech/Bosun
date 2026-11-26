@@ -9,6 +9,12 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **Priority batch** (`wp-43`, 2026-11-26).
+  - **WP-20** Data key in the OS keychain: `data_key_store = file|keychain` (`BOSUN_DATA_KEY_STORE`), `OsKeychain` via `keyring`, `bosun key migrate --to keychain|file` (same bytes, checked before the old copy is removed), `doctor` reports the location; desktop defaults to the keychain. Tested with an in-memory keychain; the real OS keychain is untested.
+  - **WP-33** Client certificates: migration 8 `client_certs`, PEM or PKCS#12 (`p12-keystore`), key sealed and never returned, `GET/POST /client-certs` and `DELETE /client-certs/{id}` (admin, audited `clientcert.add|remove`), used by the proxy upstream and `bosun_http::Engine`; fuzz target `client_cert`; Settings form.
+  - **WP-54** Active scan engine (first slice): `bosun-active` (insertion points, strength, queue, pause/resume/stop, request cap, SQLi and reflected XSS), `bosun-testbed`, `/scan/*` API (tester to change, audited; findings become issues; probes recorded as `scanner` flows), fuzz target `active_targets`. The WP-52 crawler is tested against the testbed, which completes WP-52.
+  - **WP-85** (part) `GET /issues/{id}/tracker?tracker=github|jira|linear`: title, Markdown body, labels and create-issue JSON; tester, redacted by default, audited `issues.tracker_export`; no outbound request.
+
 - **Leftovers batch** (`wp-43`, 2026-11-26).
   - WP-33: `upstream_sni` applies in `bosun_http::Engine` (Repeater, Intruder, Sequencer, scanner); Repeater WebSocket messages are recorded inflated (`bosun_http::ws::WsRecorder`).
   - WP-38: per-listener `max_connections`, enforced at accept, live, audited.

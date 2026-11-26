@@ -195,7 +195,6 @@ valid in the "Depends on" column.
 |---|---|---|---|---|---|
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
-| [ ] | WP-20 | Data key in the OS keychain | 3 | M | |
 | [ ] | WP-21 | Browser provisioning | 3 | M | WP-01 |
 | [ ] | WP-18 | Windows desktop app (WinUI 3) | 3 | L | WP-09, WP-13, WP-15 |
 | [ ] | WP-19 | Tauri shell on the child-process model | 3 | M | WP-15 |
@@ -206,7 +205,7 @@ valid in the "Depends on" column.
 | [ ] | WP-47 | Intruder (rest) | 4 | M | WP-40, WP-41 |
 | [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
-| [ ] | WP-33 | Protocol gaps | 4 | M | WP-20 |
+| [ ] | WP-33 | Protocol gaps (only header case left) | 4 | S | |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
 | [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
 | [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
@@ -214,7 +213,6 @@ valid in the "Depends on" column.
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
 | [ ] | WP-73 | Accessibility and keyboard shortcuts | 5 | M | WP-44 |
 | [ ] | WP-80 | Command palette and one shared message viewer | 5 | M | WP-44, WP-73 |
-| [ ] | WP-52 | `bosun-crawl`: testbed check (everything else is done) | 6 | S | WP-10, WP-40 |
 | [ ] | WP-68 | Encrypted credential vault | 6 | M | WP-20, WP-29 |
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
 | [ ] | WP-54 | Active scan engine and the testbed | 6 | L | WP-40, WP-49, WP-50 |
@@ -285,18 +283,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Update `docs/architecture.md`.
 - **Done when:** the desktop CI job builds on Linux and macOS, and a smoke test launches the app headless where
   possible.
-
-#### WP-20 Data key in the OS keychain · Phase 3 · M
-
-- **Why:** by default `data.key` sits in the same directory as the data it protects.
-- **Do:**
-  - A `keychain` data-key source using the `keyring` crate (Windows Credential Manager, macOS Keychain, Secret
-    Service on Linux).
-  - The desktop apps default to it. Servers keep `BOSUN_DATA_KEY_FILE`.
-  - `bosun key migrate --to keychain|file` moves the key, re-sealing the CA key.
-  - `doctor` reports where the key lives.
-- **Done when:** tests use a mock keychain store; migration round-trips; a missing keychain entry gives a clear
-  error.
 
 #### WP-21 Browser provisioning · Phase 3 · M
 
@@ -421,8 +407,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 #### WP-33 Protocol gaps · Phase 4 · M
 
 - **Do:**
-  - Client certificates for targets that require them (per-host PKCS#12 or PEM, keys sealed with the data key).
-    Needs WP-20 and a vault table.
   - Exact header-name case for headers added by an edit needs a raw HTTP/1 send.
 
 #### WP-41 Repeater · Phase 3 · L
@@ -470,13 +454,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 ### WP-52 to WP-57, WP-68 and WP-72: M5 active scanning
 
-#### WP-52 `bosun-crawl`: spider API, CLI and UI · Phase 6 · S
-
-The engine, API, CLI and UI are done (see `docs/releases.md`).
-
-- **Do:** a run against the testbed once WP-54 exists (events and the `/crawl` integration test are done).
-- **Done when:** a crawl of the testbed finds every linked page and never leaves scope.
-
 #### WP-53 Browser crawler and the `BrowserEngine` trait · Phase 6 · L
 
 - **Do:**
@@ -489,13 +466,11 @@ The engine, API, CLI and UI are done (see `docs/releases.md`).
 
 #### WP-54 Active scan engine and the testbed · Phase 6 · L
 
-- **Do:**
-  - First, the in-repo `testbed` crate: a small server with known vulnerabilities, so scanner tests in CI are
-    deterministic.
-  - Insertion points: query, body (form, JSON, XML, multipart), headers, cookies, path segments, nested encodings
-    (Base64 or JSON inside a parameter), GraphQL variables.
-  - Scan policies (checks, strength, thresholds), a scan queue, pause and resume, a live progress view.
-  - Checks come from WP-50's language and from Rust checks; all traffic goes through WP-40 and the gate.
+- **Do:** the testbed (`bosun-testbed`), the engine (`bosun-active`), the `/scan/*` API, query/form/JSON/cookie/
+  path/header insertion points, strength levels, pause and resume, and SQLi and reflected-XSS checks are done (see
+  `docs/releases.md`). Left:
+  - Insertion points: XML, multipart, nested encodings (Base64 or JSON inside a parameter), GraphQL variables.
+  - Checks written in WP-50's language, a persistent scan queue, `scan_*` events and a live progress view.
 - **Done when:** a scan of the testbed finds its planted issues, pauses and resumes, and stays in scope.
 
 #### WP-55 Core active checks · Phase 6 · L
@@ -740,7 +715,8 @@ fuzz target; ones that send traffic go through the gate.
 
 #### WP-85 Issue tracker export · Phase 7 · S
 
-- **Do:** push a finding to GitHub issues, Jira or Linear. Credentials go in the vault (WP-68); the destination host
+- **Do:** the export of a finding as a GitHub, Jira or Linear issue body is done (`GET /issues/{id}/tracker`,
+  redacted by default, audited; no UI button yet). Left: push a finding to GitHub issues, Jira or Linear. Credentials go in the vault (WP-68); the destination host
   is on a user-set allow list; secrets in evidence are redacted by default.
 - **Done when:** tests against a mock tracker; a host off the allow list is refused.
 

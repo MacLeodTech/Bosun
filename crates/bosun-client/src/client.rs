@@ -546,6 +546,59 @@ impl Client {
         self.json(self.req(Method::PUT, "/repeater/tabs").json(doc)).await
     }
 
+    /// Check an attack without sending anything. `body` is the `StartBody` of the API: target, base64 request with
+    /// `§` around each position, attack type and payload sets (and optionally options and grep rules). Returns the
+    /// number of requests and the first few payloads, or an error that says what is wrong.
+    pub async fn intruder_plan(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/intruder/plan").json(body))
+            .await
+    }
+
+    /// Start an Intruder attack (same body as [`Client::intruder_plan`]). Returns the attack as it starts; results
+    /// arrive as `IntruderResult` events and can be read with [`Client::intruder_results`].
+    pub async fn intruder_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/intruder/attacks").json(body))
+            .await
+    }
+
+    /// The project's Intruder attacks, newest first.
+    pub async fn intruder_attacks(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/intruder/attacks")).await
+    }
+
+    /// One attack with its request and configuration.
+    pub async fn intruder_attack(&self, id: i64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/intruder/attacks/{id}")))
+            .await
+    }
+
+    /// A page of an attack's results, in request order (at most 5000 a page).
+    pub async fn intruder_results(&self, id: i64, offset: u64, limit: u64) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::GET, &format!("/intruder/attacks/{id}/results"))
+                .query(&[("offset", offset), ("limit", limit)]),
+        )
+        .await
+    }
+
+    /// Throw the stop switch of an attack. False if it was not running.
+    pub async fn intruder_stop(&self, id: i64) -> Result<bool> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            stopped: bool,
+        }
+        let r: R = self
+            .json(self.req(Method::POST, &format!("/intruder/attacks/{id}/stop")))
+            .await?;
+        Ok(r.stopped)
+    }
+
+    /// Delete an attack and its results.
+    pub async fn intruder_delete(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/intruder/attacks/{id}")))
+            .await
+    }
+
     /// The kill switch for all tool traffic. Returns the new state.
     pub async fn set_stopped(&self, stopped: bool) -> Result<bool> {
         #[derive(serde::Deserialize)]

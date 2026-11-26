@@ -18,6 +18,7 @@ use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntr
 
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
 use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
+use crate::intruder::{AttackDetail, AttackInfo, AttackList, PlanReply, ResultsReply, StartBody, StopReply};
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
 use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
 use bosun_proxy::rules::RuleSpec as MatchRule;
@@ -366,13 +367,28 @@ fn repeater_ws() {}
 #[utoipa::path(put, path = "/repeater/tabs", operation_id = "put_repeater_tabs", tag = "repeater", description = "Replace the Repeater's saved tabs (at most 100). Needs the tester role or above.", request_body = TabsDoc, responses((status = 200, description = "OK", body = TabsDoc), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Too large", body = Error)))]
 fn put_repeater_tabs() {}
 
+#[utoipa::path(post, path = "/intruder/plan", operation_id = "intruder_plan", tag = "intruder", description = "Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first few payloads come back. A problem is a 400 that says what. Needs the tester role or above.", request_body = StartBody, responses((status = 200, description = "OK", body = PlanReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn intruder_plan() {}
+#[utoipa::path(post, path = "/intruder/attacks", operation_id = "intruder_start", tag = "intruder", description = "Start an attack: fill the marked positions of a request with payloads (sniper, battering ram, pitchfork or cluster bomb) and send every request through the scope gate (the target must be in scope; there is no out-of-scope setting), recorded as flows with source intruder. Results are stored in the project and sent on the event stream (intruder_result, intruder_state). Up to three attacks run at once. Needs the tester role or above; audited.", request_body = StartBody, responses((status = 200, description = "The attack, running", body = AttackInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Too many attacks running or stored", body = Error)))]
+fn intruder_start() {}
+#[utoipa::path(get, path = "/intruder/attacks", operation_id = "intruder_attacks", tag = "intruder", description = "The project's attacks, newest first, with live progress for running ones.", responses((status = 200, description = "OK", body = AttackList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn intruder_attacks() {}
+#[utoipa::path(get, path = "/intruder/attacks/{id}", operation_id = "intruder_attack", tag = "intruder", description = "One attack, with its request (position markers included) and the configuration it was started with.", params(("id" = i64, Path, description = "Attack id")), responses((status = 200, description = "OK", body = AttackDetail), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error)))]
+fn intruder_attack() {}
+#[utoipa::path(delete, path = "/intruder/attacks/{id}", operation_id = "intruder_delete", tag = "intruder", description = "Delete an attack and its results (the flows it recorded stay in history). A running attack is a 409. Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Attack id")), responses((status = 204, description = "Deleted"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error), (status = 409, description = "The attack is running", body = Error)))]
+fn intruder_delete() {}
+#[utoipa::path(get, path = "/intruder/attacks/{id}/results", operation_id = "intruder_results", tag = "intruder", description = "An attack's results in request order, up to 5000 per page (?offset and ?limit).", params(("id" = i64, Path, description = "Attack id"), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = ResultsReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error)))]
+fn intruder_results() {}
+#[utoipa::path(post, path = "/intruder/attacks/{id}/stop", operation_id = "intruder_stop", tag = "intruder", description = "The stop switch: no further request is sent and the ones in flight are dropped, at once. `stopped` is false when the attack was not running. (The kill switch, PUT /tools/stop, ends every attack too.) Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Attack id")), responses((status = 200, description = "OK", body = StopReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error)))]
+fn intruder_stop() {}
+
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
     components(schemas(crate::engage::EngageReport, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
-    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "accounts"), (name = "projects"), (name = "events"))
+    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "intruder"), (name = "decoder"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
 
@@ -433,6 +449,13 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/repeater/ws"),
     ("get", "/repeater/tabs"),
     ("put", "/repeater/tabs"),
+    ("post", "/intruder/plan"),
+    ("post", "/intruder/attacks"),
+    ("get", "/intruder/attacks"),
+    ("get", "/intruder/attacks/{id}"),
+    ("delete", "/intruder/attacks/{id}"),
+    ("get", "/intruder/attacks/{id}/results"),
+    ("post", "/intruder/attacks/{id}/stop"),
     ("get", "/ca"),
     ("get", "/ca/cert.pem"),
     ("post", "/browser/launch"),

@@ -2203,6 +2203,468 @@
         }
       }
     },
+    "/intruder/attacks": {
+      "get": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "The project's attacks, newest first, with live progress for running ones.",
+        "operationId": "intruder_attacks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttackList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "Start an attack: fill the marked positions of a request with payloads (sniper, battering ram, pitchfork or cluster bomb) and send every request through the scope gate (the target must be in scope; there is no out-of-scope setting), recorded as flows with source intruder. Results are stored in the project and sent on the event stream (intruder_result, intruder_state). Up to three attacks run at once. Needs the tester role or above; audited.",
+        "operationId": "intruder_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The attack, running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttackInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Too many attacks running or stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/attacks/{id}": {
+      "get": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "One attack, with its request (position markers included) and the configuration it was started with.",
+        "operationId": "intruder_attack",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttackDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "Delete an attack and its results (the flows it recorded stay in history). A running attack is a 409. Needs the tester role or above; audited.",
+        "operationId": "intruder_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The attack is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/attacks/{id}/results": {
+      "get": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "An attack's results in request order, up to 5000 per page (?offset and ?limit).",
+        "operationId": "intruder_results",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultsReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/attacks/{id}/stop": {
+      "post": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "The stop switch: no further request is sent and the ones in flight are dropped, at once. `stopped` is false when the attack was not running. (The kill switch, PUT /tools/stop, ends every attack too.) Needs the tester role or above; audited.",
+        "operationId": "intruder_stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/plan": {
+      "post": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first few payloads come back. A problem is a 400 that says what. Needs the tester role or above.",
+        "operationId": "intruder_plan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/organizer": {
       "get": {
         "tags": [
@@ -5204,6 +5666,136 @@
           }
         }
       },
+      "AttackDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AttackInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "request",
+              "config"
+            ],
+            "properties": {
+              "config": {
+                "description": "The payload sets, options and grep rules it was started with."
+              },
+              "request": {
+                "type": "string",
+                "description": "The request with its position markers, base64."
+              }
+            }
+          }
+        ]
+      },
+      "AttackInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_ms",
+          "state",
+          "scheme",
+          "host",
+          "port",
+          "attack_type",
+          "total",
+          "done",
+          "skipped",
+          "errors"
+        ],
+        "properties": {
+          "attack_type": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "done": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests that finished.",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests that got no answer.",
+            "minimum": 0
+          },
+          "finished_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "scheme": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests left out because a payload was skipped.",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "description": "`running`, `completed`, `stopped`, `failed` or `interrupted` (the engine ended while it ran)."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "AttackList": {
+        "type": "object",
+        "required": [
+          "attacks"
+        ],
+        "properties": {
+          "attacks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttackInfo"
+            }
+          }
+        }
+      },
+      "AttackType": {
+        "type": "string",
+        "enum": [
+          "sniper",
+          "battering_ram",
+          "pitchfork",
+          "cluster_bomb"
+        ]
+      },
       "AuditEntry": {
         "type": "object",
         "required": [
@@ -5851,6 +6443,55 @@
           }
         }
       },
+      "GrepExtract": {
+        "type": "object",
+        "description": "Pull a value out of the response: the first group of the regular expression, or the whole match without one.",
+        "required": [
+          "pattern"
+        ],
+        "properties": {
+          "pattern": {
+            "type": "string"
+          }
+        }
+      },
+      "GrepMatch": {
+        "type": "object",
+        "description": "Mark a response as a match when this is found in it.",
+        "required": [
+          "pattern"
+        ],
+        "properties": {
+          "case_insensitive": {
+            "type": "boolean"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "regex": {
+            "type": "boolean",
+            "description": "A regular expression rather than plain text."
+          }
+        }
+      },
+      "Greps": {
+        "type": "object",
+        "description": "The grep rules of an attack.",
+        "properties": {
+          "extracts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrepExtract"
+            }
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrepMatch"
+            }
+          }
+        }
+      },
       "InterceptItem": {
         "allOf": [
           {
@@ -6102,6 +6743,13 @@
           }
         }
       },
+      "NumberBase": {
+        "type": "string",
+        "enum": [
+          "decimal",
+          "hex"
+        ]
+      },
       "Op": {
         "type": "string",
         "description": "One step of a chain.",
@@ -6127,6 +6775,59 @@
           "sha256",
           "sha512"
         ]
+      },
+      "Options": {
+        "type": "object",
+        "description": "The resource pool and the sending options.",
+        "properties": {
+          "concurrency": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.",
+            "default": 5,
+            "minimum": 0
+          },
+          "delay_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The least time between the starts of two requests, milliseconds, whatever the concurrency.",
+            "default": 0,
+            "minimum": 0
+          },
+          "max_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Stop after this many requests (at most one million).",
+            "default": null,
+            "minimum": 0
+          },
+          "retries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How often a request that could not be sent or got no answer is tried again (0 to 10).",
+            "default": 0,
+            "minimum": 0
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The longest one request may take, seconds (1 to 300).",
+            "default": 30,
+            "minimum": 0
+          },
+          "update_content_length": {
+            "type": "boolean",
+            "description": "Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.",
+            "default": true
+          },
+          "verify_tls": {
+            "type": "boolean",
+            "default": false
+          }
+        }
       },
       "OrganizerAdd": {
         "type": "object",
@@ -6288,12 +6989,320 @@
           }
         }
       },
+      "PayloadSet": {
+        "type": "object",
+        "description": "A source and the processing for what it yields.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "processing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Processing"
+            }
+          },
+          "source": {
+            "$ref": "#/components/schemas/PayloadSource"
+          }
+        }
+      },
+      "PayloadSource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "These strings, in order.",
+            "required": [
+              "items",
+              "type"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "list"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "`from` to `to` (inclusive) in steps of `step`; a negative step counts down.",
+            "required": [
+              "from",
+              "to",
+              "type"
+            ],
+            "properties": {
+              "base": {
+                "$ref": "#/components/schemas/NumberBase"
+              },
+              "from": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "min_digits": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Pad with leading zeros to this many digits.",
+                "minimum": 0
+              },
+              "step": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "to": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "numbers"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Every string of `min_len` to `max_len` characters from `charset`.",
+            "required": [
+              "charset",
+              "min_len",
+              "max_len",
+              "type"
+            ],
+            "properties": {
+              "charset": {
+                "type": "string"
+              },
+              "max_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "min_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "brute_force"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "`count` empty payloads: send the same request many times.",
+            "required": [
+              "count",
+              "type"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Each item as it is, in lower case, in upper case, capitalised and with its case swapped.",
+            "required": [
+              "items",
+              "type"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "case_changes"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A source of payloads."
+      },
       "Phase": {
         "type": "string",
         "enum": [
           "request",
           "response"
         ]
+      },
+      "PlanPreview": {
+        "type": "object",
+        "required": [
+          "index",
+          "payloads"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The payloads of one request (one per position, or one for sniper and battering ram).",
+            "minimum": 0
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PlanReply": {
+        "type": "object",
+        "required": [
+          "total",
+          "positions",
+          "preview"
+        ],
+        "properties": {
+          "positions": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "preview": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanPreview"
+            },
+            "description": "The first few requests' payloads."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests the attack would make (after the maximum, before skipped payloads are left out).",
+            "minimum": 0
+          }
+        }
+      },
+      "Processing": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "prefix"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "suffix"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Encode, escape or hash with one of the Decoder's operations (URL, HTML, Base64, hex, SHA-256, ...).",
+            "required": [
+              "op",
+              "type"
+            ],
+            "properties": {
+              "op": {
+                "$ref": "#/components/schemas/Op"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "encode"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Replace every match of the regular expression; `$1` in the replacement is the first group.",
+            "required": [
+              "pattern",
+              "replacement",
+              "type"
+            ],
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "replacement": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replace_regex"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Leave out any payload that matches the regular expression.",
+            "required": [
+              "pattern",
+              "type"
+            ],
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "skip_if_matches"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A step applied to every payload, in order."
       },
       "ProjectInfo": {
         "type": "object",
@@ -6536,6 +7545,158 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "An Intruder attack started, moved on or ended.",
+            "required": [
+              "attack_id",
+              "state",
+              "total",
+              "done",
+              "skipped",
+              "errors",
+              "type"
+            ],
+            "properties": {
+              "attack_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "done": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errors": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "skipped": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "description": "`running`, `completed`, `stopped`, `failed` or `interrupted`."
+              },
+              "total": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "intruder_state"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One request of an Intruder attack finished. (The same fields as a stored result.)",
+            "required": [
+              "attack_id",
+              "index",
+              "payloads",
+              "length",
+              "time_ms",
+              "matches",
+              "extracts",
+              "attempts",
+              "type"
+            ],
+            "properties": {
+              "attack_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "attempts": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "extracts": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "flow_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              },
+              "index": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "length": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "boolean"
+                }
+              },
+              "payloads": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "position": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "status": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "time_ms": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "intruder_result"
+                ]
+              }
+            }
           }
         ],
         "description": "Events the proxy publishes for front ends (sent over the API's event stream)."
@@ -6724,6 +7885,20 @@
           }
         }
       },
+      "ResultsReply": {
+        "type": "object",
+        "required": [
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Row"
+            }
+          }
+        }
+      },
       "Revoked": {
         "type": "object",
         "required": [
@@ -6753,6 +7928,99 @@
         "properties": {
           "role": {
             "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "Row": {
+        "type": "object",
+        "description": "The outcome of one request.",
+        "required": [
+          "index",
+          "payloads",
+          "length",
+          "time_ms",
+          "matches",
+          "extracts",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many tries it took (1 when the first worked).",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extracts": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "One entry per grep extract rule."
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The recorded flow, when something was sent."
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Which request of the attack (0-based).",
+            "minimum": 0
+          },
+          "length": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Response size in bytes.",
+            "minimum": 0
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "boolean"
+            },
+            "description": "One entry per grep match rule."
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The payloads used, as text (bytes that are not UTF-8 are replaced)."
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The position that was attacked, for a sniper attack.",
+            "minimum": 0
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "time_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -7177,6 +8445,57 @@
           }
         }
       },
+      "StartBody": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "request",
+          "attack_type",
+          "payload_sets"
+        ],
+        "properties": {
+          "attack_type": {
+            "$ref": "#/components/schemas/AttackType"
+          },
+          "greps": {
+            "$ref": "#/components/schemas/Greps"
+          },
+          "host": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A label for the attack (defaults to the host and attack type)."
+          },
+          "options": {
+            "$ref": "#/components/schemas/Options"
+          },
+          "payload_sets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayloadSet"
+            },
+            "description": "One set for sniper and battering ram; one per position for pitchfork and cluster bomb."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request": {
+            "type": "string",
+            "description": "The request, base64, with `§` around each position (`§value§`: the text between is what is sent when the\nposition is not being attacked)."
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          }
+        }
+      },
       "Status": {
         "type": "object",
         "required": [
@@ -7248,6 +8567,18 @@
         "properties": {
           "stopped": {
             "type": "boolean"
+          }
+        }
+      },
+      "StopReply": {
+        "type": "object",
+        "required": [
+          "stopped"
+        ],
+        "properties": {
+          "stopped": {
+            "type": "boolean",
+            "description": "False when the attack was not running."
           }
         }
       },
@@ -7666,6 +8997,9 @@
     },
     {
       "name": "repeater"
+    },
+    {
+      "name": "intruder"
     },
     {
       "name": "decoder"

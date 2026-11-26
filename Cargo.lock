@@ -401,6 +401,7 @@ dependencies = [
  "bosun-client",
  "bosun-codec",
  "bosun-http",
+ "bosun-intruder",
  "bosun-model",
  "bosun-proxy",
  "bosun-scope",
@@ -522,6 +523,23 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "webpki-roots 1.0.12",
+]
+
+[[package]]
+name = "bosun-intruder"
+version = "0.1.0"
+dependencies = [
+ "bosun-codec",
+ "bosun-http",
+ "bosun-model",
+ "bosun-proxy",
+ "bosun-scope",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "utoipa",
 ]
 
 [[package]]

@@ -11,6 +11,7 @@ pub mod project;
 pub mod query;
 
 pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, SessionInfo, TokenScope, User};
+pub use project::intruder::{MAX_ATTACKS, NewAttack, StoredAttack, StoredRow};
 pub use project::{
     FlowFilter, FlowMeta, FlowSort, MAX_ORGANIZER_NOTE, Message, NewFlow, NewWsMessage, OrganizerItem,
     OrganizerStatus, PartInfo, Project, ProjectLock, SiteMapEntry, Which, import_foreign, settle,

@@ -909,6 +909,47 @@ test('organizer: a request is saved for follow-up with a status and a note, and 
   await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
 });
 
+test('intruder: a request sent from the history menu is attacked with a list, grep, sort and filter', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  await page.locator('.row', { hasText: '/hello-history' }).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Intruder', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Intruder' })).toHaveAttribute('aria-selected', 'true');
+  const ip = page.getByRole('tabpanel', { name: 'Intruder', exact: true });
+  await expect(ip.getByLabel('Host', { exact: true })).toHaveValue('127.0.0.1');
+  await expect(ip.getByLabel('Request with positions')).toHaveValue(/^GET \/hello-history/);
+
+  // Mark a position by hand and give three payloads.
+  await ip.getByLabel('Request with positions').fill('GET /intr-§one§ HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await expect(ip.getByTestId('intruder-positions')).toHaveText('1 position');
+  await ip.getByLabel('Payloads 1').fill('alpha\nbeta\ngamma');
+  await ip.getByRole('button', { name: 'Add match rule' }).click();
+  await ip.getByLabel('Match text 1').fill('intr-beta');
+  await ip.getByRole('button', { name: 'Preview' }).click();
+  await expect(ip.getByTestId('intruder-plan')).toContainText('3 requests');
+
+  await ip.getByTestId('intruder-start').click();
+  await expect(ip.getByTestId('intruder-state')).toContainText('completed: 3 of 3');
+  const results = ip.getByTestId('intruder-results');
+  for (const p of ['alpha', 'beta', 'gamma']) await expect(results.getByRole('option', { name: new RegExp(p) })).toContainText('200');
+
+  // The grep rule matched the one answer that has the text, and the filter narrows to it.
+  await ip.getByLabel('Filter results').fill('match');
+  await expect(results.getByRole('option')).toHaveCount(1);
+  await expect(results.getByRole('option').first()).toContainText('beta');
+  await ip.getByLabel('Filter results').fill('');
+
+  // Sorting by payload, descending, puts gamma first.
+  await ip.getByRole('button', { name: /^Payload/ }).click();
+  await ip.getByRole('button', { name: /^Payload/ }).click();
+  await expect(results.getByRole('option').first()).toContainText('gamma');
+
+  // The sends are in the history as the Intruder's.
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/intr-alpha' }).first()).toBeVisible();
+});
+
 test('shortcuts: Ctrl+R sends to the Repeater without reloading, and ? lists every shortcut and any conflict', async () => {
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
@@ -1079,7 +1120,7 @@ for (const theme of ['dark', 'light'] as const) {
     expect(await a11yIssues(), 'layouts dialog').toEqual([]);
     await page.keyboard.press('Escape');
 
-    for (const panel of ['Intercept', 'Repeater', 'Match & replace', 'Target', 'Projects', 'Settings']) {
+    for (const panel of ['Intercept', 'Repeater', 'Intruder', 'Match & replace', 'Target', 'Projects', 'Settings']) {
       await page.getByRole('navigation').getByRole('button', { name: panel }).click();
       expect(await a11yIssues(), panel).toEqual([]);
     }

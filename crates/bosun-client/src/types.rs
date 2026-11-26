@@ -376,6 +376,31 @@ pub enum Event {
         name: Option<String>,
         temporary: bool,
     },
+    /// An Intruder attack started, moved on or ended.
+    IntruderState {
+        attack_id: i64,
+        state: String,
+        total: u64,
+        done: u64,
+        skipped: u64,
+        errors: u64,
+        error: Option<String>,
+    },
+    /// One request of an Intruder attack finished.
+    IntruderResult {
+        attack_id: i64,
+        index: u64,
+        position: Option<u32>,
+        payloads: Vec<String>,
+        status: Option<u16>,
+        length: u64,
+        time_ms: u64,
+        flow_id: Option<i64>,
+        error: Option<String>,
+        matches: Vec<bool>,
+        extracts: Vec<Option<String>>,
+        attempts: u32,
+    },
 }
 
 /// The project that is open.

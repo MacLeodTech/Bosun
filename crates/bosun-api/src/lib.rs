@@ -13,6 +13,7 @@ pub mod codec;
 pub mod engage;
 pub mod events;
 pub mod handlers;
+pub mod intruder;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
@@ -171,6 +172,8 @@ pub struct Inner {
     pub gate: Gate,
     /// The Repeater's sender. It shares the proxy's memory budget, upstream proxy and loop guard.
     pub repeater: bosun_http::Engine,
+    /// The Intruder attacks running now.
+    pub intruder: intruder::Attacks,
     pub ca: Arc<CertificateAuthority>,
     pub events: EventSender,
     pub limiter: auth::Limiter,
@@ -310,6 +313,7 @@ impl AppState {
             projects: projects::Manager::new(d.projects_dir, d.project_path.as_deref(), MAX_PROJECT_UPLOAD),
             repeater: bosun_http::Engine::new(d.gate.clone(), d.proxy.budget())
                 .with_connector(d.proxy.tool_connector()),
+            intruder: intruder::Attacks::default(),
             proxy: d.proxy,
             gate: d.gate,
             ca: d.ca,
@@ -425,6 +429,14 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/repeater/ws", post(repeater::ws_send))
         .route("/repeater/tabs", get(repeater::get_tabs).put(repeater::put_tabs))
+        .route("/intruder/plan", post(intruder::plan))
+        .route("/intruder/attacks", get(intruder::list).post(intruder::start))
+        .route(
+            "/intruder/attacks/{id}",
+            get(intruder::get).delete(intruder::delete),
+        )
+        .route("/intruder/attacks/{id}/results", get(intruder::results))
+        .route("/intruder/attacks/{id}/stop", post(intruder::stop))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

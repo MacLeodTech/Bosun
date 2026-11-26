@@ -9,6 +9,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-38 part 1 and WP-28 leftover** (`wp-43`, 2026-11-26). Response interception rules: a filter on status, MIME, header or body text and "request was held", at `GET`/`PUT /intercept/response-filter` (audited, saved per project), with an Intercept page form. History gets sortable TTFB (store migration 5) and request-size columns. A streamed request answered before its upload ends is now stored whole when the upload ends (300 s cap).
 - **WP-26 keychain and Intruder CLI** (`wp-43`, 2026-11-26). `bosun login` stores the token in the OS keychain (`keyring` 3, vendored), falling back to the 0600 file; `BOSUN_KEYCHAIN=off` forces the file. Intruder gains `dates`, `char_substitution` and `builtin` sources, and `bosun intruder run PLAN.json [--format csv|json] [-o file] [--exact]` (formula-safe CSV).
 - **WP-52 Spider engine** (`wp-43`, 2026-11-26). New crate `bosun-crawl`: follows links, frames, resources, redirects and GET forms; reads robots.txt and sitemaps; bounded by depth, pages and concurrency. Every request goes through `Engine::send`, so the gate decides. POST forms are listed, not sent, unless enabled. Fuzz target `crawl_html`. No API, CLI or UI yet.
 - **WP-28 Proxy hot path** (`wp-43`, 2026-11-26). `new_flow` no longer re-parses (method, path, version and status are

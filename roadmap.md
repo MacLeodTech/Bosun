@@ -194,7 +194,7 @@ valid in the "Depends on" column.
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
-| [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
+| [ ] | WP-38 | Proxy listeners and live config reload | 3 | M | WP-04, WP-12 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
 | [ ] | WP-20 | Data key in the OS keychain | 3 | M | |
 | [ ] | WP-21 | Browser provisioning | 3 | M | WP-01 |
@@ -433,15 +433,11 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 #### WP-38 Proxy follow-ups from M1 · Phase 3 · M
 
-- **Do:**
-  - **Response interception rules:** hold a response only when it matches conditions (status, MIME type, header
-    or body match, the request was intercepted).
+- **Do:** response interception rules and the size and timing columns are done (see `docs/releases.md`). Left:
   - **Listener management:** several proxy listeners, each with its own options (address, invisible mode,
     pass-through, auth). Managed in the UI, changed live without a restart, using the connection limits from
     WP-04. Every change is audited.
   - **Live config reload** for the settings that can change safely; the others say a restart is needed.
-  - **Size and timing stats in history:** request and response sizes, time to first byte and total time, as
-    sortable columns.
 - **Done when:** API and Playwright tests cover each item; adding a listener needs no restart.
 
 #### WP-41 Repeater · Phase 3 · L

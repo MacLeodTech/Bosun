@@ -14,6 +14,7 @@ pub mod engage;
 pub mod imports;
 pub mod events;
 pub mod handlers;
+pub mod crawl;
 pub mod intruder;
 pub mod issues;
 pub mod listeners;
@@ -210,6 +211,8 @@ pub struct Inner {
     pub totp_required: std::sync::atomic::AtomicBool,
     /// Live captures of the Sequencer.
     pub captures: sequencer::Captures,
+    /// Crawls of the spider.
+    pub crawls: crawl::Crawls,
 }
 
 pub struct Deps {
@@ -362,6 +365,7 @@ impl AppState {
             data_key: d.data_key,
             totp_required,
             captures: sequencer::Captures::default(),
+            crawls: crawl::Crawls::default(),
         };
         Ok((
             Self {
@@ -478,6 +482,9 @@ pub fn router(st: AppState) -> Router {
         .route("/sequencer/capture", post(sequencer::start_capture))
         .route("/sequencer/capture/{id}", get(sequencer::capture_status))
         .route("/sequencer/capture/{id}/stop", post(sequencer::stop_capture))
+        .route("/crawl/crawls", get(crawl::list).post(crawl::start))
+        .route("/crawl/crawls/{id}", get(crawl::get))
+        .route("/crawl/crawls/{id}/stop", post(crawl::stop))
         .route("/intruder/plan", post(intruder::plan))
         .route("/intruder/attacks", get(intruder::list).post(intruder::start))
         .route(

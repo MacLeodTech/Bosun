@@ -595,6 +595,60 @@ pub async fn intruder_run(
     })
 }
 
+/// Run a crawl, wait for it, and write the pages found (CSV or JSON) to `out` or stdout.
+/// Exit code 0 when it completed, 4 when it failed or was stopped.
+pub async fn crawl_run(
+    server: Option<&str>,
+    profile: Option<&str>,
+    body: &Value,
+    format: &str,
+    out: Option<&std::path::Path>,
+) -> Result<ExitCode> {
+    let (url, token) = resolve(server, profile)?;
+    let c = client(&url, token)?;
+    let started = c.crawl_start(body).await?;
+    let id = started["id"].as_u64().context("the engine did not return a crawl id")?;
+    eprintln!("crawl {id} started");
+    let last = loop {
+        let d = c.crawl_get(id, 0).await?;
+        if d["state"].as_str() != Some("running") {
+            break d;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    };
+    let pages = last["results"].as_array().cloned().unwrap_or_default();
+    let text = if format == "json" {
+        serde_json::to_string_pretty(&last)? + "\n"
+    } else {
+        let mut t = String::from("url,method,depth,status,content_type,bytes,title,found_on,error\n");
+        for p in &pages {
+            let cols: Vec<String> = ["url", "method", "depth", "status", "content_type", "bytes", "title", "found_on", "error"]
+                .iter()
+                .map(|k| match &p[*k] {
+                    Value::Null => String::new(),
+                    Value::String(s) => s.clone(),
+                    v => v.to_string(),
+                })
+                .collect();
+            t.push_str(&cols.iter().map(|c| csv_field(c)).collect::<Vec<_>>().join(","));
+            t.push('\n');
+        }
+        t
+    };
+    match out {
+        Some(p) => std::fs::write(p, text).with_context(|| format!("could not write {}", p.display()))?,
+        None => std::io::stdout().lock().write_all(text.as_bytes())?,
+    }
+    let state = last["state"].as_str().unwrap_or("?");
+    eprintln!(
+        "crawl {id} {state}: {} pages, {} requests, {} links left out of scope",
+        pages.len(),
+        last["requests"],
+        last["out_of_scope"].as_array().map_or(0, Vec::len)
+    );
+    Ok(if state == "done" { ExitCode::SUCCESS } else { ExitCode::from(4) })
+}
+
 /// What follows the blank line that ends the headers (all of it when there is none).
 pub fn body_of(raw: &[u8]) -> &[u8] {
     raw.windows(4)

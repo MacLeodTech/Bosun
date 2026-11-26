@@ -1450,3 +1450,22 @@ test('import: a file from the UI becomes Repeater tabs without a reload', async 
   await rp.locator('.tabs button').nth(-2).click();
   await expect(rp.getByLabel('Request')).toContainText("GET /imp-one ");
 });
+
+test('spider: a crawl finds the linked pages, leaves the out-of-scope link alone and records the pages in the history', async () => {
+  await page.getByRole('navigation').getByRole('button', { name: 'Spider' }).click();
+  const sp = page.getByRole('tabpanel', { name: 'Spider', exact: true });
+  await sp.getByLabel('Start URL').fill(`${TARGET}/spider`);
+  await sp.getByTestId('spider-start').click();
+  await expect(sp.getByTestId('spider-state')).toContainText('Done:');
+  const rows = sp.getByTestId('spider-pages');
+  await expect(rows).toContainText(`${TARGET}/spider/a`);
+  await expect(rows).toContainText(`${TARGET}/spider/c`);
+  await expect(rows).toContainText('Spider A');
+  await expect(sp.getByTestId('spider-out')).toContainText('http://other.invalid/x');
+  // The POST form is listed, not sent.
+  // The pages are in the history as the crawler's.
+  const hist = await page.evaluate(async () => (await fetch('/api/v1/flows?limit=200', { credentials: 'same-origin' })).text());
+  expect(hist).toContain('/spider/a');
+  expect(hist).toContain('crawler');
+  expect(hist).not.toContain('/spider/post');
+});

@@ -11,7 +11,7 @@ export const KEYS: KeyInfo[] = [
   { key: 'status', hint: '404, 4xx, >=400', values: ['2xx', '3xx', '4xx', '5xx', '>=400'] },
   { key: 'scope', hint: 'in or out of scope', values: ['in', 'out'] },
   { key: 'ext', hint: 'path extension (-ext: hides)', values: ['png', 'css', 'js', 'json', 'html'] },
-  { key: 'source', hint: 'where it came from', values: ['proxy', 'repeater', 'intruder', 'scanner', 'import'] },
+  { key: 'source', hint: 'where it came from', values: ['proxy', 'repeater', 'intruder', 'scanner', 'crawler', 'import'] },
   { key: 'header', hint: 'name or name=value', values: ['content-type', 'authorization', 'cookie', 'set-cookie', 'user-agent'] },
   { key: 'tag', hint: 'has this tag' },
   { key: 'note', hint: 'note contains' },

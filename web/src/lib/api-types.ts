@@ -327,6 +327,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/crawl/crawls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The crawls of this run of the server, newest first, with live counts. */
+        get: operations["crawl_list"];
+        put?: never;
+        /** @description Start a spider crawl from one or more URLs: it follows links, frames, redirects, GET forms, robots.txt and sitemaps, up to a depth and a page limit. Every request goes through the scope gate (a link outside the scope is listed in out_of_scope, never requested) and is recorded as a flow with source crawler, so the pages appear in the history and site map. POST forms are sent only with submit_post_forms. Two crawls run at once. Needs the tester role or above; audited. */
+        post: operations["crawl_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/crawl/crawls/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One crawl: its state, the pages found so far from index ?from on, and, once it has ended, forms, out-of-scope links, robots and sitemap findings. */
+        get: operations["crawl_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/crawl/crawls/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The stop switch: no further request is sent. `stopped` is false when the crawl was not running. Needs the tester role or above; audited. */
+        post: operations["crawl_stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/decoder/apply": {
         parameters: {
             query?: never;
@@ -1682,6 +1734,112 @@ export interface components {
         };
         /** @enum {string} */
         Confidence: "tentative" | "firm" | "certain";
+        CrawlDetail: components["schemas"]["CrawlInfo"] & {
+            /** @description The lists below are filled when the crawl has ended. */
+            forms: components["schemas"]["CrawlForm"][];
+            from: number;
+            /** @description Links outside the scope, or that the gate refused. Never requested. */
+            out_of_scope: string[];
+            /** @description The pages from index `from` on. */
+            results: components["schemas"]["CrawlPage"][];
+            robots_blocked: string[];
+            robots_paths: string[];
+            sitemap_urls: string[];
+            /** @description The crawl ended at the page limit with links left over. */
+            truncated: boolean;
+        };
+        CrawlField: {
+            kind: string;
+            name: string;
+            submitted: boolean;
+            value: string;
+        };
+        CrawlForm: {
+            action: string;
+            enctype: string;
+            fields: components["schemas"]["CrawlField"][];
+            method: string;
+            page: string;
+        };
+        CrawlInfo: {
+            /** Format: int64 */
+            created_ms: number;
+            error?: string | null;
+            /** Format: int64 */
+            id: number;
+            /** @description Pages the crawl has finished with so far. */
+            pages: number;
+            /**
+             * Format: int64
+             * @description Requests sent, robots and sitemaps included.
+             */
+            requests: number;
+            start: string[];
+            state: components["schemas"]["CrawlState"];
+        };
+        CrawlList: {
+            crawls: components["schemas"]["CrawlInfo"][];
+        };
+        CrawlPage: {
+            bytes: number;
+            content_type?: string | null;
+            /** Format: int32 */
+            depth: number;
+            /** @description Why there is no answer, or why it is partial. */
+            error?: string | null;
+            /** @description The page that led here. */
+            found_on?: string | null;
+            /** @description Where a redirect pointed. */
+            location?: string | null;
+            method: string;
+            /** Format: int32 */
+            status?: number | null;
+            title?: string | null;
+            url: string;
+        };
+        CrawlStartBody: {
+            /**
+             * Format: int32
+             * @description Requests in flight at once (1 to 32, default 5).
+             */
+            concurrency?: number | null;
+            /**
+             * Format: int64
+             * @description The least time between two request starts, milliseconds (at most 60000).
+             */
+            delay_ms?: number | null;
+            /** @description Follow `script`, `img` and similar sources too (default true). */
+            follow_resources?: boolean | null;
+            /** @description Extra headers for every request, each `Name: value`. */
+            headers?: string[];
+            /**
+             * Format: int32
+             * @description Links followed from a start URL (0 to 100, default 5).
+             */
+            max_depth?: number | null;
+            /**
+             * Format: int32
+             * @description Most page requests (1 to 20000, default 1000).
+             */
+            max_pages?: number | null;
+            /** @description Do not fetch what `robots.txt` disallows (default true). */
+            respect_robots?: boolean | null;
+            /** @description Where to begin: absolute `http` or `https` URLs (at least one). */
+            start: string[];
+            /** @description Send `GET` forms with the values the page gives them (default true). */
+            submit_get_forms?: boolean | null;
+            /** @description Send `POST` forms with their default values. Off by default: a form can change data. */
+            submit_post_forms?: boolean;
+            /** @description Read sitemaps and queue what they list (default true). */
+            use_sitemap?: boolean | null;
+            verify_tls?: boolean;
+        };
+        /** @enum {string} */
+        CrawlState: "running" | "done" | "stopped" | "failed";
+        CrawlStopReply: {
+            /** @description False when the crawl was not running. */
+            stopped: boolean;
+        };
         /** @description The project that is open. */
         CurrentProject: {
             /**
@@ -4030,6 +4188,206 @@ export interface operations {
             };
             /** @description Input too large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    crawl_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrawlList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    crawl_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrawlStartBody"];
+            };
+        };
+        responses: {
+            /** @description The crawl, running */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrawlInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many crawls running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    crawl_get: {
+        parameters: {
+            query?: {
+                from?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Crawl id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrawlDetail"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such crawl */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    crawl_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Crawl id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrawlStopReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such crawl */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

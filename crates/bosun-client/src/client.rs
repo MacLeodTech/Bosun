@@ -765,6 +765,29 @@ impl Client {
             .await
     }
 
+    /// Start a spider crawl. `body` is the `StartBody` of the API: `start` URLs and optionally depth, page limit,
+    /// form options and headers. Returns the crawl as it starts.
+    pub async fn crawl_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/crawl/crawls").json(body)).await
+    }
+
+    /// The crawls of this run of the server, newest first.
+    pub async fn crawl_list(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/crawl/crawls")).await
+    }
+
+    /// One crawl with its pages from index `from` on.
+    pub async fn crawl_get(&self, id: u64, from: usize) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/crawl/crawls/{id}?from={from}")))
+            .await
+    }
+
+    /// Throw the stop switch of a crawl.
+    pub async fn crawl_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/crawl/crawls/{id}/stop")))
+            .await
+    }
+
     /// The kill switch for all tool traffic. Returns the new state.
     pub async fn set_stopped(&self, stopped: bool) -> Result<bool> {
         #[derive(serde::Deserialize)]

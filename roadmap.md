@@ -210,11 +210,11 @@ valid in the "Depends on" column.
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
 | [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
 | [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
-| [ ] | WP-50 | `bosun-checks`: more ZAP ports and a larger vulnerable-library table | 5 | S | WP-49 |
+| [ ] | WP-50 | `bosun-checks`: more ZAP ports and library entries | 5 | S | WP-49 |
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
 | [ ] | WP-73 | Accessibility and keyboard shortcuts | 5 | M | WP-44 |
 | [ ] | WP-80 | Command palette and one shared message viewer | 5 | M | WP-44, WP-73 |
-| [ ] | WP-52 | `bosun-crawl`: testbed check and live events (the engine, API, CLI and UI are done) | 6 | S | WP-10, WP-40 |
+| [ ] | WP-52 | `bosun-crawl`: testbed check (everything else is done) | 6 | S | WP-10, WP-40 |
 | [ ] | WP-68 | Encrypted credential vault | 6 | M | WP-20, WP-29 |
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
 | [ ] | WP-54 | Active scan engine and the testbed | 6 | L | WP-40, WP-49, WP-50 |
@@ -423,8 +423,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Do:**
   - Client certificates for targets that require them (per-host PKCS#12 or PEM, keys sealed with the data key).
     Needs WP-20 and a vault table.
-  - The upstream SNI override only covers the proxy's own connections; `bosun_http::Engine` (Repeater, Intruder,
-    scanner) does not read it yet, and Repeater WebSocket messages are not inflated.
   - Exact header-name case for headers added by an edit needs a raw HTTP/1 send.
 
 #### WP-41 Repeater · Phase 3 · L
@@ -458,9 +456,8 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 - **Do:** the engine, API, panel, "Send to Intruder", the dates, character-substitution and built-in sources and
   `bosun intruder run` are done (see `docs/releases.md`). Left:
-  - Payload sources: recursive grep, the results of earlier attacks, SecLists support, and UI forms for the new sources.
+  - Payload sources: recursive grep, the results of earlier attacks and SecLists support.
   - A server-side export and the query bar's reuse for Intruder results (WP-75).
-  - A full preview of a plan (it shows the first few requests).
 - **Done when:** tests cover each new source; the CLI runs an attack from a file.
 
 ### WP-49 to WP-51: M4 passive scanning and reports
@@ -477,7 +474,7 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 The engine, API, CLI and UI are done (see `docs/releases.md`).
 
-- **Do:** `crawl_*` events so the UI stops polling, a Rust integration test for `/crawl`, and a run against the testbed once WP-54 exists.
+- **Do:** a run against the testbed once WP-54 exists (events and the `/crawl` integration test are done).
 - **Done when:** a crawl of the testbed finds every linked page and never leaves scope.
 
 #### WP-53 Browser crawler and the `BrowserEngine` trait · Phase 6 · L
@@ -562,9 +559,8 @@ The engine, API, CLI and UI are done (see `docs/releases.md`).
 
 #### WP-60 Imports: what is left
 
-- **Do:** the parsers, API, `bosun import` and the UI panel are done. Left: fetching GraphQL
-  introspection live through the gate, and HAR and Burp responses (only requests are imported).
-- **Done when:** a live introspection import through the gate is covered by a test.
+- **Do:** everything is done, including live introspection and HAR/Burp responses. Nothing left except format
+  additions as people ask for them.
 
 ### WP-61 to WP-63: M7 plugins and advanced checks
 

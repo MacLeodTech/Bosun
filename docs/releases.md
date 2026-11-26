@@ -9,6 +9,15 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **Leftovers batch** (`wp-43`, 2026-11-26).
+  - WP-33: `upstream_sni` applies in `bosun_http::Engine` (Repeater, Intruder, Sequencer, scanner); Repeater WebSocket messages are recorded inflated (`bosun_http::ws::WsRecorder`).
+  - WP-38: per-listener `max_connections`, enforced at accept, live, audited.
+  - WP-49: `IssuesChanged` event replaces polling; evidence is highlighted in the flow viewer as plain-text spans (raw view only).
+  - WP-52: `crawl_started`, `crawl_progress` (4 a second at most) and `crawl_done` events; `/crawl` integration tests.
+  - WP-60: `introspection_url` (through the gate, 403 out of scope) and `store_responses` (HAR and Burp responses become `import` flows).
+  - WP-50: email-disclosure, suspicious-comments, sensitive-info-in-url and php-source-disclosure checks; jquery-ui, underscore, dompurify, axios and vue added to the library table.
+  - WP-47: UI forms for dates, character substitution and built-in wordlists; `/intruder/plan?limit=` up to 1000 requests.
+
 - **WP-52 Spider API, CLI and UI** (`wp-43`, 2026-11-26). `POST/GET /crawl/crawls`, `GET /crawl/crawls/{id}`, `POST .../stop` (tester to start and stop, audited; every request through the gate; pages recorded as flows with source `crawler`; POST forms only with `submit_post_forms`; jobs in memory, 2 at once). `bosun crawl run`, and a Spider panel. Left: `crawl_*` events (the UI polls), a Rust integration test, the testbed run (WP-54).
 - **WP-50 Custom checks** (`wp-43`, 2026-11-26). Migration 7 adds `checks`; `/checks` routes to list, add, validate, replace, enable and delete (tester, audited, at most 200 per project); the scanner reloads them on change; a Checks panel with a "Rescan history" button. New built-ins: `jwt-weak-secret` (never copies the secret), Referrer-Policy and Permissions-Policy checks. Left: more ZAP ports and a larger library table.
 - **WP-60 Import panel** (`wp-43`, 2026-11-26). Import panel with dry-run preview (plain text only); Repeater tabs refresh after an import. Left: live GraphQL introspection through the gate, HAR and Burp responses.

@@ -290,7 +290,7 @@ pub enum Phase {
     Response,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterceptSummary {
     pub id: u64,
     pub flow_id: FlowId,
@@ -358,7 +358,7 @@ pub struct CaInfo {
 }
 
 /// One message on the event stream, without its sequence number (see [`crate::Sequenced`]).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     /// First message of a connection: this engine run's name and the latest sequence number.

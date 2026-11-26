@@ -9,6 +9,7 @@ import Decoder from '../pages/Decoder.svelte';
 import Comparer from '../pages/Comparer.svelte';
 import Sequencer from '../pages/Sequencer.svelte';
 import Findings from '../pages/Findings.svelte';
+import Issues from '../pages/Issues.svelte';
 import Analysis from '../pages/Analysis.svelte';
 import Organizer from '../pages/Organizer.svelte';
 import Rules from '../pages/Rules.svelte';
@@ -33,6 +34,7 @@ export const panels: PanelDef[] = [
   { id: 'repeater', title: 'Repeater', component: Repeater },
   { id: 'intruder', title: 'Intruder', component: Intruder },
   { id: 'organizer', title: 'Organizer', component: Organizer },
+  { id: 'issues', title: 'Issues', component: Issues },
   { id: 'findings', title: 'Findings', component: Findings },
   { id: 'analysis', title: 'Host analysis', component: Analysis },
   { id: 'decoder', title: 'Decoder', component: Decoder },

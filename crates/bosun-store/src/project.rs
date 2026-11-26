@@ -151,6 +151,7 @@ pub struct OrganizerItem {
 }
 
 pub mod intruder;
+pub mod issues;
 
 /// The most items the Organizer lists, and the longest note.
 pub const MAX_ORGANIZER_ITEMS: usize = 5_000;
@@ -351,6 +352,40 @@ const MIGRATIONS: &[migrate::Migration] = &[
                 attempts INTEGER NOT NULL,
                 PRIMARY KEY (attack_id, idx)
             ) WITHOUT ROWID;
+        "#,
+    },
+    migrate::Migration {
+        version: 5,
+        rebuild: false,
+        what: "passive scanner: issues, and a mark on flows the scanner has not read yet",
+        // `scanned` starts at 0 for every existing flow, so a project's backlog is scanned once the scanner runs.
+        // Issues refer to their evidence flow by id only; deleting the flow clears the reference.
+        sql: r#"
+            ALTER TABLE flows ADD COLUMN scanned INTEGER NOT NULL DEFAULT 0;
+            CREATE INDEX flows_unscanned ON flows(id) WHERE scanned = 0;
+            CREATE TABLE issues (
+                id INTEGER PRIMARY KEY,
+                fingerprint TEXT NOT NULL UNIQUE,
+                rule TEXT NOT NULL,
+                title TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'new',
+                flow_id INTEGER,
+                scheme TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                remediation TEXT NOT NULL,
+                cwe TEXT NOT NULL,
+                owasp TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 1,
+                first_seen_ms INTEGER NOT NULL,
+                last_seen_ms INTEGER NOT NULL
+            );
+            CREATE INDEX issues_by_flow ON issues(flow_id);
         "#,
     },
 ];
@@ -1051,6 +1086,10 @@ impl Project {
         for id in ids {
             tx.execute("DELETE FROM flow_text WHERE rowid = ?1", [id])?;
             tx.execute("DELETE FROM organizer WHERE flow_id = ?1", [id])?;
+            tx.execute(
+                "UPDATE issues SET flow_id = NULL, evidence = '[]' WHERE flow_id = ?1",
+                [id],
+            )?;
             n += tx.execute("DELETE FROM flows WHERE id = ?1", [id])?;
         }
         tx.execute(

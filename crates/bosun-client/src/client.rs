@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::error::{Error, Result};
 use crate::events::{EventStream, Position};
+use crate::issues::*;
 use crate::types::*;
 
 /// Builds a [`Client`].
@@ -898,6 +899,29 @@ impl Client {
                 .query(&[("before", before), ("limit", limit.map(i64::from))]),
         )
         .await
+    }
+
+    // --- issues (passive scanner) --------------------------------------------------------------------------
+
+    pub async fn issues(&self, q: &IssueQuery) -> Result<IssueList> {
+        self.json(self.req(Method::GET, "/issues").query(q)).await
+    }
+
+    pub async fn issue(&self, id: i64) -> Result<Issue> {
+        self.json(self.req(Method::GET, &format!("/issues/{id}"))).await
+    }
+
+    pub async fn change_issue(&self, id: i64, status: IssueStatus) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/issues/{id}"))
+                .json(&json!({ "status": status })),
+        )
+        .await
+    }
+
+    /// Queue every recorded flow for the scanner again.
+    pub async fn rescan_issues(&self) -> Result<()> {
+        self.unit(self.req(Method::POST, "/issues/rescan")).await
     }
 
     // --- events --------------------------------------------------------------------------------------------

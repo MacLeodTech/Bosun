@@ -673,6 +673,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Issues the passive scanner found in recorded traffic, newest sighting first, with the number of flows it has not read yet. Filter by status, severity, confidence, rule, host, evidence flow or text. Needs the viewer role or above. */
+        get: operations["list_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues/rescan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Queue every recorded flow for the scanner again (after a rule changed). Counts start over; statuses are kept. Needs the tester role or above; audited. */
+        post: operations["rescan_issues"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One issue with its evidence ranges and remediation. Needs the viewer role or above. */
+        get: operations["get_issue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description Set an issue's status (new, confirmed or false_positive). Needs the tester role or above; audited. */
+        patch: operations["change_issue"];
+        trace?: never;
+    };
     "/organizer": {
         parameters: {
             query?: never;
@@ -1522,6 +1574,8 @@ export interface components {
             ch: string;
             count: number;
         };
+        /** @enum {string} */
+        Confidence: "tentative" | "firm" | "certain";
         /** @description The project that is open. */
         CurrentProject: {
             /**
@@ -1614,6 +1668,16 @@ export interface components {
         Error: {
             error: string;
         };
+        /** @description A highlighted byte range in the stored request or response (end exclusive). */
+        Evidence: {
+            /** Format: int64 */
+            end: number;
+            part: components["schemas"]["EvidencePart"];
+            /** Format: int64 */
+            start: number;
+        };
+        /** @enum {string} */
+        EvidencePart: "request" | "response";
         Finding: {
             kind: components["schemas"]["FindingKind"];
             /** @description Byte offset into the text that was scanned. */
@@ -1759,6 +1823,55 @@ export interface components {
             status?: number | null;
             url: string;
         };
+        Issue: {
+            confidence: components["schemas"]["Confidence"];
+            /**
+             * Format: int64
+             * @description How many flows showed it.
+             */
+            count: number;
+            cwe: number[];
+            detail: string;
+            evidence: components["schemas"]["Evidence"][];
+            /** Format: int64 */
+            first_seen_ms: number;
+            /**
+             * Format: int64
+             * @description The flow that shows the issue (the first one it was seen in); `None` once that flow is deleted.
+             */
+            flow_id?: number | null;
+            host: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            last_seen_ms: number;
+            owasp: string[];
+            path: string;
+            /** Format: int32 */
+            port: number;
+            remediation: string;
+            rule: string;
+            scheme: string;
+            severity: components["schemas"]["Severity"];
+            status: components["schemas"]["IssueStatus"];
+            title: string;
+        };
+        IssueChange: {
+            status: components["schemas"]["IssueStatus"];
+        };
+        IssueList: {
+            /** @description Newest sighting first. */
+            issues: components["schemas"]["Issue"][];
+            /**
+             * Format: int64
+             * @description Flows the scanner has not read yet.
+             */
+            pending: number;
+            /** @description The rule ids the scanner has, for filters. */
+            rules: string[];
+        };
+        /** @enum {string} */
+        IssueStatus: "new" | "confirmed" | "false_positive";
         Launched: {
             launched: string;
         };
@@ -2356,6 +2469,8 @@ export interface components {
             password: string;
             username: string;
         };
+        /** @enum {string} */
+        Severity: "info" | "low" | "medium" | "high";
         /** @description A host and the paths seen on it, for the site map. */
         SiteMapEntry: {
             /** Format: int64 */
@@ -5168,6 +5283,214 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_issues: {
+        parameters: {
+            query?: {
+                /** @description new, confirmed or false_positive */
+                status?: string;
+                /** @description info, low, medium or high */
+                severity?: string;
+                /** @description tentative, firm or certain */
+                confidence?: string;
+                rule?: string;
+                host?: string;
+                flow_id?: number;
+                /** @description Text in the title, detail or path */
+                q?: string;
+                /** @description Up to 5000; default 1000 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueList"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rescan_issues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such issue */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    change_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueChange"];
+            };
+        };
+        responses: {
+            /** @description Changed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such issue */
             404: {
                 headers: {
                     [name: string]: unknown;

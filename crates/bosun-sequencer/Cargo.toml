@@ -1,0 +1,21 @@
+[package]
+name = "bosun-sequencer"
+description = "Sequencer: randomness analysis of session tokens (FIPS 140-2, character and bit level, entropy, verdict)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+utoipa.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

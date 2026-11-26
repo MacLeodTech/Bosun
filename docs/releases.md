@@ -9,6 +9,15 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-48 Sequencer** (`wp-43`, 2026-11-26). The `bosun-sequencer` crate (pure, bounded, fuzzed): FIPS 140-2 monobit, poker,
+  runs and long-run tests, character-level and bit-level analysis, an entropy estimate, counter and repeat
+  detection and a verdict (excellent, good, poor, not random; under 100 tokens is marked unreliable). Token
+  extraction from a header, a cookie or a body regex. API: `POST /sequencer/analyze` (viewer) and a live capture
+  job (`/sequencer/capture`, status, stop; tester) that sends through the Repeater's engine, so the gate, the
+  rate limit and the recording apply. Sequencer panel with Export JSON. Not done: captured requests are recorded
+  with the Repeater's source, regexes run on the raw body (no chunked or gzip decoding), captures are kept in
+  memory only.
+
 - **WP-39 TOTP second factor** (`wp-43`, 2026-11-26). RFC 6238 (SHA-1, 6 digits, 30 s, previous/current/next step) with
   constant-time comparison and a per-account replay guard. Enrolment is enforced only after a first valid code, which
   also returns 10 one-time recovery codes (stored as SHA-256 hashes). Secrets are sealed with the install's data key.

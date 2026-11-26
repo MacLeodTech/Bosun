@@ -188,7 +188,7 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-39, WP-42, WP-45, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-39, WP-42, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
@@ -208,7 +208,6 @@ valid in the "Depends on" column.
 | [ ] | WP-70 | Docs site | 3 | M | WP-13 |
 | [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
 | [ ] | WP-47 | Intruder | 4 | L | WP-40, WP-41 |
-| [ ] | WP-48 | Sequencer | 4 | M | WP-40 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
 | [ ] | WP-28 | Proxy hot path | 4 | M | WP-05 |
 | [ ] | WP-32 | CA management | 4 | M | |
@@ -546,14 +545,6 @@ Open packages only; finished ones are in `docs/releases.md`.
     Results are stored with a migration and streamed over the event stream.
   - The stop switch halts attacks at once.
 - **Done when:** tests against a local server cover each attack type, the rate limit and the stop switch.
-
-#### WP-48 Sequencer · Phase 4 · M
-
-- **Do:**
-  - Live capture (a request and a token location, sent through WP-40) and manual load.
-  - Analysis: FIPS 140-2 tests (monobit, poker, runs, long runs), character-level and bit-level analysis, an
-    entropy estimate and a verdict; exportable results.
-- **Done when:** known-good and known-bad token sets get the right verdicts.
 
 ### WP-49 to WP-51: M4 passive scanning and reports
 

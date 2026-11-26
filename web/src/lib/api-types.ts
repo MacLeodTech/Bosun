@@ -900,6 +900,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sequencer/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Analyse how random a set of tokens is (20 to 10000, each up to 1024 characters): per-position character statistics, bit-level bias, FIPS 140-2 (monobit, poker, runs, long run) on blocks of 20000 bits, an entropy estimate, checks for repeats and counters, and a verdict (excellent, good, poor, not_random). The result is the export. Needs the viewer role. */
+        post: operations["sequencer_analyze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sequencer/capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Start collecting tokens: send a request up to 5000 times (one after another, with an optional pause) and take the token from a response header, a Set-Cookie cookie or a regular expression over the body. Every request passes the scope gate (scope, kill switch, per-host rate limit; a rate-limit refusal is waited out) through the Repeater's engine and is recorded as a flow with source repeater. At most two captures run at once. Poll /sequencer/capture/{id}. Needs the tester role or above. */
+        post: operations["sequencer_capture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sequencer/capture/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The progress of a capture and its tokens from index `from` on. Needs the viewer role. */
+        get: operations["sequencer_capture_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sequencer/capture/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The stop switch: the capture ends after the request in flight. Needs the tester role or above. */
+        post: operations["sequencer_capture_stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/setup": {
         parameters: {
             query?: never;
@@ -1149,6 +1217,47 @@ export interface components {
             /** Format: int64 */
             added: number;
         };
+        Analysis: {
+            /** @description Bit positions off one half beyond chance, and how many bit positions there are. */
+            biased_bits: number;
+            bit_positions: number;
+            /** @description Bits in the bit-level stream (capped at 160 000). */
+            bit_stream_len: number;
+            /**
+             * Format: double
+             * @description What the same positions would carry if every character seen there were equally likely.
+             */
+            capacity_bits: number;
+            /** @description The most common characters over all tokens (up to 64). */
+            charset: components["schemas"]["CharCount"][];
+            /** @description Distinct characters over all tokens. */
+            charset_size: number;
+            /**
+             * Format: double
+             * @description Effective entropy of a token in bits, character level.
+             */
+            entropy_bits: number;
+            fips?: components["schemas"]["FipsReport"] | null;
+            max_length: number;
+            min_length: number;
+            positions: components["schemas"]["PositionStat"][];
+            /** @description Why the verdict is what it is. */
+            reasons: string[];
+            /** @description False under 100 tokens. */
+            reliable: boolean;
+            /**
+             * Format: double
+             * @description Share of consecutive tokens that are numbers 1 to 65 536 above the one before (0 when they are not numbers).
+             */
+            sequential_share: number;
+            tokens: number;
+            unique: number;
+            verdict: components["schemas"]["Verdict"];
+        };
+        AnalyzeBody: {
+            /** @description The tokens, one string each (20 to 10000, each up to 1024 characters). */
+            tokens: string[];
+        };
         Annotate: {
             note?: string | null;
             tags?: string[] | null;
@@ -1193,6 +1302,67 @@ export interface components {
             pem: string;
             spki_sha256: string;
         };
+        CaptureBody: {
+            /**
+             * Format: int32
+             * @description How many requests to send (1 to 5000).
+             */
+            count: number;
+            /**
+             * Format: int64
+             * @description Pause between requests, milliseconds (0 to 10000).
+             */
+            delay_ms?: number;
+            host: string;
+            /** Format: int32 */
+            port: number;
+            /** @description The request to send each time, as written, base64 (up to 1 MiB). */
+            request: string;
+            scheme: components["schemas"]["Scheme"];
+            /** @description Where the token is in each response. */
+            source: components["schemas"]["TokenSource"];
+            update_content_length?: boolean;
+            verify_tls?: boolean;
+        };
+        CaptureStarted: {
+            /** Format: int64 */
+            id: number;
+        };
+        /** @enum {string} */
+        CaptureState: "running" | "done" | "stopped" | "failed";
+        CaptureStatus: {
+            /**
+             * Format: int32
+             * @description Requests asked for.
+             */
+            count: number;
+            /**
+             * Format: int32
+             * @description Requests that failed.
+             */
+            errors: number;
+            /** @description Tokens extracted so far. */
+            extracted: number;
+            from: number;
+            /** Format: int64 */
+            id: number;
+            last_error?: string | null;
+            /**
+             * Format: int32
+             * @description Responses that had no token.
+             */
+            missing: number;
+            /**
+             * Format: int32
+             * @description Requests sent so far.
+             */
+            sent: number;
+            state: components["schemas"]["CaptureState"];
+            /** @description `scheme://host:port` the capture sends to. */
+            target: string;
+            /** @description The tokens from index `from` on. */
+            tokens: string[];
+        };
         ChangeTags: {
             add?: string[];
             ids: components["schemas"]["i64"][];
@@ -1201,6 +1371,10 @@ export interface components {
         ChangedCount: {
             /** Format: int64 */
             changed: number;
+        };
+        CharCount: {
+            ch: string;
+            count: number;
         };
         /** @description The project that is open. */
         CurrentProject: {
@@ -1302,6 +1476,30 @@ export interface components {
         };
         /** @enum {string} */
         FindingKind: "comment" | "inline_script" | "script_src" | "link" | "form_action" | "resource" | "url" | "path";
+        FipsBlock: {
+            long_run: components["schemas"]["FipsTest"];
+            monobit: components["schemas"]["FipsTest"];
+            poker: components["schemas"]["FipsTest"];
+            /** @description Run counts for lengths 1 to 6 and over, for zeros and for ones: all must be inside their ranges. */
+            runs: components["schemas"]["FipsTest"];
+        };
+        FipsReport: {
+            /** @description Bits that went into the tests. */
+            bits_tested: number;
+            blocks: components["schemas"]["FipsBlock"][];
+            /** @description Blocks in which every test passed. */
+            blocks_passed: number;
+        };
+        FipsTest: {
+            /** @description The range that passes, as text. */
+            limit: string;
+            pass: boolean;
+            /**
+             * Format: double
+             * @description The statistic (ones, poker X, total runs or the longest run).
+             */
+            value: number;
+        };
         /** @description A flow without its bodies: its summary, and each stored message's head and size. */
         FlowMeta: components["schemas"]["FlowSummary"] & {
             original_request?: components["schemas"]["PartInfo"] | null;
@@ -1522,6 +1720,26 @@ export interface components {
         };
         /** @enum {string} */
         Phase: "request" | "response";
+        PositionStat: {
+            /** @description How many of those bits are off one half by more than chance allows (|z| above 3.29). */
+            biased_bits: number;
+            /** @description For each of those bits (most significant first): the share of ones. */
+            bit_ones: number[];
+            /** @description Bits taken from this character for the bit-level analysis. */
+            bits: number;
+            /** @description Tokens that have this position. */
+            count: number;
+            /** @description Distinct characters seen. */
+            distinct: number;
+            /** Format: double */
+            entropy_bits: number;
+            /** @description 0-based character position. */
+            position: number;
+            /** @description The most common character and its share. */
+            top_char: string;
+            /** Format: double */
+            top_share: number;
+        };
         ProjectInfo: {
             current: boolean;
             /** Format: int64 */
@@ -1891,6 +2109,20 @@ export interface components {
          * @enum {string}
          */
         TokenScope: "read" | "full";
+        /** @description Where a token sits in a response. */
+        TokenSource: {
+            /** @enum {string} */
+            kind: "header";
+            name: string;
+        } | {
+            /** @enum {string} */
+            kind: "cookie";
+            name: string;
+        } | {
+            /** @enum {string} */
+            kind: "regex";
+            pattern: string;
+        };
         TotpCodeBody: {
             /** @description A 6-digit code (a recovery code also works where the operation allows it). */
             code: string;
@@ -1929,6 +2161,8 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        /** @enum {string} */
+        Verdict: "not_random" | "poor" | "good" | "excellent";
         WsBody: {
             /** @description Frames to send, in order, once the server has answered `101`. */
             frames?: components["schemas"]["WsFrameIn"][];
@@ -5730,6 +5964,220 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sequencer_analyze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalyzeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Analysis"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sequencer_capture: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaptureBody"];
+            };
+        };
+        responses: {
+            /** @description Started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureStarted"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sequencer_capture_status: {
+        parameters: {
+            query?: {
+                /** @description Return tokens from this index on */
+                from?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Capture id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such capture */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sequencer_capture_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Capture id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such capture */
             404: {
                 headers: {
                     [name: string]: unknown;

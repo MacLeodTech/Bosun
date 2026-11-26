@@ -4523,6 +4523,276 @@
         }
       }
     },
+    "/sequencer/analyze": {
+      "post": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "Analyse how random a set of tokens is (20 to 10000, each up to 1024 characters): per-position character statistics, bit-level bias, FIPS 140-2 (monobit, poker, runs, long run) on blocks of 20000 bits, an entropy estimate, checks for repeats and counters, and a verdict (excellent, good, poor, not_random). The result is the export. Needs the viewer role.",
+        "operationId": "sequencer_analyze",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Analysis"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sequencer/capture": {
+      "post": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "Start collecting tokens: send a request up to 5000 times (one after another, with an optional pause) and take the token from a response header, a Set-Cookie cookie or a regular expression over the body. Every request passes the scope gate (scope, kill switch, per-host rate limit; a rate-limit refusal is waited out) through the Repeater's engine and is recorded as a flow with source repeater. At most two captures run at once. Poll /sequencer/capture/{id}. Needs the tester role or above.",
+        "operationId": "sequencer_capture",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sequencer/capture/{id}": {
+      "get": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "The progress of a capture and its tokens from index `from` on. Needs the viewer role.",
+        "operationId": "sequencer_capture_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Capture id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Return tokens from this index on",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such capture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sequencer/capture/{id}/stop": {
+      "post": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "The stop switch: the capture ends after the request in flight. Needs the tester role or above.",
+        "operationId": "sequencer_capture_stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Capture id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such capture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/setup": {
       "post": {
         "tags": [
@@ -5690,6 +5960,132 @@
           }
         }
       },
+      "Analysis": {
+        "type": "object",
+        "required": [
+          "tokens",
+          "unique",
+          "min_length",
+          "max_length",
+          "charset_size",
+          "charset",
+          "positions",
+          "entropy_bits",
+          "capacity_bits",
+          "bit_stream_len",
+          "biased_bits",
+          "bit_positions",
+          "sequential_share",
+          "verdict",
+          "reliable",
+          "reasons"
+        ],
+        "properties": {
+          "biased_bits": {
+            "type": "integer",
+            "description": "Bit positions off one half beyond chance, and how many bit positions there are.",
+            "minimum": 0
+          },
+          "bit_positions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bit_stream_len": {
+            "type": "integer",
+            "description": "Bits in the bit-level stream (capped at 160 000).",
+            "minimum": 0
+          },
+          "capacity_bits": {
+            "type": "number",
+            "format": "double",
+            "description": "What the same positions would carry if every character seen there were equally likely."
+          },
+          "charset": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CharCount"
+            },
+            "description": "The most common characters over all tokens (up to 64)."
+          },
+          "charset_size": {
+            "type": "integer",
+            "description": "Distinct characters over all tokens.",
+            "minimum": 0
+          },
+          "entropy_bits": {
+            "type": "number",
+            "format": "double",
+            "description": "Effective entropy of a token in bits, character level."
+          },
+          "fips": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FipsReport",
+                "description": "None when there are fewer than 20 000 bits."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "min_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PositionStat"
+            }
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the verdict is what it is."
+          },
+          "reliable": {
+            "type": "boolean",
+            "description": "False under 100 tokens."
+          },
+          "sequential_share": {
+            "type": "number",
+            "format": "double",
+            "description": "Share of consecutive tokens that are numbers 1 to 65 536 above the one before (0 when they are not numbers)."
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unique": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          }
+        }
+      },
+      "AnalyzeBody": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tokens, one string each (20 to 10000, each up to 1024 characters)."
+          }
+        }
+      },
       "Annotate": {
         "type": "object",
         "properties": {
@@ -5833,6 +6229,153 @@
           }
         }
       },
+      "CaptureBody": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "request",
+          "source",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many requests to send (1 to 5000).",
+            "minimum": 0
+          },
+          "delay_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pause between requests, milliseconds (0 to 10000).",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request": {
+            "type": "string",
+            "description": "The request to send each time, as written, base64 (up to 1 MiB)."
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TokenSource",
+            "description": "Where the token is in each response."
+          },
+          "update_content_length": {
+            "type": "boolean"
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CaptureStarted": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CaptureState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "done",
+          "stopped",
+          "failed"
+        ]
+      },
+      "CaptureStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "target",
+          "count",
+          "sent",
+          "extracted",
+          "missing",
+          "errors",
+          "tokens",
+          "from"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests asked for.",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests that failed.",
+            "minimum": 0
+          },
+          "extracted": {
+            "type": "integer",
+            "description": "Tokens extracted so far.",
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "missing": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Responses that had no token.",
+            "minimum": 0
+          },
+          "sent": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests sent so far.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/CaptureState"
+          },
+          "target": {
+            "type": "string",
+            "description": "`scheme://host:port` the capture sends to."
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tokens from index `from` on."
+          }
+        }
+      },
       "ChangeTags": {
         "type": "object",
         "required": [
@@ -5868,6 +6411,22 @@
           "changed": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CharCount": {
+        "type": "object",
+        "required": [
+          "ch",
+          "count"
+        ],
+        "properties": {
+          "ch": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
             "minimum": 0
           }
         }
@@ -6229,6 +6788,78 @@
           "url",
           "path"
         ]
+      },
+      "FipsBlock": {
+        "type": "object",
+        "required": [
+          "monobit",
+          "poker",
+          "runs",
+          "long_run"
+        ],
+        "properties": {
+          "long_run": {
+            "$ref": "#/components/schemas/FipsTest"
+          },
+          "monobit": {
+            "$ref": "#/components/schemas/FipsTest"
+          },
+          "poker": {
+            "$ref": "#/components/schemas/FipsTest"
+          },
+          "runs": {
+            "$ref": "#/components/schemas/FipsTest",
+            "description": "Run counts for lengths 1 to 6 and over, for zeros and for ones: all must be inside their ranges."
+          }
+        }
+      },
+      "FipsReport": {
+        "type": "object",
+        "required": [
+          "bits_tested",
+          "blocks",
+          "blocks_passed"
+        ],
+        "properties": {
+          "bits_tested": {
+            "type": "integer",
+            "description": "Bits that went into the tests.",
+            "minimum": 0
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FipsBlock"
+            }
+          },
+          "blocks_passed": {
+            "type": "integer",
+            "description": "Blocks in which every test passed.",
+            "minimum": 0
+          }
+        }
+      },
+      "FipsTest": {
+        "type": "object",
+        "required": [
+          "value",
+          "limit",
+          "pass"
+        ],
+        "properties": {
+          "limit": {
+            "type": "string",
+            "description": "The range that passes, as text."
+          },
+          "pass": {
+            "type": "boolean"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "The statistic (ones, poker X, total runs or the longest run)."
+          }
+        }
       },
       "FlowMeta": {
         "allOf": [
@@ -6972,6 +7603,67 @@
           "request",
           "response"
         ]
+      },
+      "PositionStat": {
+        "type": "object",
+        "required": [
+          "position",
+          "count",
+          "distinct",
+          "entropy_bits",
+          "top_char",
+          "top_share",
+          "bits",
+          "bit_ones",
+          "biased_bits"
+        ],
+        "properties": {
+          "biased_bits": {
+            "type": "integer",
+            "description": "How many of those bits are off one half by more than chance allows (|z| above 3.29).",
+            "minimum": 0
+          },
+          "bit_ones": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "For each of those bits (most significant first): the share of ones."
+          },
+          "bits": {
+            "type": "integer",
+            "description": "Bits taken from this character for the bit-level analysis.",
+            "minimum": 0
+          },
+          "count": {
+            "type": "integer",
+            "description": "Tokens that have this position.",
+            "minimum": 0
+          },
+          "distinct": {
+            "type": "integer",
+            "description": "Distinct characters seen.",
+            "minimum": 0
+          },
+          "entropy_bits": {
+            "type": "number",
+            "format": "double"
+          },
+          "position": {
+            "type": "integer",
+            "description": "0-based character position.",
+            "minimum": 0
+          },
+          "top_char": {
+            "type": "string",
+            "description": "The most common character and its share."
+          },
+          "top_share": {
+            "type": "number",
+            "format": "double"
+          }
+        }
       },
       "ProjectInfo": {
         "type": "object",
@@ -8160,6 +8852,68 @@
           "full"
         ]
       },
+      "TokenSource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The value of a response header (the first with that name).",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "header"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The value of a `Set-Cookie` cookie.",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cookie"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A regular expression over the body: capture group 1 if there is one, else the whole match.",
+            "required": [
+              "pattern",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "regex"
+                ]
+              },
+              "pattern": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Where a token sits in a response."
+      },
       "TotpCodeBody": {
         "type": "object",
         "required": [
@@ -8272,6 +9026,15 @@
             "type": "string"
           }
         }
+      },
+      "Verdict": {
+        "type": "string",
+        "enum": [
+          "not_random",
+          "poor",
+          "good",
+          "excellent"
+        ]
       },
       "WsBody": {
         "type": "object",
@@ -8520,6 +9283,9 @@
     },
     {
       "name": "decoder"
+    },
+    {
+      "name": "sequencer"
     },
     {
       "name": "accounts"

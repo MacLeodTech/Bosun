@@ -17,6 +17,7 @@ pub mod openapi;
 pub mod projects;
 pub mod repeater;
 pub mod security;
+pub mod sequencer;
 pub mod sso;
 pub mod totp;
 pub mod web;
@@ -200,6 +201,8 @@ pub struct Inner {
     pub data_key: Arc<bosun_ca::DataKey>,
     /// An admin requires a second factor of every password account.
     pub totp_required: std::sync::atomic::AtomicBool,
+    /// Live captures of the Sequencer.
+    pub captures: sequencer::Captures,
 }
 
 pub struct Deps {
@@ -350,6 +353,7 @@ impl AppState {
             pending: totp::Pending::default(),
             data_key: d.data_key,
             totp_required,
+            captures: sequencer::Captures::default(),
         };
         Ok((
             Self {
@@ -448,6 +452,10 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/repeater/ws", post(repeater::ws_send))
         .route("/repeater/tabs", get(repeater::get_tabs).put(repeater::put_tabs))
+        .route("/sequencer/analyze", post(sequencer::analyze))
+        .route("/sequencer/capture", post(sequencer::start_capture))
+        .route("/sequencer/capture/{id}", get(sequencer::capture_status))
+        .route("/sequencer/capture/{id}/stop", post(sequencer::stop_capture))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

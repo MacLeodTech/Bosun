@@ -1,6 +1,9 @@
 // A stand-in for a hostile site. Its pages try to run script in whatever shows them; `/hit` records every
 // call-back, so a test can assert that none arrived.
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
+
+let counter = 41000;
 
 export const hits: string[] = [];
 export const seen: { path: string; headers: http.IncomingHttpHeaders }[] = [];
@@ -31,6 +34,10 @@ export function startTarget(port: number): Promise<http.Server> {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ items }));
     } else if (url.pathname === '/hits') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(hits));
+    } else if (url.pathname === '/seq-random' || url.pathname === '/seq-counter') {
+      // A session cookie per call: random (a CSPRNG) or a counter, for the Sequencer.
+      const tok = url.pathname === '/seq-random' ? randomBytes(16).toString('hex') : String(counter++);
+      res.writeHead(200, { 'content-type': 'text/plain', 'set-cookie': `seqid=${tok}; Path=/` }).end(`token ${tok}`);
     } else if (url.pathname === '/echo') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(req.headers));
     } else {

@@ -228,6 +228,7 @@ impl Engine {
                     events,
                     browser: Some(browser),
                     ui_tls,
+                    data_key: Arc::new(load_key(cfg, &paths)?),
                 },
             )?;
             setup_code = code;

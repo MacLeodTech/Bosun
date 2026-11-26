@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test';
 import { PROXY_PORT, TARGET_PORT } from '../ports';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { hits, seen, viaProxy } from '../target';
 
@@ -1150,4 +1151,61 @@ test('keyboard only: panes, tabs, the palette and the history list can be driven
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu', { name: 'Layout' })).toBeHidden();
   await expect(layoutBtn).toBeFocused();
+});
+
+/** RFC 6238 (SHA-1, 6 digits, 30 s) for the step that contains `atMs`. */
+function totpCode(secretB32: string, atMs: number): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const c of secretB32.toUpperCase()) bits += alphabet.indexOf(c).toString(2).padStart(5, '0');
+  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(atMs / 1000 / 30)));
+  const h = crypto.createHmac('sha1', key).update(counter).digest();
+  const off = h[h.length - 1] & 0xf;
+  const n = h.readUInt32BE(off) & 0x7fffffff;
+  return String(n % 1_000_000).padStart(6, '0');
+}
+
+test('second factor: enrol in Settings, sign in with a code, a wrong code is refused, a recovery code turns it off', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Set up second factor' }).click();
+  const secret = (await page.getByTestId('totp-secret').innerText()).trim();
+  expect(secret).toMatch(/^[A-Z2-7]{32}$/);
+  await expect(page.getByTestId('totp-uri')).toContainText(`otpauth://totp/Bosun:${USER}?secret=${secret}`);
+
+  // A wrong code does not turn it on; the right one does and shows the recovery codes once.
+  await page.getByLabel('Authentication code').fill('000000');
+  await page.getByRole('button', { name: 'Confirm and turn on' }).click();
+  await expect(page.locator('.error')).toBeVisible();
+  await page.getByLabel('Authentication code').fill(totpCode(secret, Date.now()));
+  await page.getByRole('button', { name: 'Confirm and turn on' }).click();
+  await expect(page.getByText('Second factor is on.', { exact: true })).toBeVisible();
+  const recovery = page.getByRole('list', { name: 'Recovery codes' }).locator('code');
+  await expect(recovery).toHaveCount(10);
+  const codes = await recovery.allInnerTexts();
+
+  // Sign in again: the password alone gives no session, a wrong code is refused, the right code signs in.
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByLabel('Username').fill(USER);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByLabel('Authentication code')).toBeVisible();
+  await expect(page.getByText(`${USER} (admin)`)).toHaveCount(0);
+  await page.getByLabel('Authentication code').fill('000000');
+  await page.getByRole('button', { name: 'Verify' }).click();
+  await expect(page.locator('.error')).toBeVisible();
+  // The current step was used by the confirmation; the next one is inside the window.
+  await page.getByLabel('Authentication code').fill(totpCode(secret, Date.now() + 30_000));
+  await page.getByRole('button', { name: 'Verify' }).click();
+  await signedIn();
+
+  // Turn it off with a recovery code, so the tests after this one sign in with a password alone.
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByText(/Recovery codes left: \d+/)).toBeVisible();
+  await page.getByLabel('Code to confirm').fill(codes[0]);
+  await page.getByRole('button', { name: 'Turn off second factor' }).click();
+  await expect(page.getByText('Second factor is off.', { exact: true })).toBeVisible();
+  await layoutMenu('Reset layout');
 });

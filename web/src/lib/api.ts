@@ -81,8 +81,17 @@ export async function upload<T>(path: string, file: File): Promise<T> {
   return data as T;
 }
 
-export async function login(username: string, password: string): Promise<Me> {
-  const me = await api.post<Me>('/auth/login', { username, password });
+/** A password sign-in either gives a session, or asks for a second factor first (no session exists yet). */
+export async function login(username: string, password: string): Promise<Me | { pending: string }> {
+  const r = await api.post<Me | { second_factor: string; pending: string }>('/auth/login', { username, password });
+  if ('pending' in r) return { pending: r.pending };
+  setCsrf(r.csrf);
+  return r;
+}
+
+/** The second step: the pending token and a 6-digit code (or a recovery code). */
+export async function loginTotp(pending: string, code: string): Promise<Me> {
+  const me = await api.post<Me>('/auth/login/totp', { pending, code });
   setCsrf(me.csrf);
   return me;
 }

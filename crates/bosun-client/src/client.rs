@@ -199,15 +199,88 @@ impl Client {
     }
 
     /// Sign in with a password. The session cookie and CSRF token are kept for later calls.
+    ///
+    /// An account with a second factor answers [`Error::SecondFactor`] (no session yet): call
+    /// [`Client::login_totp`] with the `pending` token it carries.
     pub async fn login(&self, username: &str, password: &str) -> Result<Me> {
-        let me: Me = self
+        let v: serde_json::Value = self
             .json(
                 self.req(Method::POST, "/auth/login")
                     .json(&json!({ "username": username, "password": password })),
             )
             .await?;
+        if let Some(pending) = v.get("pending").and_then(|p| p.as_str()) {
+            return Err(Error::SecondFactor {
+                pending: pending.to_string(),
+            });
+        }
+        let me: Me = serde_json::from_value(v).map_err(Error::decode)?;
         self.remember(&me);
         Ok(me)
+    }
+
+    /// Finish a sign-in that asked for a second factor, with a 6-digit code or an unused recovery code.
+    pub async fn login_totp(&self, pending: &str, code: &str) -> Result<Me> {
+        let me: Me = self
+            .json(
+                self.req(Method::POST, "/auth/login/totp")
+                    .json(&json!({ "pending": pending, "code": code })),
+            )
+            .await?;
+        self.remember(&me);
+        Ok(me)
+    }
+
+    /// Your own second-factor state.
+    pub async fn totp_status(&self) -> Result<TotpStatus> {
+        self.json(self.req(Method::GET, "/auth/totp")).await
+    }
+
+    /// Make a TOTP secret for your account. Nothing is enforced until [`Client::totp_confirm`].
+    pub async fn totp_enroll(&self) -> Result<TotpEnrolment> {
+        self.json(self.req(Method::POST, "/auth/totp/enroll")).await
+    }
+
+    /// Turn the second factor on with the first valid code. The recovery codes are shown only here.
+    pub async fn totp_confirm(&self, code: &str) -> Result<RecoveryCodes> {
+        self.json(
+            self.req(Method::POST, "/auth/totp/confirm")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Turn your own second factor off (needs a valid code or recovery code).
+    pub async fn totp_disable(&self, code: &str) -> Result<()> {
+        self.unit(
+            self.req(Method::POST, "/auth/totp/disable")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Replace your recovery codes (needs a valid code).
+    pub async fn totp_recovery_codes(&self, code: &str) -> Result<RecoveryCodes> {
+        self.json(
+            self.req(Method::POST, "/auth/totp/recovery-codes")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Admin: require a second factor of every password account, or stop requiring it.
+    pub async fn totp_set_required(&self, required: bool) -> Result<TotpStatus> {
+        self.json(
+            self.req(Method::PUT, "/auth/totp/required")
+                .json(&json!({ "required": required })),
+        )
+        .await
+    }
+
+    /// Admin: remove a user's second factor (a lost device); their sessions end.
+    pub async fn reset_user_totp(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/users/{id}/totp")))
+            .await
     }
 
     /// Sign in with the login ticket an embedded engine (`bosun serve --embedded`) gave its parent process.

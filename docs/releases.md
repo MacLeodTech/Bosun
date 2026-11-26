@@ -9,6 +9,17 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-39 TOTP second factor** (`wp-43`, 2026-11-26). RFC 6238 (SHA-1, 6 digits, 30 s, previous/current/next step) with
+  constant-time comparison and a per-account replay guard. Enrolment is enforced only after a first valid code, which
+  also returns 10 one-time recovery codes (stored as SHA-256 hashes). Secrets are sealed with the install's data key.
+  `POST /auth/login` answers `second_factor: totp` with a pending token (5 minutes, bound to the client address, five
+  tries) and `POST /auth/login/totp` completes the sign-in. Code attempts share the login limiter plus 10 failures
+  per account. Admins can reset a user's factor (`DELETE /users/{id}/totp`, `bosun user totp-reset`) and require one
+  of all password accounts (`PUT /auth/totp/required`). The sign-in page, Settings and `bosun login` handle the second
+  step. Not done: SSO sessions and the desktop login ticket are never asked for a code; API tokens made before
+  "required" was switched on keep working; pending sign-ins are in memory, so a restart drops them; no per-user
+  indicator in the users list. Migration 4 of the account database.
+
 - **WP-25 CLI local admin commands** (`wp-43`, 2026-11-26). `bosun project list|create|rename|delete|export|import|backup`,
   `token create|list|revoke`, `user role|delete|sessions`, `audit` (with filters and paging), `serve --no-ui`,
   `completions` and `man`. They work on the data directory with no engine running; project commands exit 3 while

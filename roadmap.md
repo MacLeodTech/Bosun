@@ -58,7 +58,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   `wp-43` branch (WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
   merge `main` into the next branch and regenerate `docs/openapi.json` and `web/src/lib/api-types.ts` if they conflict.
 - **Next, in order** (see the phase plan below):
-  1. **Phase 3, track A (M2):** only "Send to Intruder" is left of WP-43, and it waits for WP-47. WP-38 and WP-39 are the M1 follow-ups.
+  1. **Phase 3, track A (M2):** only "Send to Intruder" is left of WP-43, and it waits for WP-47. WP-38 is the M1 follow-up.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
      release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
      is built with Tauri for now; WP-18 (WinUI 3) is still planned.
@@ -107,7 +107,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 **Phases 0 to 2: done** (repository and CI, hardening, foundation). See `docs/releases.md` for what each delivered.
 
 **Phase 3: manual tools and the front ends. Release v0.2, the first public preview.**
-- Track A, M2 tools: WP-41 (finish), then WP-43 and WP-45. Also WP-38 and WP-39, the M1
+- Track A, M2 tools: WP-41 (finish), then WP-43 and WP-45. Also WP-38, the M1
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
@@ -188,7 +188,7 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-42, WP-45, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-39, WP-42, WP-45, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
@@ -196,7 +196,6 @@ valid in the "Depends on" column.
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-43 | History, Organizer, Logger and "send to" (rest) | 3 | S | WP-35, WP-41 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
-| [ ] | WP-39 | TOTP second factor | 3 | M | WP-07 |
 | [ ] | WP-23 | Server mode in the engine | 3 | M | WP-03 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
 | [ ] | WP-26 | CLI: client commands | 3 | L | WP-14 |
@@ -485,7 +484,7 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Inflate `permessage-deflate` WebSocket messages for display.
   - Upstream SNI override and HTTP/1 header-case preservation for edited requests.
 
-### WP-38 and WP-39: M1 follow-ups
+### WP-38: M1 follow-up
 
 #### WP-38 Proxy follow-ups from M1 · Phase 3 · M
 
@@ -499,17 +498,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - **Size and timing stats in history:** request and response sizes, time to first byte and total time, as
     sortable columns.
 - **Done when:** API and Playwright tests cover each item; adding a listener needs no restart.
-
-#### WP-39 TOTP second factor · Phase 3 · M
-
-- **Do:**
-  - Optional TOTP per account (RFC 6238), with the secret sealed with the data key, and one-time recovery codes.
-  - Sign-in asks for the code after the password. Codes count towards the WP-03 limits.
-  - Admins can require TOTP for everyone, and reset a user's TOTP (audited).
-  - The desktop login ticket (WP-15) skips TOTP, because it is a local, single-use exchange.
-- **Done when:** API tests cover enrolment, sign-in, a replayed code (refused), recovery codes and admin reset.
-
-### WP-41 to WP-46: M2 manual tools
 
 #### WP-41 Repeater · Phase 3 · L
 
@@ -897,7 +885,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
 ### M1 Proxy: done except these items
 
 - [ ] Bundle Chrome for Testing with the desktop installers (download, verify by SHA-256, keep it updated): **WP-21**
-- [ ] Optional TOTP second factor for UI accounts → **WP-39**
 - [ ] Response interception rules (intercept only when the response matches a condition) → **WP-38**
 - [ ] Proxy listener management in the UI (several listeners, per-listener options) and a live-config reload → **WP-38**
 - [ ] Request/response size and timing stats in history → **WP-38**

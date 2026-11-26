@@ -75,6 +75,7 @@ pub async fn stack_full(
             events: events.clone(),
             browser: None,
             ui_tls,
+            data_key: std::sync::Arc::new(bosun_ca::DataKey::generate()),
         },
     )
     .unwrap();

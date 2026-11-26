@@ -125,6 +125,59 @@ pub struct PasswordBody {
     pub revoke_tokens: Option<bool>,
 }
 #[derive(ToSchema, Serialize)]
+pub struct SecondFactor {
+    /** The kind of second factor to present: `totp`. */
+    pub second_factor: String,
+    /** Send this with the code to `POST /auth/login/totp`. Valid for five minutes, from the same address. */
+    pub pending: String,
+}
+/// The answer to a password sign-in: a session, or a request for the second factor (no session yet).
+#[derive(ToSchema, Serialize)]
+#[serde(untagged)]
+pub enum LoginReply {
+    Signed(Me),
+    SecondFactor(SecondFactor),
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpLoginBody {
+    pub pending: String,
+    /** A 6-digit code, or an unused recovery code. */
+    pub code: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpCodeBody {
+    /** A 6-digit code (a recovery code also works where the operation allows it). */
+    pub code: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpStatus {
+    /** A confirmed second factor is on for this account. */
+    pub enabled: bool,
+    /** A secret was made but no code has confirmed it yet. */
+    pub enrolling: bool,
+    pub recovery_codes_left: i64,
+    /** An admin requires every password account to have a second factor. */
+    pub required: bool,
+    /** This account must set up a second factor before it can do anything else. */
+    pub setup_required: bool,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpEnrolment {
+    /** The shared secret, base32. Shown once. */
+    pub secret: String,
+    /** The same secret as an `otpauth://` URI. */
+    pub otpauth_uri: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct RecoveryCodes {
+    /** Shown once; each works once. */
+    pub recovery_codes: Vec<String>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpRequiredBody {
+    pub required: bool,
+}
+#[derive(ToSchema, Serialize)]
 pub struct DeleteFlows {
     pub ids: Vec<i64>,
 }
@@ -164,8 +217,11 @@ fn status() {}
 #[utoipa::path(post, path = "/setup", operation_id = "setup", tag = "session", description = "Create the first admin account with the code printed at startup. No sign-in needed.", request_body = SetupBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn setup() {}
 
-#[utoipa::path(post, path = "/auth/login", operation_id = "login", tag = "session", description = "Sign in with a username and password. Sets the session cookie. No sign-in needed.", request_body = LoginBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+#[utoipa::path(post, path = "/auth/login", operation_id = "login", tag = "session", description = "Sign in with a username and password. Sets the session cookie, unless the account has a second factor: then the answer holds a `pending` token for `POST /auth/login/totp` and no cookie is set. No sign-in needed.", request_body = LoginBody, responses((status = 200, description = "A session (cookie set), or `second_factor` and `pending` when the account has a second factor: no session exists until `POST /auth/login/totp`", body = LoginReply), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn login() {}
+
+#[utoipa::path(post, path = "/auth/login/totp", operation_id = "login_totp", tag = "session", description = "Finish a sign-in that asked for a second factor: the `pending` token and a TOTP code (or an unused recovery code). Each code works once; wrong codes count against the sign-in limits (429 with Retry-After). No sign-in needed.", request_body = TotpLoginBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Wrong code, or the pending sign-in expired", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn login_totp() {}
 
 #[utoipa::path(post, path = "/auth/logout", operation_id = "logout", tag = "session", description = "End the current session. Needs the viewer role or above.", responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn logout() {}
@@ -181,6 +237,27 @@ fn sso_config() {}
 
 #[utoipa::path(post, path = "/auth/password", operation_id = "change_password", tag = "session", description = "Change your own password. Needs the viewer role or above.", request_body = PasswordBody, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn change_password() {}
+
+#[utoipa::path(get, path = "/auth/totp", operation_id = "totp_status", tag = "session", description = "Your own second-factor state. Needs the viewer role or above.", responses((status = 200, description = "OK", body = TotpStatus), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn totp_status() {}
+
+#[utoipa::path(post, path = "/auth/totp/enroll", operation_id = "totp_enroll", tag = "session", description = "Make a TOTP secret for your account (base32 and an `otpauth://` URI). Nothing asks for a code until `POST /auth/totp/confirm` receives a valid one; enrolling again before that replaces the secret. 409 when a second factor is already on. Audited. Needs the viewer role or above.", responses((status = 200, description = "OK", body = TotpEnrolment), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "Already set up", body = Error)))]
+fn totp_enroll() {}
+
+#[utoipa::path(post, path = "/auth/totp/confirm", operation_id = "totp_confirm", tag = "session", description = "Turn the second factor on with the first valid code, and get ten one-time recovery codes (shown once). Audited. Needs the viewer role or above.", request_body = TotpCodeBody, responses((status = 200, description = "OK", body = RecoveryCodes), (status = 400, description = "Wrong code, or no enrolment in progress", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "Already set up", body = Error), (status = 429, description = "Too many attempts", body = Error)))]
+fn totp_confirm() {}
+
+#[utoipa::path(post, path = "/auth/totp/disable", operation_id = "totp_disable", tag = "session", description = "Turn your own second factor off. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.", request_body = TotpCodeBody, responses((status = 204, description = "Done"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Wrong code, or not allowed", body = Error), (status = 429, description = "Too many attempts", body = Error)))]
+fn totp_disable() {}
+
+#[utoipa::path(post, path = "/auth/totp/recovery-codes", operation_id = "totp_recovery_codes", tag = "session", description = "Make a new set of ten recovery codes; the old ones stop working. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.", request_body = TotpCodeBody, responses((status = 200, description = "OK", body = RecoveryCodes), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Wrong code, or not allowed", body = Error), (status = 429, description = "Too many attempts", body = Error)))]
+fn totp_recovery_codes() {}
+
+#[utoipa::path(put, path = "/auth/totp/required", operation_id = "totp_set_required", tag = "accounts", description = "Require a second factor of every password account (single sign-on accounts and the desktop ticket are not asked). Accounts without one can then only reach the pages that set it up. Audited. Needs the admin role.", request_body = TotpRequiredBody, responses((status = 200, description = "OK", body = TotpStatus), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn totp_set_required() {}
+
+#[utoipa::path(delete, path = "/users/{id}/totp", operation_id = "reset_user_totp", tag = "accounts", description = "Remove a user's second factor and recovery codes (a lost device) and end their sessions. Audited. Needs the admin role.", params(("id" = i64, Path, description = "User id")), responses((status = 204, description = "Done"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "That user has no second factor", body = Error)))]
+fn reset_user_totp() {}
 
 #[utoipa::path(get, path = "/flows", operation_id = "list_flows", tag = "history", description = "List recorded flows, newest first unless sorted. Needs the viewer role or above.", params(("text" = Option<String>, Query), ("host" = Option<String>, Query), ("methods" = Option<String>, Query), ("status_min" = Option<i64>, Query), ("status_max" = Option<i64>, Query), ("in_scope_only" = Option<bool>, Query), ("source" = Option<String>, Query), ("hide_ext" = Option<String>, Query), ("before" = Option<i64>, Query), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("sort" = Option<String>, Query, description = "id (default), time, method, host, path, status, size, duration or mime. Ties break on the id."), ("asc" = Option<bool>, Query, description = "Oldest or smallest first."), ("offset" = Option<i64>, Query, description = "Rows to skip, for paging a list sorted by something other than id."), ("q" = Option<String>, Query, description = "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.")), responses((status = 200, description = "OK", body = Vec<FlowSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn list_flows() {}
@@ -373,8 +450,8 @@ fn put_repeater_tabs() {}
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
-    components(schemas(crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
+    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    components(schemas(LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
     tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
@@ -398,6 +475,14 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/auth/ticket"),
     ("get", "/auth/sso"),
     ("post", "/auth/password"),
+    ("post", "/auth/login/totp"),
+    ("get", "/auth/totp"),
+    ("post", "/auth/totp/enroll"),
+    ("post", "/auth/totp/confirm"),
+    ("post", "/auth/totp/disable"),
+    ("post", "/auth/totp/recovery-codes"),
+    ("put", "/auth/totp/required"),
+    ("delete", "/users/{id}/totp"),
     ("get", "/flows"),
     ("get", "/flows/query"),
     ("post", "/flows/tags"),

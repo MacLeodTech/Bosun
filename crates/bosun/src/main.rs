@@ -206,6 +206,8 @@ enum UserCmd {
     },
     #[command(flatten)]
     Admin(admin_cmd::UserAdminCmd),
+    /// Remove a user's TOTP second factor and recovery codes (a lost device); signs the user out everywhere.
+    TotpReset { username: String },
 }
 
 fn main() -> ExitCode {
@@ -347,6 +349,20 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 UserCmd::List { json: true } => return admin_cmd::user_list_json(&paths),
                 UserCmd::Admin(a) => return admin_cmd::user(&paths, a),
+                UserCmd::TotpReset { username } => {
+                    let Some((u, _)) = app.user_for_login(&username)? else {
+                        bail!("no such user")
+                    };
+                    if !app.totp_remove(u.id)? {
+                        bail!("{} has no second factor", u.username);
+                    }
+                    app.revoke_sessions(u.id)?;
+                    app.audit(None, "user.totp.reset", &format!("{} via CLI", u.username), None)?;
+                    println!(
+                        "second factor removed; {} is signed out everywhere and can set up a new one in Settings",
+                        u.username
+                    );
+                }
                 UserCmd::List { json: false } => {
                     for u in app.list_users()? {
                         println!("{:>4}  {:<24} {}", u.id, u.username, u.role.as_str());

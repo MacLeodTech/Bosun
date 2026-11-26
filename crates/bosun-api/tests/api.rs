@@ -1229,7 +1229,14 @@ async fn the_committed_openapi_description_is_current() {
 #[tokio::test]
 async fn every_documented_operation_is_served_and_needs_a_session_unless_public() {
     let s = stack(true).await;
-    let public = ["/status", "/setup", "/auth/login", "/auth/ticket", "/auth/sso"];
+    let public = [
+        "/status",
+        "/setup",
+        "/auth/login",
+        "/auth/login/totp",
+        "/auth/ticket",
+        "/auth/sso",
+    ];
     for (method, path) in bosun_api::openapi::OPERATIONS {
         if *path == "/events" {
             continue; // needs an upgrade request; covered by its own tests

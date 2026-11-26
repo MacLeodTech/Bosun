@@ -126,7 +126,16 @@ pub async fn login(server: &str, profile: &str, username: Option<String>) -> Res
     };
     let password = read_line("password (read from stdin): ")?;
     let c = Client::new(server.trim_end_matches('/'))?;
-    c.login(&user, &password).await.context("sign-in failed")?;
+    match c.login(&user, &password).await {
+        Ok(_) => {}
+        Err(bosun_client::Error::SecondFactor { pending }) => {
+            let code = read_line("second-factor code (or a recovery code): ")?;
+            c.login_totp(&pending, code.trim())
+                .await
+                .context("sign-in failed")?;
+        }
+        Err(e) => return Err(anyhow::Error::new(e).context("sign-in failed")),
+    }
     let name = format!("cli on {}", hostname());
     let made = c
         .create_token(&name, Some(90), None)

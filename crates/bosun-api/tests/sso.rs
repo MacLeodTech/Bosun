@@ -117,6 +117,7 @@ async fn serve(sso: SsoConfig) -> (SocketAddr, Arc<AppDb>) {
             events,
             browser: None,
             ui_tls: None,
+            data_key: std::sync::Arc::new(bosun_ca::DataKey::generate()),
         },
     )
     .unwrap();

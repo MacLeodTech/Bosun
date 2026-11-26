@@ -517,6 +517,17 @@ impl Client {
         self.json(self.req(Method::PUT, "/rules").json(rules)).await
     }
 
+    /// The Map Local, Map Remote and throttle rules, in the order they are tried.
+    pub async fn map_rules(&self) -> Result<Vec<MapRule>> {
+        self.json(self.req(Method::GET, "/map-rules")).await
+    }
+
+    /// Replace the Map Local, Map Remote and throttle rules. A Map Local rule needs the admin role; a Map Remote
+    /// target the scope gate refuses, or a missing directory, is a 400 that names the rule.
+    pub async fn put_map_rules(&self, rules: &[MapRule]) -> Result<Vec<MapRule>> {
+        self.json(self.req(Method::PUT, "/map-rules").json(rules)).await
+    }
+
     // --- intercept ----------------------------------------------------------------------------------------
 
     pub async fn intercept(&self) -> Result<InterceptSettings> {
@@ -823,7 +834,8 @@ impl Client {
 
     /// One scan with its progress and findings.
     pub async fn scan_get(&self, id: u64) -> Result<serde_json::Value> {
-        self.json(self.req(Method::GET, &format!("/scan/scans/{id}"))).await
+        self.json(self.req(Method::GET, &format!("/scan/scans/{id}")))
+            .await
     }
 
     /// Throw the stop switch of a scan.

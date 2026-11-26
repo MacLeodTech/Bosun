@@ -6,12 +6,13 @@
 //! must not be intercepted.
 
 pub mod body;
-pub mod clientcert;
 pub mod budget;
+pub mod clientcert;
 pub mod config;
 pub mod events;
 pub mod intercept;
 mod limits;
+pub mod mapping;
 pub mod recorder;
 pub mod rules;
 pub mod server;
@@ -26,6 +27,7 @@ pub use intercept::{
     Decision, InterceptController, InterceptItem, InterceptSettings, InterceptSummary, Phase, ResponseFilter,
 };
 pub use limits::ConnLimit;
+pub use mapping::{MapKind, MapRule, MapRules};
 pub use rules::{RuleSet, RuleSpec, RuleTarget};
 pub use server::{ListenerInfo, MAGIC_HOST, Proxy, ProxyError, ProxyStats};
 pub use upstream::LoopGuard;

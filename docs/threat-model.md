@@ -172,6 +172,30 @@ This document says what is protected, from whom, and how. Code comments refer ba
 
 ### Information disclosure
 
+- *Map Local, Map Remote and throttle rules (WP-76).* Rules saved with `PUT /map-rules` (table `map_rules`, migration
+  9) answer or redirect proxied requests next to match-and-replace. **Map Local** serves a file from a directory the
+  user typed, so it is the one rule that reads this machine's disk on behalf of a client of the proxy: a list that holds a
+  Map Local rule needs the admin role to save (testers may change the other kinds), and the change is audited
+  (`maprules.update`, with counts per kind). The directory must exist when saved and is canonicalised; for each
+  request the path is percent-decoded and refused when it holds `..`, a backslash, a NUL or any non-normal component,
+  and the file's own canonical path (symlinks resolved) must still start with the directory's canonical path and be a
+  regular file, otherwise the answer is 403 and nothing is read. A missing file falls through to the real target. Only GET
+  and HEAD are answered from files, and a file larger than `proxy.max_buffered_response` is refused. Tests cover
+  `..`, encoded `..`, encoded separators, NUL, backslash and symlinks that point out (unit tests in
+  `bosun-proxy/src/mapping.rs`, and through a real proxy in `tests/mapping.rs`). Remaining gap: the file is opened by
+  its canonical path after the check, so someone who can already write into that directory could swap a link between
+  the check and the read; the directory is the user's own choice and is treated as trusted for writes.
+- *Map Remote.* A rule sends matching requests to another origin (`http(s)://host[:port]`, nothing else). That is a
+  new outbound target chosen by configuration, so it goes through `Gate::check` (as an automated source, which never
+  leaves scope and never reaches private addresses unless a scope rule allows them): when the rule is saved (a 400
+  naming the rule) and again for every request, because the scope can change afterwards. A refused request is
+  answered 403 and recorded with the error; nothing is sent. The connection is then made by the proxy's normal
+  upstream connector, which resolves the name again (the same resolve-then-connect gap the proxy's other traffic has,
+  since proxy traffic is the user's own browsing and is not pinned). The history keeps the target the client asked for,
+  and the Host header follows the new target.
+- *Throttle rules* only delay: latency of at most 60 s a rule, and a bandwidth limit on response bodies. They hold a
+  connection open longer, so they count against the same connection caps and budgets as a slow upstream.
+
 - *Client certificates (WP-33).* A project can hold a certificate and private key per host pattern
   (`/client-certs`, table `client_certs`), for targets that require mutual TLS. The key is sealed with the data key
   (purpose bound to the host) before it reaches the project file, so a copied or exported project does not carry a usable

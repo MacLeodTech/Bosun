@@ -2297,6 +2297,87 @@
         }
       }
     },
+    "/import": {
+      "post": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Import request definitions from an OpenAPI or Swagger file, a GraphQL introspection result, a Postman collection, a HAR file, a list of URLs or a Burp XML export, and save them as Repeater tabs. The file is only parsed: nothing is sent, and a tab is sent later through the Repeater, which passes the scope gate. Files over 32 MiB, YAML aliases, XML entities and deeply nested input are refused. The reply lists the hosts the requests go to. The import is audited. Needs the tester role or above.",
+        "operationId": "import_requests",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The file could not be imported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/intercept": {
       "get": {
         "tags": [
@@ -4876,7 +4957,7 @@
         "tags": [
           "repeater"
         ],
-        "description": "Replace the Repeater's saved tabs (at most 100). Needs the tester role or above.",
+        "description": "Replace the Repeater's saved tabs (at most 500). Needs the tester role or above.",
         "operationId": "put_repeater_tabs",
         "requestBody": {
           "content": {
@@ -8147,6 +8228,17 @@
           }
         }
       },
+      "Format": {
+        "type": "string",
+        "enum": [
+          "openapi",
+          "graphql",
+          "postman",
+          "har",
+          "urls",
+          "burp"
+        ]
+      },
       "Forwarded": {
         "type": "object",
         "required": [
@@ -8239,6 +8331,96 @@
             }
           }
         ]
+      },
+      "ImportBody": {
+        "type": "object",
+        "required": [
+          "format",
+          "content"
+        ],
+        "properties": {
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The server or endpoint to use when the file has none: required for GraphQL, overrides an OpenAPI server."
+          },
+          "content": {
+            "type": "string",
+            "description": "The file's text (at most 32 MiB)."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Parse and report, but save nothing."
+          },
+          "format": {
+            "$ref": "#/components/schemas/Format"
+          }
+        }
+      },
+      "ImportReply": {
+        "type": "object",
+        "required": [
+          "format",
+          "parsed",
+          "added",
+          "not_added",
+          "dropped",
+          "notes",
+          "hosts",
+          "requests"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests saved as Repeater tabs (0 for a dry run).",
+            "minimum": 0
+          },
+          "dropped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests dropped by the per-import limit (2000).",
+            "minimum": 0
+          },
+          "format": {
+            "$ref": "#/components/schemas/Format"
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The hosts (`host:port`) the requests go to, so the scope can be checked before anything is sent."
+          },
+          "not_added": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests left out because the Repeater already holds the most tabs it can.",
+            "minimum": 0
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why entries were skipped."
+          },
+          "parsed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests found in the file.",
+            "minimum": 0
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "One line per request: method and URL."
+          }
+        }
       },
       "InterceptItem": {
         "allOf": [

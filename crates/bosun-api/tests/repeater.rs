@@ -304,7 +304,7 @@ async fn tabs_are_saved_in_the_project_and_bounded() {
     );
 
     // Bounds: too many tabs, and something that is not a tab.
-    let many: Vec<Value> = (0..101).map(|i| json!({ "id": i })).collect();
+    let many: Vec<Value> = (0..501).map(|i| json!({ "id": i })).collect();
     assert_eq!(
         put(json!({ "tabs": many })).await.status(),
         StatusCode::BAD_REQUEST

@@ -958,6 +958,7 @@ fn the_client_covers_every_documented_operation() {
         ("post", "/decoder/apply", "decoder_apply"),
         ("post", "/decoder/smart", "decoder_smart"),
         ("post", "/comparer/diff", "comparer_diff"),
+        ("post", "/import", "import_requests"),
         ("post", "/repeater/send", "repeater_send"),
         ("get", "/repeater/settings", "repeater_settings"),
         ("put", "/repeater/settings", "put_repeater_settings"),

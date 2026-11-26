@@ -59,6 +59,8 @@ assertion is what fails first.
 | `rewrite_rules` | match-and-replace rules applied to messages |
 | `history_query` | the history query language: parse (total, spans valid), compile (one parameter per `?`), then run against a real project (no SQL error) |
 | `engage` | the engagement scanners (comments, scripts, references, parameters), the target analysis (bounded, never panics) and the CSRF page builder: bounded, offsets valid, no markup from the request in the page |
+| `engage` | the engagement scanners (comments, scripts, references, parameters) and the CSRF page builder: bounded, offsets valid, no markup from the request in the page |
+| `import_formats` | the importers (OpenAPI/Swagger JSON and YAML, GraphQL introspection, Postman, HAR, URL list, Burp XML): no panic, bounded, every item an absolute http(s) request whose header lines cannot be split |
 
 Pull requests fuzz each target for 30 seconds; the weekly run does 10 minutes. A crash prints the input in the job
 log. Reproduce with `cargo +nightly fuzz run <target> <path-to-input>`, fix it, and add a regression test next to the

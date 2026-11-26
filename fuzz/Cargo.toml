@@ -20,6 +20,7 @@ bosun-intruder = { path = "../crates/bosun-intruder" }
 bosun-crawl = { path = "../crates/bosun-crawl" }
 bosun-checks = { path = "../crates/bosun-checks" }
 serde_json = "1"
+bosun-import = { path = "../crates/bosun-import" }
 
 # Not part of the main workspace: it needs nightly and is built only by `cargo fuzz`.
 [workspace]
@@ -118,6 +119,13 @@ bench = false
 [[bin]]
 name = "check_language"
 path = "fuzz_targets/check_language.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_formats"
+path = "fuzz_targets/import_formats.rs"
 test = false
 doc = false
 bench = false

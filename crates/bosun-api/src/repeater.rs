@@ -376,9 +376,9 @@ pub struct TabsDoc {
     pub next: i64,
 }
 
-const MAX_TABS: usize = 100;
+pub(crate) const MAX_TABS: usize = 500;
 /// Largest stored tab set, bytes of JSON. The request body limit is lower, so this is a second guard.
-const MAX_TABS_BYTES: usize = 8 << 20;
+pub(crate) const MAX_TABS_BYTES: usize = 8 << 20;
 
 pub async fn get_tabs(State(st): State<AppState>, caller: Caller) -> R {
     caller.require(Role::Viewer)?;

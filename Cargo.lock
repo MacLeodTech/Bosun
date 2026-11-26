@@ -580,6 +580,7 @@ dependencies = [
  "bosun-client",
  "bosun-codec",
  "bosun-http",
+ "bosun-import",
  "bosun-intruder",
  "bosun-model",
  "bosun-proxy",
@@ -618,6 +619,7 @@ dependencies = [
  "tokio-tungstenite 0.30.0",
  "tower",
  "tracing",
+ "url",
  "utoipa",
 ]
 
@@ -734,6 +736,21 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "webpki-roots 1.0.12",
+]
+
+[[package]]
+name = "bosun-import"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "proptest",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "thiserror 2.0.21",
+ "url",
+ "utoipa",
 ]
 
 [[package]]
@@ -5574,6 +5591,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap 2.14.2",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "serdect"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6826,6 +6856,12 @@ dependencies = [
  "crypto-common 0.2.2",
  "ctutils",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

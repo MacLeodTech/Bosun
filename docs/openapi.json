@@ -1025,6 +1025,15 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1106,6 +1115,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/query": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "Check a history query without running it: the recognised terms with their positions, and every mistake. Needs the viewer role or above.",
+        "operationId": "check_flow_query",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryCheck"
                 }
               }
             }
@@ -5521,6 +5601,49 @@
           }
         }
       },
+      "QueryCheck": {
+        "type": "object",
+        "description": "What a history query means: each recognised term with its place in the text, and every mistake. Nothing is\nrun. A front end uses this for chips and messages while the person types.",
+        "required": [
+          "terms",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryError"
+            }
+          },
+          "terms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TermSpan"
+            }
+          }
+        }
+      },
+      "QueryError": {
+        "type": "object",
+        "required": [
+          "message",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "RenameProject": {
         "type": "object",
         "required": [
@@ -6063,6 +6186,35 @@
         "properties": {
           "stopped": {
             "type": "boolean"
+          }
+        }
+      },
+      "TermSpan": {
+        "type": "object",
+        "description": "A recognised term, for showing as a chip: where it is in the query and what it says.",
+        "required": [
+          "key",
+          "label",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "key": {
+            "type": "string",
+            "description": "`host`, `method`, `status`, `text`, ..."
+          },
+          "label": {
+            "type": "string",
+            "description": "The term as written, including a leading `-`."
+          },
+          "start": {
+            "type": "integer",
+            "description": "Byte offsets into the query.",
+            "minimum": 0
           }
         }
       },

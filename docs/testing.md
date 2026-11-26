@@ -57,6 +57,7 @@ assertion is what fails first.
 | `decode_body` | stored, compressed bodies (the decompression limit and the size check must hold) |
 | `scope_rules` | scope host patterns and path regexes (compile and match) |
 | `rewrite_rules` | match-and-replace rules applied to messages |
+| `history_query` | the history query language: parse (total, spans valid), compile (one parameter per `?`), then run against a real project (no SQL error) |
 
 Pull requests fuzz each target for 30 seconds; the weekly run does 10 minutes. A crash prints the input in the job
 log. Reproduce with `cargo +nightly fuzz run <target> <path-to-input>`, fix it, and add a regression test next to the

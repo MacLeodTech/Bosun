@@ -355,6 +355,7 @@ pub fn router(st: AppState) -> Router {
         .route("/auth/sso", get(sso::config))
         .route("/auth/password", post(auth::change_password))
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
+        .route("/flows/query", get(h::check_flow_query))
         .route("/flows/{id}", get(h::get_flow).patch(h::annotate_flow))
         .route("/flows/{id}/ws", get(h::ws_messages))
         .route("/flows/{id}/{part}/body", get(h::flow_body))

@@ -252,6 +252,12 @@ impl Client {
         self.json(self.req(Method::GET, "/flows").query(q)).await
     }
 
+    /// What a history query means (its terms and its mistakes) without running it.
+    pub async fn check_flow_query(&self, q: &str) -> Result<QueryCheck> {
+        self.json(self.req(Method::GET, "/flows/query").query(&[("q", q)]))
+            .await
+    }
+
     /// Delete flows by id; returns how many were removed.
     pub async fn delete_flows(&self, ids: &[FlowId]) -> Result<u64> {
         #[derive(serde::Deserialize)]

@@ -590,6 +590,7 @@ dependencies = [
  "bosun-model",
  "brotli",
  "flate2",
+ "proptest",
  "rusqlite",
  "serde",
  "serde_json",

@@ -77,6 +77,8 @@ pub struct FlowQuery {
     before: Option<FlowId>,
     after: Option<FlowId>,
     limit: Option<u32>,
+    /// A history query (see `docs/query-language.md`), combined with the fields above by `and`.
+    q: Option<String>,
 }
 
 fn csv(s: Option<String>) -> Option<Vec<String>> {
@@ -90,7 +92,18 @@ fn csv(s: Option<String>) -> Option<Vec<String>> {
 
 pub async fn list_flows(State(st): State<AppState>, caller: Caller, Query(q): Query<FlowQuery>) -> R {
     caller.require(Role::Viewer)?;
+    let query = match q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(text) => {
+            let parsed = bosun_store::query::parse(text);
+            if let Some(e) = parsed.errors.first() {
+                return Err(reject(StatusCode::BAD_REQUEST, &format!("query: {}", e.message)));
+            }
+            parsed.expr
+        }
+        None => None,
+    };
     let filter = FlowFilter {
+        query,
         text: q.text,
         host: q.host,
         methods: csv(q.methods),
@@ -104,8 +117,37 @@ pub async fn list_flows(State(st): State<AppState>, caller: Caller, Query(q): Qu
         limit: q.limit,
     };
     let p = st.project();
-    let flows = blocking(move || p.list_flows(&filter)).await?.map_err(internal)?;
+    let flows = blocking(move || p.list_flows(&filter))
+        .await?
+        .map_err(|e| match e {
+            // Only the time limit is a Conflict here: say so rather than "internal error".
+            bosun_store::StoreError::Conflict(m) => reject(StatusCode::BAD_REQUEST, &m),
+            e => internal(e),
+        })?;
     Ok(Json(flows).into_response())
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct QueryCheckParams {
+    q: Option<String>,
+}
+
+/// What a history query means: each recognised term with its place in the text, and every mistake. Nothing is
+/// run. A front end uses this for chips and messages while the person types.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct QueryCheck {
+    pub terms: Vec<bosun_store::query::TermSpan>,
+    pub errors: Vec<bosun_store::query::QueryError>,
+}
+
+pub async fn check_flow_query(caller: Caller, Query(p): Query<QueryCheckParams>) -> R {
+    caller.require(Role::Viewer)?;
+    let parsed = bosun_store::query::parse(p.q.as_deref().unwrap_or(""));
+    Ok(Json(QueryCheck {
+        terms: parsed.terms,
+        errors: parsed.errors,
+    })
+    .into_response())
 }
 
 /// A flow without its bodies: summary, each message's header block and size. The bodies come from the

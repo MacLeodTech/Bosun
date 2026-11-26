@@ -4,7 +4,7 @@
 //! batch, and the other way round. A database held in memory (tests) cannot be opened twice, so it falls back to
 //! the single connection for reads too.
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
@@ -90,6 +90,15 @@ impl Deref for Reader<'_> {
         match self {
             // `conn` is only taken in `drop`.
             Reader::Pooled { conn, .. } => conn.as_ref().expect("connection is present until dropped"),
+            Reader::Shared(g) => g,
+        }
+    }
+}
+
+impl DerefMut for Reader<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        match self {
+            Reader::Pooled { conn, .. } => conn.as_mut().expect("connection is present until dropped"),
             Reader::Shared(g) => g,
         }
     }

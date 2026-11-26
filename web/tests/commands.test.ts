@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { DEFAULT_QUERY, matchesFlow, parseQuery, removeChip, withTerm, withText } from '../src/lib/query.ts';
 import { canonical, conflicts, format, matches, parseKeys } from '../src/lib/shortcuts.ts';
 import { fuzzy } from '../src/lib/fuzzy.ts';
-import { buildCurl } from '../src/lib/curl.ts';
 
 function rng(seed: number) {
   let s = seed >>> 0;
@@ -155,21 +154,6 @@ test('fuzzy never throws and its indices are in range and increasing', () => {
       assert.ok(m.idx.every((x, k) => x >= 0 && x < text.length && (k === 0 || x > m.idx[k - 1]!)));
     }
   }
-});
-
-// ---- curl
-
-test('buildCurl', () => {
-  const c = buildCurl('POST /a?b=1 HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nX-It\'s: yes', "it's", 'https')!;
-  assert.ok(c.startsWith("curl -i -X POST 'https://example.com/a?b=1'"));
-  assert.ok(c.includes("-H 'Content-Type: text/plain'"));
-  assert.ok(!c.includes('Content-Length') && !c.includes('Host:'));
-  assert.ok(c.includes(`-H 'X-It'\\''s: yes'`));
-  assert.ok(c.includes(`--data-binary 'it'\\''s'`));
-  assert.equal(buildCurl('GET / HTTP/1.1\r\nHost: x', '', 'https', true), null);
-  assert.equal(buildCurl('GET / HTTP/1.1', '', 'https'), null);
-  assert.equal(buildCurl('nonsense', '', 'https'), null);
-  assert.equal(buildCurl('GET / HTTP/1.1\r\nHost: x', 'x'.repeat(70_000), 'https'), null);
 });
 
 // ---- deep links

@@ -7,7 +7,7 @@ export type PaneRole = 'request' | 'response' | 'intercept';
 const KEY = 'bosun.prefs.v1';
 const modes: MessageViewMode[] = ['raw', 'pretty', 'headers', 'hex', 'render'];
 
-interface Stored { view?: Partial<Record<PaneRole, MessageViewMode>>; wrap?: boolean }
+interface Stored { view?: Partial<Record<PaneRole, MessageViewMode>>; wrap?: boolean; exportSecrets?: boolean }
 
 function read(): Stored {
   try {
@@ -29,6 +29,14 @@ class Prefs {
   /** Long lines wrap in the message viewer (very long bodies are shown unwrapped regardless). */
   wrap = $state(this.stored.wrap !== false);
 
+  /** Copies and exports keep cookies and authorization values. Off unless the person asks (docs: WP-77). */
+  exportSecrets = $state(this.stored.exportSecrets === true);
+
+  setExportSecrets(on: boolean) {
+    this.exportSecrets = on;
+    this.save();
+  }
+
   setView(role: PaneRole, mode: MessageViewMode) {
     this.view[role] = mode;
     this.save();
@@ -41,7 +49,7 @@ class Prefs {
 
   private save() {
     try {
-      localStorage.setItem(KEY, JSON.stringify({ view: { ...this.view }, wrap: this.wrap }));
+      localStorage.setItem(KEY, JSON.stringify({ view: { ...this.view }, wrap: this.wrap, exportSecrets: this.exportSecrets }));
     } catch {
       // Ignore.
     }

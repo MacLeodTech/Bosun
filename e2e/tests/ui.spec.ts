@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test';
 import { PROXY_PORT, TARGET_PORT } from '../ports';
+import fs from 'node:fs';
 import { hits, seen, viaProxy } from '../target';
 
 // One engine and one account for the whole file; the tests build on each other in order.
@@ -811,6 +812,43 @@ test('send to: a response body goes to the Decoder, and a request and a response
   await expect(page.getByRole('tab', { name: 'Comparer' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByLabel('Left side')).toHaveValue(/^GET \/hello-history/);
   await expect(page.getByLabel('Right side')).toHaveValue(/^HTTP\/1\.1 200/);
+});
+
+test('export: a HAR file is saved with secrets redacted, and keeps them only when asked', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/export-me?x=1`, { cookie: 'sid=topsecret', authorization: 'Bearer tok123' });
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:/export-me');
+  const row = page.locator('.row', { hasText: '/export-me' });
+  await expect(row).toBeVisible();
+  const menu = page.getByRole('menu', { name: 'Request actions' });
+  const download = async () => {
+    await row.click({ button: 'right' });
+    const [dl] = await Promise.all([page.waitForEvent('download'), menu.getByRole('menuitem', { name: 'Export as HAR…' }).click()]);
+    expect(dl.suggestedFilename()).toMatch(/\.har$/);
+    return fs.readFileSync((await dl.path())!, 'utf8');
+  };
+  const redacted = await download();
+  const har = JSON.parse(redacted);
+  expect(har.log.version).toBe('1.2');
+  expect(har.log.entries).toHaveLength(1);
+  expect(har.log.entries[0].request.url).toBe(`${TARGET}/export-me?x=1`);
+  expect(har.log.entries[0].request.queryString).toEqual([{ name: 'x', value: '1' }]);
+  expect(har.log.entries[0].response.content.text).toBe('hello from /export-me');
+  expect(redacted).not.toContain('topsecret');
+  expect(redacted).not.toContain('tok123');
+  expect(redacted).toContain('sid=REDACTED');
+
+  await row.click({ button: 'right' });
+  await menu.getByRole('menuitemradio', { name: 'Keep cookies and authorization values' }).click();
+  const kept = await download();
+  expect(kept).toContain('topsecret');
+  expect(kept).toContain('Bearer tok123');
+  // Put the preference back so later tests start from the default.
+  await row.click({ button: 'right' });
+  await expect(menu.getByRole('menuitemradio', { name: 'Keep cookies and authorization values' })).toHaveAttribute('aria-checked', 'true');
+  await menu.getByRole('menuitemradio', { name: 'Keep cookies and authorization values' }).click();
+  await applyFilter('');
 });
 
 test('organizer: a request is saved for follow-up with a status and a note, and both survive a reload', async () => {

@@ -189,6 +189,16 @@ This document says what is protected, from whom, and how. Code comments refer ba
   nesting are capped, a query that runs over five seconds is interrupted, and the result size is capped like any
   listing. The parser has a fuzz target that also runs what it produces against a real project (it found that a NUL
   character cut a bound full-text phrase short).
+- *Copies and exports.* A recorded request carries other people's secrets (session cookies, bearer tokens). "Copy as
+  cURL, PowerShell, Python, JavaScript or Go" and the HAR export replace the values of `Authorization`, `Cookie`,
+  `Set-Cookie`, API-key and CSRF headers with `REDACTED` (cookie names stay) unless the person ticks "Keep cookies and
+  authorization values", a preference of that browser that starts off. Values go into shell and code text only through
+  quoting that the tests check against a real shell, and the HAR file is built in the browser from the same API calls
+  the viewer makes (bodies over 2 MiB are cut), so the scope gate, roles and audit log are not bypassed. Query strings are
+  not redacted: a token in a URL is exported as it was recorded.
+- *Organizer and tags.* Notes, tags and the status of kept requests are text a tester wrote; they are shown as text.
+  Bulk tag changes and the Organizer need the tester role, are capped (5,000 flows per call, 32 tags of 64 characters),
+  and are not audited because they change no scope, rule, account or token.
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
 
 ### Elevation of privilege

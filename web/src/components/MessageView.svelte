@@ -6,7 +6,7 @@
   import { b64ToBytes, bytesToText, fmtSize, hexDump, splitMessage, wireBytes, bytesToB64, type TextMode } from '../lib/bytes';
   import { contentTypeOf, detectLang, highlight, splitText, MAX_HIGHLIGHT } from '../lib/highlight';
   import { pretty } from '../lib/pretty';
-  import { buildCurl } from '../lib/curl';
+  import { parseRequest, toCurl } from '../lib/export';
   import CodeView from './CodeView.svelte';
   import MessageEditor from './MessageEditor.svelte';
 
@@ -124,7 +124,10 @@
   }
 
   /** A cURL command for this request. Only for text bodies of a size a command line can hold. */
-  const curl = $derived(role === 'request' && raw ? buildCurl(split.head, split.body, scheme, text.mode !== 'utf8') : null);
+  const curl = $derived.by(() => {
+    const r = role === 'request' && raw ? parseRequest(split.head, split.body, scheme, text.mode !== 'utf8') : null;
+    return r ? toCurl(r, 'posix', prefs.exportSecrets) : null;
+  });
 
   const modes = $derived((['raw', ...(prettyBody ? ['pretty'] : []), 'headers', 'hex', 'render'] as MessageViewMode[]));
 </script>
@@ -149,7 +152,7 @@
     {/if}
     {#if raw !== null && !editable}
       <button class="ghost small" title="Copy the whole message" onclick={() => copy('message', shownText)}>copy</button>
-      {#if curl}<button class="ghost small" title="Copy this request as a cURL command" onclick={() => copy('cURL command', curl)}>cURL</button>{/if}
+      {#if curl}<button class="ghost small" title="Copy this request as a cURL command (cookie and authorization values are replaced unless you keep them: right-click a request in History)" onclick={() => copy('cURL command', curl)}>cURL</button>{/if}
     {/if}
     {#if downloadHref}<a class="small" href={downloadHref} download>download body</a>{/if}
   </div>

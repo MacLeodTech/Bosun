@@ -12,6 +12,7 @@
   import { tidyMenu, type MenuItem } from '../lib/menu';
   import { usePanel } from '../lib/panelctx';
   import { matchesFlow, parseQuery } from '../lib/query';
+  import { prefs } from '../lib/prefs.svelte';
   import { session } from '../lib/session.svelte';
   import { format } from '../lib/shortcuts';
   import { workspace } from '../lib/workspace.svelte';
@@ -238,10 +239,12 @@
       c('flow.comparer.request.a', 'Comparer: request as A'), c('flow.comparer.request.b', 'Comparer: request as B'),
       c('flow.comparer.response.a', 'Comparer: response as A'), c('flow.comparer.response.b', 'Comparer: response as B'),
       { kind: 'sep' }, { kind: 'heading', label: 'Copy' },
-      c('flow.copy-url', 'URL'), c('flow.copy-curl', 'as cURL'), c('flow.copy-request', 'Request'), c('flow.copy-response', 'Response'),
+      c('flow.copy-url', 'URL'), c('flow.copy-curl', 'as cURL'), c('flow.copy-curl-powershell', 'as PowerShell'),
+      c('flow.snippet.python', 'as Python'), c('flow.snippet.javascript', 'as JavaScript'), c('flow.snippet.go', 'as Go'),
+      { label: 'Keep cookies and authorization values', checked: prefs.exportSecrets, run: () => prefs.setExportSecrets(!prefs.exportSecrets) }, c('flow.copy-request', 'Request'), c('flow.copy-response', 'Response'),
       ...(canEdit ? [{ kind: 'sep' } as MenuItem, { kind: 'heading', label: 'Highlight' } as MenuItem, ...HL_COLORS.map((c): MenuItem => ({ label: c[0]!.toUpperCase() + c.slice(1), run: () => void highlight(c) })), { label: 'No highlight', run: () => void highlight(null) } as MenuItem, { label: 'Add a tag…', run: () => { tagging = true; setTimeout(() => tagBox?.focus(), 0); } } as MenuItem] : []),
       { kind: 'sep' }, { kind: 'heading', label: 'Scope' }, c('flow.scope.include', 'Add host to scope'), c('flow.scope.exclude', 'Exclude host from scope'),
-      { kind: 'sep' }, c('flow.delete', 'Delete'),
+      { kind: 'sep' }, c('flow.export-har', 'Export as HAR…'), c('flow.delete', 'Delete'),
     ]);
   }
 
@@ -364,6 +367,7 @@
       {#if canEdit}<button onclick={() => commands.run('flow.repeater')}>Send to Repeater</button>{/if}
       {#if canEdit}<button onclick={() => { tagging = true; setTimeout(() => tagBox?.focus(), 0); }}>Tag…</button>{/if}
       <button onclick={() => commands.run('flow.copy-url')}>Copy URLs</button>
+      <button onclick={() => commands.run('flow.export-har')}>Export HAR</button>
       {#if canEdit}<button class="danger" onclick={deleteSelected}>Delete</button>{/if}
       <span class="spacer"></span>
       <button class="ghost" onclick={() => v.select(v.selectedId !== null ? [v.selectedId] : [])}>Clear selection</button>

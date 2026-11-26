@@ -3,8 +3,10 @@
 
 import { api } from './api';
 import { commands, type Command } from './commands.svelte';
-import { copyAsCurl, copyMessage, copyUrls, deleteFlows, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
+import { copyAsCurl, copyMessage, copyRequestAs, copyUrls, deleteFlows, exportHar, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
+import { SNIPPETS } from './export';
 import { panels } from './panels';
+import { prefs } from './prefs.svelte';
 import { session } from './session.svelte';
 import { shell } from './shell.svelte';
 import { theme } from './theme.svelte';
@@ -125,6 +127,10 @@ export function registerBuiltins(): () => void {
       })),
     ),
     { id: 'flow.organize', title: 'Save to Organizer', group: 'Request', when: (c) => tester() && hasFlows(c), run: (c) => saveToOrganizer(c.flows) },
+    { id: 'flow.copy-curl-powershell', title: 'Copy as PowerShell command', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyRequestAs(c.focus!, 'curl-powershell') },
+    ...SNIPPETS.map((sn): Command => ({ id: `flow.snippet.${sn.id}`, title: `Copy as ${sn.label}`, group: 'Request', when: (c) => c.focus !== null, run: (c) => copyRequestAs(c.focus!, sn.id) })),
+    { id: 'flow.export-har', title: 'Export requests as HAR', group: 'Request', when: hasFlows, run: (c) => exportHar(c.flows) },
+    { id: 'export.secrets', title: 'Toggle keeping cookies and authorization values in copies and exports', group: 'Request', run: () => prefs.setExportSecrets(!prefs.exportSecrets) },
     { id: 'flow.copy-url', title: 'Copy URL', group: 'Request', when: hasFlows, run: (c) => copyUrls(c.flows) },
     { id: 'flow.copy-curl', title: 'Copy as cURL', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyAsCurl(c.focus!) },
     { id: 'flow.copy-request', title: 'Copy request', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyMessage(c.focus!, 'request') },

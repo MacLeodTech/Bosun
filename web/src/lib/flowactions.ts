@@ -2,9 +2,10 @@
 // audit log and the role checks still apply, and no target content is kept in the page beyond what is shown.
 
 import { api } from './api';
-import { bytesToText, flowUrl } from './bytes';
-import { buildCurl } from './curl';
-import { concat, loadPart, type PartName } from './flowbody';
+import { b64ToBytes, bytesToText, flowUrl } from './bytes';
+import { parseRequest, toCurl, toHar, toSnippet, type HarInput, type HarMessage, type Snippet } from './export';
+import { prefs } from './prefs.svelte';
+import { concat, fetchRange, loadPart, type PartName } from './flowbody';
 import { historyView as v } from './historyView.svelte';
 import { inbox } from './inbox.svelte';
 import { toasts } from './toasts.svelte';
@@ -48,16 +49,81 @@ export async function copyUrls(ids: number[]) {
   }
 }
 
-export async function copyAsCurl(id: number) {
+const redactNote = () => (prefs.exportSecrets ? '' : ' (cookie and authorization values replaced by REDACTED)');
+
+/** Copy one request as a command or a code snippet. Secrets are redacted unless the person has asked to keep them. */
+export async function copyRequestAs(id: number, kind: 'curl' | 'curl-powershell' | Snippet) {
   try {
     const m = await fetchMeta(id);
     const t = await messageText(m, 'request');
-    if (!t || !t.complete) return say('This request is too large to turn into a cURL command.');
-    const parts = bytesToText(t.head).text;
+    if (!t || !t.complete) return say('This request is too large to copy as code.');
     const body = bytesToText(t.body);
-    const cmd = buildCurl(parts, body.text, m.scheme, body.mode !== 'utf8');
-    if (!cmd) return say('This request cannot be written as a cURL command (binary or very large body).');
-    await copy(cmd, 'the cURL command');
+    const r = parseRequest(bytesToText(t.head).text, body.text, m.scheme, body.mode !== 'utf8');
+    if (!r) return say('This request cannot be written as code (a binary or very large body).');
+    const secrets = prefs.exportSecrets;
+    const text = kind === 'curl' ? toCurl(r, 'posix', secrets) : kind === 'curl-powershell' ? toCurl(r, 'powershell', secrets) : toSnippet(r, kind, secrets);
+    const what = kind === 'curl' ? 'the cURL command' : kind === 'curl-powershell' ? 'the PowerShell command' : `the ${kind} snippet`;
+    await copy(text, what + redactNote());
+  } catch (e) {
+    fail(e);
+  }
+}
+
+export const copyAsCurl = (id: number) => copyRequestAs(id, 'curl');
+
+/** How much of one body goes into a HAR file, and how many flows at once. */
+const HAR_BODY_CAP = 2 * 1024 * 1024;
+const HAR_MAX_FLOWS = 500;
+
+async function harMessage(meta: FlowMeta, part: 'request' | 'response', info: FlowMeta['request']): Promise<HarMessage> {
+  const decoded = part === 'response' && !!meta.response_encoding;
+  let body: Uint8Array = new Uint8Array();
+  if (info.body_len > 0) {
+    try {
+      body = (await fetchRange(meta.id, part, 0, HAR_BODY_CAP, decoded)).bytes;
+    } catch {
+      // A decoded view can be missing (an unknown encoding): fall back to the stored bytes.
+      body = (await fetchRange(meta.id, part, 0, HAR_BODY_CAP, false)).bytes;
+    }
+  }
+  return { head: bytesToText(b64ToBytes(info.head)).text, body, bodySize: info.body_len > body.length && !decoded ? info.body_len : undefined };
+}
+
+/** Save the flows as a HAR file (bodies over 2 MiB are cut). */
+export async function exportHar(ids: number[]) {
+  const take = ids.slice(0, HAR_MAX_FLOWS);
+  if (ids.length > take.length) say(`Exporting the first ${HAR_MAX_FLOWS} of ${ids.length} requests.`);
+  try {
+    const entries: HarInput[] = [];
+    for (let i = 0; i < take.length; i += 6) {
+      const batch = await Promise.all(
+        take.slice(i, i + 6).map(async (id): Promise<HarInput> => {
+          const m = await fetchMeta(id);
+          return {
+            startedMs: m.started_ms,
+            durationMs: m.duration_ms ?? null,
+            url: flowUrl(m),
+            method: m.method,
+            httpVersion: m.http_version,
+            request: await harMessage(m, 'request', m.request),
+            response: m.response ? await harMessage(m, 'response', m.response) : null,
+            status: m.status ?? null,
+          };
+        }),
+      );
+      entries.push(...batch);
+    }
+    const har = toHar(entries, prefs.exportSecrets);
+    const blob = new Blob([JSON.stringify(har, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bosun-${entries.length}-requests.har`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    say(`Saved ${entries.length} request${entries.length === 1 ? '' : 's'} as a HAR file${redactNote()}.`);
   } catch (e) {
     fail(e);
   }

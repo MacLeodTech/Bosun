@@ -9,7 +9,7 @@
   import { bytesToText, b64ToBytes } from '../lib/bytes';
   import type { components } from '../lib/api-types';
   import {
-    ATTACK_TYPES, OPS, autoMark, blankOptions, blankProc, blankSet, clearMarks, countPositions, filterRows, markSelection,
+    ATTACK_TYPES, BUILTIN_LISTS, OPS, autoMark, blankOptions, blankProc, blankSet, clearMarks, countPositions, filterRows, markSelection,
     optionsBody, requestB64, rowsToCsv, setBody, sortRows,
     type AttackInfo, type AttackType, type GrepMatchUi, type OptionsUi, type ProcKind, type Row, type SetUi, type SortKey,
   } from '../lib/intruder';
@@ -167,10 +167,12 @@
     };
   }
 
-  async function preview() {
+  let previewLimit = $state(10);
+  async function preview(limit = 10) {
     error = ''; note = ''; busy = true;
     try {
-      plan = await api.post<S['PlanReply']>('/intruder/plan', body());
+      previewLimit = limit;
+      plan = await api.post<S['PlanReply']>(`/intruder/plan?limit=${limit}`, body());
     } catch (e) {
       plan = null;
       error = e instanceof Error ? e.message : String(e);
@@ -300,6 +302,7 @@
             <select bind:value={set.source} disabled={!canRun} aria-label="Payload source {i + 1}">
               <option value="list">List</option><option value="numbers">Numbers</option><option value="brute_force">Brute force</option>
               <option value="null">Null payloads</option><option value="case_changes">Case changes</option>
+              <option value="dates">Dates</option><option value="char_substitution">Character substitution</option><option value="builtin">Built-in wordlist</option>
             </select>
           </label>
           {#if set.source === 'numbers'}
@@ -314,12 +317,22 @@
             <label>Max <input type="number" min="1" max="16" bind:value={set.maxLen} /></label>
           {:else if set.source === 'null'}
             <label>Count <input type="number" min="1" bind:value={set.count} aria-label="Null payload count {i + 1}" /></label>
+          {:else if set.source === 'dates'}
+            <label>From <input type="date" bind:value={set.dateFrom} aria-label="Dates from {i + 1}" /></label>
+            <label>To <input type="date" bind:value={set.dateTo} aria-label="Dates to {i + 1}" /></label>
+            <label>Step (days) <input type="number" bind:value={set.stepDays} /></label>
+            <label>Format <input class="code" bind:value={set.dateFormat} placeholder="%Y-%m-%d" aria-label="Date format {i + 1}" /></label>
+          {:else if set.source === 'builtin'}
+            <label>Wordlist <select bind:value={set.builtin} aria-label="Built-in wordlist {i + 1}">{#each BUILTIN_LISTS as n (n)}<option value={n}>{n}</option>{/each}</select></label>
           {:else}
             <label class="filebtn">Load file… <input type="file" onchange={(e) => loadFile(set, e)} /></label>
           {/if}
         </div>
-        {#if set.source === 'list' || set.source === 'case_changes'}
+        {#if set.source === 'list' || set.source === 'case_changes' || set.source === 'char_substitution'}
           <textarea class="code list" bind:value={set.list} spellcheck="false" disabled={!canRun} placeholder="One payload per line" aria-label="Payloads {i + 1}"></textarea>
+        {/if}
+        {#if set.source === 'char_substitution'}
+          <textarea class="code list" bind:value={set.rules} spellcheck="false" disabled={!canRun} placeholder="One rule per line: a=@" aria-label="Substitution rules {i + 1}"></textarea>
         {/if}
         {#each set.processing as p, j (j)}
           <div class="toolbar proc">
@@ -387,7 +400,7 @@
     </fieldset>
 
     <div class="toolbar">
-      <button disabled={!canRun || busy || !host.trim()} onclick={preview}>Preview</button>
+      <button disabled={!canRun || busy || !host.trim()} onclick={() => preview()}>Preview</button>
       <button class="primary" disabled={!canRun || busy || !host.trim()} onclick={start} data-testid="intruder-start">Start attack</button>
       {#if plan}<span class="tnum small" data-testid="intruder-plan">{plan.total} requests, {plan.positions} position{plan.positions === 1 ? '' : 's'}</span>{/if}
     </div>
@@ -395,6 +408,9 @@
       <ul class="preview small code">
         {#each plan.preview as p (p.index)}<li>{p.index + 1}: {p.payloads.join(' | ')}</li>{/each}
       </ul>
+      {#if plan.total > plan.preview.length && previewLimit < 1000}
+        <button class="ghost" disabled={busy} onclick={() => preview(1000)} data-testid="intruder-preview-all">Show up to 1000 requests</button>
+      {/if}
     {/if}
     {#if !canRun}<p class="muted">Running attacks needs the tester role.</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}

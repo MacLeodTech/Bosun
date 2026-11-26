@@ -36,7 +36,10 @@ export const OPS: { id: Op; label: string }[] = [
   { id: 'hex_decode', label: 'Hex-decode' },
 ];
 
-export type SourceKind = 'list' | 'numbers' | 'brute_force' | 'null' | 'case_changes';
+export type SourceKind = 'list' | 'numbers' | 'brute_force' | 'null' | 'case_changes' | 'dates' | 'char_substitution' | 'builtin';
+
+/** The wordlists that ship with Bosun. */
+export const BUILTIN_LISTS = ['passwords', 'usernames', 'paths', 'numbers-0-99'];
 export type ProcKind = 'prefix' | 'suffix' | 'encode' | 'replace_regex' | 'skip_if_matches';
 
 export interface ProcUi { type: ProcKind; value: string; op: Op; pattern: string; replacement: string }
@@ -47,6 +50,10 @@ export interface SetUi {
   from: number; to: number; step: number; base: 'decimal' | 'hex'; digits: number;
   charset: string; minLen: number; maxLen: number;
   count: number;
+  dateFrom: string; dateTo: string; stepDays: number; dateFormat: string;
+  /** One substitution per line, `a=@` (a character and what replaces it). */
+  rules: string;
+  builtin: string;
   processing: ProcUi[];
 }
 export interface GrepMatchUi { pattern: string; regex: boolean; caseInsensitive: boolean }
@@ -57,12 +64,23 @@ export interface OptionsUi {
 
 export const blankSet = (): SetUi => ({
   source: 'list', list: '', from: 1, to: 100, step: 1, base: 'decimal', digits: 0,
-  charset: 'abcdefghijklmnopqrstuvwxyz', minLen: 1, maxLen: 3, count: 10, processing: [],
+  charset: 'abcdefghijklmnopqrstuvwxyz', minLen: 1, maxLen: 3, count: 10,
+  dateFrom: '2024-01-01', dateTo: '2024-12-31', stepDays: 1, dateFormat: '', rules: 'a=@\no=0', builtin: 'passwords', processing: [],
 });
 export const blankProc = (type: ProcKind = 'prefix'): ProcUi => ({ type, value: '', op: 'url_encode', pattern: '', replacement: '' });
 export const blankOptions = (): OptionsUi => ({
   concurrency: 5, delayMs: 0, retries: 0, maxRequests: null, updateContentLength: true, verifyTls: false, timeoutSecs: 30,
 });
+
+/** `a=@` per line; a line without `=` or with no character before it is left out. */
+export function parseRules(t: string): S['Substitution'][] {
+  const out: S['Substitution'][] = [];
+  for (const l of lines(t)) {
+    const chars = Array.from(l);
+    if (chars.length >= 3 && chars[1] === '=') out.push({ from: chars[0]!, to: chars.slice(2).join('') });
+  }
+  return out;
+}
 
 /** One payload per line; blank lines are left out. */
 const lines = (t: string) => t.split(/\r?\n/).filter((l) => l !== '');
@@ -73,6 +91,9 @@ export function setBody(s: SetUi): PayloadSet {
     : s.source === 'case_changes' ? { type: 'case_changes', items: lines(s.list) }
     : s.source === 'numbers' ? { type: 'numbers', from: s.from, to: s.to, step: s.step, base: s.base, min_digits: s.digits }
     : s.source === 'brute_force' ? { type: 'brute_force', charset: s.charset, min_len: s.minLen, max_len: s.maxLen }
+    : s.source === 'dates' ? { type: 'dates', from: s.dateFrom, to: s.dateTo, step_days: s.stepDays, format: s.dateFormat || null }
+    : s.source === 'char_substitution' ? { type: 'char_substitution', items: lines(s.list), rules: parseRules(s.rules) }
+    : s.source === 'builtin' ? { type: 'builtin', name: s.builtin }
     : { type: 'null', count: s.count };
   const processing = s.processing.map((p): S['Processing'] =>
     p.type === 'prefix' ? { type: 'prefix', value: p.value }
@@ -91,6 +112,9 @@ export function setFromBody(b: PayloadSet): SetUi {
   else if (src.type === 'numbers') { s.source = 'numbers'; s.from = src.from; s.to = src.to; s.step = src.step ?? 1; s.base = src.base ?? 'decimal'; s.digits = src.min_digits ?? 0; }
   else if (src.type === 'brute_force') { s.source = 'brute_force'; s.charset = src.charset; s.minLen = src.min_len; s.maxLen = src.max_len; }
   else if (src.type === 'null') { s.source = 'null'; s.count = src.count; }
+  else if (src.type === 'dates') { s.source = 'dates'; s.dateFrom = src.from; s.dateTo = src.to; s.stepDays = src.step_days ?? 1; s.dateFormat = src.format ?? ''; }
+  else if (src.type === 'char_substitution') { s.source = 'char_substitution'; s.list = src.items.join('\n'); s.rules = src.rules.map((r) => `${r.from}=${r.to}`).join('\n'); }
+  else if (src.type === 'builtin') { s.source = 'builtin'; s.builtin = src.name; }
   s.processing = (b.processing ?? []).map((p) => {
     const u = blankProc(p.type);
     if (p.type === 'prefix' || p.type === 'suffix') u.value = p.value;

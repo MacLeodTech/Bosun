@@ -806,7 +806,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first few payloads come back. A problem is a 400 that says what. Needs the tester role or above. */
+        /** @description Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first `limit` requests' payloads (default 10, at most 1000) come back. A problem is a 400 that says what. Needs the tester role or above. */
         post: operations["intruder_plan"];
         delete?: never;
         options?: never;
@@ -6475,7 +6475,10 @@ export interface operations {
     };
     intruder_plan: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description How many requests to list, 10 by default, 1000 at most. */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;

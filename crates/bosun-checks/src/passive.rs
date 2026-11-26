@@ -23,6 +23,10 @@ static BUILTIN: LazyLock<Vec<Compiled>> = LazyLock::new(|| {
         include_str!("builtin/private-ip-disclosure.yaml"),
         include_str!("builtin/aws-access-key-id.yaml"),
         include_str!("builtin/debug-page.yaml"),
+        include_str!("builtin/email-disclosure.yaml"),
+        include_str!("builtin/suspicious-comments.yaml"),
+        include_str!("builtin/sensitive-info-in-url.yaml"),
+        include_str!("builtin/php-source-disclosure.yaml"),
     ]
     .iter()
     .filter_map(|t| parse(t).ok())
@@ -336,6 +340,46 @@ const LIBS: &[Lib] = &[
         ranges: &[([0, 0, 0], [4, 7, 7])],
         issue: "Remote code execution through templates (CVE-2021-23369, CVE-2021-23383); fixed in 4.7.7",
         severity: Severity::High,
+    },
+    Lib {
+        name: "jquery-ui",
+        uri: r"(?i)jquery-ui[-.](\d+\.\d+\.\d+)(?:\.min)?\.js|/jqueryui/(\d+\.\d+\.\d+)/",
+        content: r"jQuery UI(?: -)? v(\d+\.\d+\.\d+)",
+        ranges: &[([0, 0, 0], [1, 13, 2])],
+        issue: "XSS in the checkboxradio widget (CVE-2022-31160); fixed in 1.13.2",
+        severity: Severity::Medium,
+    },
+    Lib {
+        name: "underscore",
+        uri: r"(?i)underscore[-.](\d+\.\d+\.\d+)(?:\.min)?\.js|/underscore\.js/(\d+\.\d+\.\d+)/",
+        content: r"Underscore\.js (\d+\.\d+\.\d+)",
+        ranges: &[([1, 3, 2], [1, 12, 1])],
+        issue: "Arbitrary code execution through the template function (CVE-2021-23358); fixed in 1.12.1 and 1.13.0",
+        severity: Severity::High,
+    },
+    Lib {
+        name: "dompurify",
+        uri: r"(?i)(?:dompurify|purify)[-.](\d+\.\d+\.\d+)(?:\.min)?\.js|/dompurify/(\d+\.\d+\.\d+)/",
+        content: r"DOMPurify (\d+\.\d+\.\d+)",
+        ranges: &[([0, 0, 0], [2, 5, 4]), ([3, 0, 0], [3, 1, 3])],
+        issue: "Sanitizer bypass and XSS (CVE-2024-45801, CVE-2024-47875); fixed in 2.5.4 and 3.1.3",
+        severity: Severity::High,
+    },
+    Lib {
+        name: "axios",
+        uri: r"(?i)axios[-.](\d+\.\d+\.\d+)(?:\.min)?\.js|/axios/(\d+\.\d+\.\d+)/",
+        content: r"Axios v(\d+\.\d+\.\d+)",
+        ranges: &[([0, 0, 0], [0, 21, 1])],
+        issue: "Server-side request forgery through redirects (CVE-2020-28168); fixed in 0.21.1",
+        severity: Severity::Medium,
+    },
+    Lib {
+        name: "vue",
+        uri: r"(?i)vue[-.](\d+\.\d+\.\d+)(?:\.min|\.runtime(?:\.min)?)?\.js|/vue/(\d+\.\d+\.\d+)/",
+        content: r"Vue\.js v(\d+\.\d+\.\d+)",
+        ranges: &[([2, 0, 0], [3, 0, 0])],
+        issue: "Vue 2 is end of life and has an unfixed ReDoS in its template parser (CVE-2024-9506); move to Vue 3",
+        severity: Severity::Low,
     },
 ];
 
@@ -839,6 +883,26 @@ mod tests {
                 html("<title>Info</title>"),
             ),
             (
+                "email-disclosure",
+                html("<p>Mail jane.doe@shop.com now</p>"),
+                html("<p>user@localhost and @mention</p>"),
+            ),
+            (
+                "suspicious-comments",
+                html("<!-- TODO remove the admin password -->"),
+                html("<p>todo list</p><!-- layout -->"),
+            ),
+            (
+                "sensitive-info-in-url",
+                flow(200, "", "/login?user=a&password=hunter2", "", "x"),
+                flow(200, "", "/login?user=a&page=2", "", "x"),
+            ),
+            (
+                "php-source-disclosure",
+                html("<?php $db = mysqli_connect('h'); ?>"),
+                html("<p>PHP is a language, <b>not</b> shown</p>"),
+            ),
+            (
                 "mixed-content-active",
                 html(r#"<script src="http://cdn.test/a.js"></script>"#),
                 html(r#"<script src="https://cdn.test/a.js"></script>"#),
@@ -941,7 +1005,7 @@ mod tests {
 
     #[test]
     fn every_builtin_check_parses_and_is_passive() {
-        assert_eq!(builtin().len(), 5);
+        assert_eq!(builtin().len(), 9);
         assert!(builtin().iter().all(Compiled::is_passive));
     }
 
@@ -982,6 +1046,17 @@ mod tests {
             ("lodash-4.17.21.min.js", false),
             ("angular.min.js", false),
             ("moment-2.29.1.js", true),
+            ("jquery-ui-1.12.1.min.js", true),
+            ("jquery-ui-1.13.2.min.js", false),
+            ("underscore-1.8.3.js", true),
+            ("underscore-1.13.6.js", false),
+            ("dompurify-2.4.0.min.js", true),
+            ("dompurify-3.0.5.min.js", true),
+            ("dompurify-3.1.3.min.js", false),
+            ("axios-0.19.0.js", true),
+            ("axios-1.6.0.js", false),
+            ("vue-2.6.14.min.js", true),
+            ("vue-3.4.0.min.js", false),
         ] {
             let f = html(&format!(r#"<script src="/{src}?v=1"></script>"#));
             assert_eq!(ids(&f) == ["vulnerable-js-library"], vulnerable, "{src}");

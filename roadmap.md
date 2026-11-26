@@ -52,9 +52,12 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   **To add a tool page:** add its id to `web/src/lib/panelids.ts`, an entry in `web/src/lib/panels.ts`, and register
   its commands with `commands.register([...])` (see `builtin.ts`). Do not add a page to `App.svelte`.
   Items left out of PR #25 are under "UI follow-ups" below.
-- **In flight:** nothing.
+- **In flight (2026-11-25), merge in this order:** #28 (Repeater tabs saved in the project, `/repeater/ws`), #29 (WP-44
+  message editor), #30 (Repeater page WebSocket mode), #31 (`bosun login`, `status`, `repeater send`; the start of WP-26).
+  #30 and #31 are stacked on the earlier ones.
 - **Next, in order** (see the phase plan below):
-  1. Small WP-42 leftovers: MD5 and SHA-1 (new
+  1. The recorder drops flows in bursts of about 7,000 requests/s (31 to 34% stored): reproduce, fix or count the
+     drops, and add a test. Then the server-side filter of WP-75 in Rust (see "UI follow-ups"). Small WP-42 leftovers: MD5 and SHA-1 (new
      dependencies), compression encoders, and `bosun decode` (with WP-26); "Send to Decoder or Comparer" is in WP-43.
   2. **Phase 3, track A (M2):** WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
      used every day). WP-38 and WP-39 are the M1 follow-ups.
@@ -206,7 +209,7 @@ valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
-| [ ] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
+| [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-43 | History, Organizer, Logger and "send to" | 3 | M | WP-35, WP-41 |
 | [ ] | WP-45 | Engagement helpers | 3 | M | WP-41 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |

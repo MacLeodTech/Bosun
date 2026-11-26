@@ -15,7 +15,7 @@ mod plan;
 mod run;
 mod template;
 
-pub use payload::{CompiledSet, NumberBase, PayloadSet, PayloadSource, Processing};
+pub use payload::{CompiledSet, NumberBase, PayloadSet, PayloadSource, Processing, Substitution};
 pub use plan::{AttackType, Job, Plan};
 pub use run::{
     Attack, Finish, GrepExtract, GrepMatch, Greps, Options, Progress, Row, Sink, Stop, Summary, run,

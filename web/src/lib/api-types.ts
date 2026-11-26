@@ -1964,6 +1964,23 @@ export interface components {
             items: string[];
             /** @enum {string} */
             type: "case_changes";
+        } | {
+            format?: string | null;
+            from: string;
+            /** Format: int64 */
+            step_days?: number;
+            to: string;
+            /** @enum {string} */
+            type: "dates";
+        } | {
+            items: string[];
+            rules: components["schemas"]["Substitution"][];
+            /** @enum {string} */
+            type: "char_substitution";
+        } | {
+            name: string;
+            /** @enum {string} */
+            type: "builtin";
         };
         /** @enum {string} */
         Phase: "request" | "response";
@@ -2434,6 +2451,11 @@ export interface components {
         };
         Stopped: {
             stopped: boolean;
+        };
+        /** @description One character-substitution rule. */
+        Substitution: {
+            from: string;
+            to: string;
         };
         /**
          * @description The Repeater's tabs as the page keeps them. The server stores them as the page wrote them and looks only at their

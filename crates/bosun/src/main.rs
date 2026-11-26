@@ -180,6 +180,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RepeaterCmd,
     },
+    /// Intruder: run an attack from a plan file.
+    Intruder {
+        #[command(subcommand)]
+        cmd: IntruderCmd,
+    },
 }
 
 /// Which engine a client command talks to (else `$BOSUN_SERVER`/`$BOSUN_TOKEN`, else the default profile).
@@ -332,6 +337,25 @@ enum InterceptCmd {
     Forward { id: Option<u64> },
     /// Drop a held message.
     Drop { id: u64 },
+}
+
+#[derive(Subcommand, Debug)]
+enum IntruderCmd {
+    /// Run the attack in PLAN (the JSON body of `POST /intruder/attacks`; `request_file` may name the raw request),
+    /// wait for it and write the results. Exit code 0 when it completed, 4 when it failed or was stopped.
+    Run {
+        plan: PathBuf,
+        #[command(flatten)]
+        conn: Conn,
+        #[arg(long, default_value = "csv", value_parser = ["csv", "json"])]
+        format: String,
+        /// Write the results here instead of stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Send a `request_file` as it is: no LF to CRLF.
+        #[arg(long)]
+        exact: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -749,6 +773,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 out,
                 follow,
                 count,
+            ));
+        }
+        Cmd::Intruder {
+            cmd:
+                IntruderCmd::Run {
+                    plan,
+                    conn,
+                    format,
+                    out,
+                    exact,
+                },
+        } => {
+            return tokio::runtime::Runtime::new()?.block_on(client_cmd::intruder_run(
+                conn.server.as_deref(),
+                conn.profile.as_deref(),
+                &plan,
+                exact,
+                &format,
+                out.as_deref(),
             ));
         }
         Cmd::Repeater {

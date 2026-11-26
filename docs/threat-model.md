@@ -300,7 +300,7 @@ This document says what is protected, from whom, and how. Code comments refer ba
   server checks the role, the scope gate, the audit and the recording, so the CLI adds no way around them. `login` reads
   the password from stdin, makes a 90-day API token and signs the session out again; the token is kept in
   `profiles.json` in the client directory, created readable by its owner only (0600 on Unix; Windows relies on the
-  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. An OS keychain is not used yet.
+  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. Where the OS has a keychain (Windows Credential Manager, macOS Keychain, the Secret Service on Linux) `bosun login` keeps the token there instead and the file holds only the server address; with no keychain it falls back to the file, with a note. `BOSUN_KEYCHAIN=off` forces the file.
 - *The local admin commands (`bosun project`, `token`, `user role|delete|sessions`, `audit`).* They work on the data
   directory directly, so they are as trusted as the account that can read it: whoever can run them can already read the
   data key, the account database and every project. They add no remote surface. They write the same audit entries as

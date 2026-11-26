@@ -1,0 +1,20 @@
+version: 1
+id: debug-page
+info:
+  name: Framework debug or diagnostics page exposed
+  severity: medium
+  confidence: firm
+  description: The response is a framework's debug page or a phpinfo() dump, which lists settings, paths and often secrets.
+  remediation: Disable debug mode and remove diagnostics pages in production.
+  cwe: [215, 489]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  tags: [disclosure, debug]
+passive:
+  matchers:
+    - type: word
+      part: body
+      words:
+        - "You're seeing this error because you have <code>DEBUG = True</code>"
+        - '<title>phpinfo()</title>'
+        - 'Whoops! There was an error.'
+        - 'Werkzeug Debugger'

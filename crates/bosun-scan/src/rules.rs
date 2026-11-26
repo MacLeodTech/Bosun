@@ -6,7 +6,7 @@
 use bosun_model::FlowDetail;
 use bosun_store::{Confidence, Evidence, EvidencePart, NewIssue, Severity};
 
-use crate::head::{Head, Header};
+use bosun_checks::head::{Head, Header};
 
 /// How much of a body the rules read.
 const BODY_LIMIT: usize = 1 << 20;
@@ -489,7 +489,9 @@ pub fn scan_flow(flow: &FlowDetail, now_ms: i64) -> Vec<NewIssue> {
             }
         }
     }
-    c.out
+    let mut out = c.out;
+    out.extend(bosun_checks::scan_flow(flow, now_ms));
+    out
 }
 
 #[cfg(test)]
@@ -534,7 +536,8 @@ mod tests {
     }
 
     const HARDENED: &str = "Strict-Transport-Security: max-age=1\r\nX-Content-Type-Options: nosniff\r\n\
-        Content-Security-Policy: default-src 'self'; frame-ancestors 'none'\r\nContent-Type: text/html\r\n";
+        Content-Security-Policy: default-src 'self'; frame-ancestors 'none'\r\nContent-Type: text/html\r\n\
+        Cache-Control: no-store\r\n";
 
     fn rules(f: &FlowDetail) -> Vec<&'static str> {
         let mut v: Vec<_> = scan_flow(f, 5)

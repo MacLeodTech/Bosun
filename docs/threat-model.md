@@ -247,6 +247,18 @@ This document says what is protected, from whom, and how. Code comments refer ba
   batches so the recorder's writes are not starved. The UI shows an issue's text and the matched excerpt only as text
   (`<mark>` around the range, never `{@html}`). Reading issues needs the viewer role; changing a status and starting a
   rescan need the tester role and are audited (`issue.status`, `issues.rescan`).
+- *Check language and passive checks (`bosun-checks`).* A check is data from a file or an import, so it is untrusted
+  like the traffic it runs on. The loader (`lang::parse`, `nuclei::import`) reads at most 256 KiB, refuses unknown
+  fields, wrong versions and anything past fixed caps (32 matchers, 64 patterns each, 8 requests, 16 paths), builds
+  regexes with the `regex` crate (linear time, 1 MiB size limit) and lets a YAML document expand only as far as the
+  parser's alias budget allows. A check cannot run code, and a request path must start with `{{BaseURL}}` or `/`, so a
+  check cannot send a request to another host; the variables are a fixed list and an unknown one is an error. Nuclei
+  features that would change what a check means (raw requests, payloads, `dsl`, flows, other protocols) are refused by
+  name, not dropped. Matching reads a body only when it is stored uncompressed, up to 1 MiB, and a part that cannot be
+  read never matches (negative matchers included). Findings copy only short strings (hosts of mixed-content URLs, claim
+  names of a JWT, library versions, extracted values cut at 120 characters), never a token, a password or a query
+  string. The loader is fuzzed (`check_language`). The code checks run behind the scanner's `catch_unwind`. Active
+  checks, once the scan engine sends them (WP-54), go through the scope gate like every other tool.
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
 
 ### Elevation of privilege

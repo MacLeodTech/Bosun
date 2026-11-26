@@ -1,0 +1,33 @@
+version: 1
+id: sql-error-disclosure
+info:
+  name: Database error message in a response
+  severity: medium
+  confidence: tentative
+  description: The response contains a database error, which usually means a query failed on input it did not expect, and is a lead for SQL injection.
+  remediation: Use parameterised queries, and return a generic error page instead of the database's message.
+  cwe: [209, 89]
+  owasp: ["A03:2021 Injection"]
+  tags: [disclosure, sqli]
+source:
+  origin: zap
+  id: "SQL error patterns used by the active SQL injection rules"
+  license: Apache-2.0
+  notice: Ported in spirit from the ZAP rule set, Copyright the ZAP Dev Team, Apache License 2.0.
+passive:
+  matchers:
+    - type: word
+      part: body
+      case-insensitive: true
+      words:
+        - You have an error in your SQL syntax
+        - mysql_fetch_array() expects parameter
+        - unclosed quotation mark after the character string
+        - quoted string not properly terminated
+        - 'PG::SyntaxError'
+        - 'pg_query(): Query failed'
+        - 'SQLITE_ERROR'
+        - 'SQLiteException'
+        - 'ORA-00933'
+        - 'ORA-01756'
+        - 'Microsoft OLE DB Provider for SQL Server'

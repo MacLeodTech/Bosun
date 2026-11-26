@@ -55,7 +55,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
 - **In flight (2026-11-25), merge in this order:** #28 (Repeater tabs saved in the project, `/repeater/ws`), #29 (WP-44
   message editor), #30 (Repeater page WebSocket mode), #31 (`bosun login`, `status`, `repeater send`; the start of WP-26).
   #30 and #31 are stacked on the earlier ones. Then #32 (recorder under bursts), #33 (WP-75, stacked on #32), and the
-  `wp-43` branch (WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
+  `wp-43` branch (WP-32, WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
   merge `main` into the next branch and regenerate `docs/openapi.json` and `web/src/lib/api-types.ts` if they conflict.
 - **Next, in order** (see the phase plan below):
   1. **Phase 3, track A (M2):** WP-38 is the M1 follow-up. Intruder is in; its leftovers are under WP-47.
@@ -210,7 +210,6 @@ valid in the "Depends on" column.
 | [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
 | [ ] | WP-28 | Proxy hot path | 4 | M | WP-05 |
-| [ ] | WP-32 | CA management | 4 | M | |
 | [ ] | WP-33 | Protocol gaps | 4 | M | WP-20 |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
 | [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
@@ -457,14 +456,6 @@ Open packages only; finished ones are in `docs/releases.md`.
     optionally from the original destination on Linux through `SO_ORIGINAL_DST`, which needs a safe wrapper or a
     crate) and intercept as for CONNECT.
 - **Done when:** a test sends HTTPS straight to the listener with SNI and gets the flow recorded.
-
-#### WP-32 CA management · Phase 4 · M
-
-- **Do:**
-  - `bosun ca rotate` (new CA, old one kept for reference, the browser profile updated with the new pin).
-  - Expiry warnings in `doctor` and the UI.
-  - An optional **name-constrained** CA (limited to the scope's domains) for installing on test devices.
-  - Document when to use each.
 
 #### WP-33 Protocol gaps · Phase 4 · M
 

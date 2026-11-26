@@ -9,6 +9,12 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-32 CA management** (`wp-43`, 2026-11-26). `bosun ca rotate [--permit-domain D]...` creates a new CA, keeps the
+  old certificate in `ca/previous/` and deletes its key (restart needed; the launched browser takes the new pin on its
+  next launch). `--permit-domain` makes a name-constrained CA (all IP addresses excluded). `doctor` warns 30 days
+  before expiry and fails after; `ca info` and `/ca` show expiry and constraint, and Settings warns. The constraint is a
+  flag, not taken from the scope automatically.
+
 - **WP-26 CLI client commands, first part** (`wp-43`, 2026-11-26). `history list|search|show|export` (HAR 1.2 and
   ndjson), `scope get|set|add`, `rules get|set|import`, `intercept on|off|status|queue|forward|drop`, `events
   [--follow]`, `ca export --server/--profile`, and `--json`, `--ndjson` and `--quiet` output; `history search` exits 4

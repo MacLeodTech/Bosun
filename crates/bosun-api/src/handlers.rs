@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{Caller, check_password_policy, check_username, hash_password, random_token};
 use crate::security::{empty, reject};
-use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SCOPE};
+use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SAVED_FILTERS, SETTING_SCOPE};
 
 type R = Result<Response, Response>;
 
@@ -148,6 +148,66 @@ pub async fn check_flow_query(caller: Caller, Query(p): Query<QueryCheckParams>)
         errors: parsed.errors,
     })
     .into_response())
+}
+
+/// A history query kept under a name, for the whole project.
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SavedFilter {
+    pub name: String,
+    pub query: String,
+}
+
+const MAX_SAVED_FILTERS: usize = 50;
+const MAX_FILTER_NAME: usize = 60;
+
+pub async fn get_saved_filters(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    let p = st.project();
+    let list: Option<Vec<SavedFilter>> = blocking(move || p.setting(SETTING_SAVED_FILTERS))
+        .await?
+        .map_err(internal)?;
+    Ok(Json(list.unwrap_or_default()).into_response())
+}
+
+/// Replace the saved filters. Each query must be valid, so a saved filter always runs.
+pub async fn put_saved_filters(
+    State(st): State<AppState>,
+    caller: Caller,
+    Json(list): Json<Vec<SavedFilter>>,
+) -> R {
+    caller.require(Role::Tester)?;
+    if list.len() > MAX_SAVED_FILTERS {
+        return Err(reject(StatusCode::BAD_REQUEST, "too many saved filters"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for f in &list {
+        let name = f.name.trim();
+        if name.is_empty() || name.chars().count() > MAX_FILTER_NAME || name.chars().any(char::is_control) {
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                "a filter name is 1 to 60 characters, without control characters",
+            ));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(reject(StatusCode::BAD_REQUEST, "two filters have the same name"));
+        }
+        if let Some(e) = bosun_store::query::parse(&f.query).errors.first() {
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                &format!("filter \"{name}\": {}", e.message),
+            ));
+        }
+    }
+    let list: Vec<SavedFilter> = list
+        .into_iter()
+        .map(|f| SavedFilter {
+            name: f.name.trim().to_string(),
+            query: f.query,
+        })
+        .collect();
+    let _settings = st.inner.projects.settings_guard().await;
+    save_setting(&st, SETTING_SAVED_FILTERS, list.clone()).await?;
+    Ok(Json(list).into_response())
 }
 
 /// A flow without its bodies: summary, each message's header block and size. The bodies come from the

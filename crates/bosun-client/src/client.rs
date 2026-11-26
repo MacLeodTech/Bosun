@@ -258,6 +258,16 @@ impl Client {
             .await
     }
 
+    pub async fn saved_filters(&self) -> Result<Vec<SavedFilter>> {
+        self.json(self.req(Method::GET, "/saved-filters")).await
+    }
+
+    /// Replace the project's saved filters.
+    pub async fn put_saved_filters(&self, list: &[SavedFilter]) -> Result<Vec<SavedFilter>> {
+        self.json(self.req(Method::PUT, "/saved-filters").json(list))
+            .await
+    }
+
     /// Delete flows by id; returns how many were removed.
     pub async fn delete_flows(&self, ids: &[FlowId]) -> Result<u64> {
         #[derive(serde::Deserialize)]

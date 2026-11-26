@@ -190,6 +190,37 @@ async fn history_queries_run_on_the_server_and_mistakes_are_explained() {
 }
 
 #[tokio::test]
+async fn saved_filters_are_kept_per_project_and_must_be_valid() {
+    use bosun_client::SavedFilter;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    assert!(c.saved_filters().await.unwrap().is_empty());
+    let f = |n: &str, q: &str| SavedFilter {
+        name: n.into(),
+        query: q.into(),
+    };
+    let list = vec![f("  api  ", "host:api.test or tag:x"), f("errors", "status:5xx")];
+    let back = c.put_saved_filters(&list).await.unwrap();
+    assert_eq!(back[0].name, "api", "names are trimmed");
+    assert_eq!(c.saved_filters().await.unwrap(), back);
+    // A filter that would not run is refused, and so are duplicates, empty names and too many.
+    for bad in [
+        vec![f("x", "status:banana")],
+        vec![f("x", "a"), f("x", "b")],
+        vec![f("  ", "a")],
+        vec![f("bad\nname", "a")],
+        (0..51).map(|i| f(&format!("n{i}"), "a")).collect(),
+    ] {
+        assert!(c.put_saved_filters(&bad).await.is_err());
+    }
+    assert_eq!(
+        c.saved_filters().await.unwrap(),
+        back,
+        "a refused write changes nothing"
+    );
+}
+
+#[tokio::test]
 async fn history_bodies_annotations_and_sitemap() {
     let s = stack(true).await;
     let c = admin(&s).await;
@@ -603,6 +634,8 @@ fn the_client_covers_every_documented_operation() {
         ("post", "/auth/password", "change_password"),
         ("get", "/flows", "flows"),
         ("get", "/flows/query", "check_flow_query"),
+        ("get", "/saved-filters", "saved_filters"),
+        ("put", "/saved-filters", "put_saved_filters"),
         ("delete", "/flows", "delete_flows"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),

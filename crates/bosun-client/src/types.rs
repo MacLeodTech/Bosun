@@ -421,3 +421,10 @@ pub struct QueryCheck {
     pub terms: Vec<QueryTerm>,
     pub errors: Vec<QueryProblem>,
 }
+
+/// A history query kept under a name for the whole project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedFilter {
+    pub name: String,
+    pub query: String,
+}

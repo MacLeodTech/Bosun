@@ -455,6 +455,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
   file, a row at a time, so they hold what the target sent back and are shown only as text in the UI; a CSV export
   puts a quote before any cell that a spreadsheet would run as a formula. Payload lists loaded from a file are read
   in the browser and sent as text. The request template and payload sets parser has a fuzz target (`intruder_plan`).
+- *`bosun scan` (CI).* It is a client of the `/crawl/*` and `/scan/*` API, so the gate, the roles and the audit log
+  apply as for the UI. Without `--server` it runs its own engine on loopback ports in a fresh data directory (mode
+  0700, removed at the end) with a single-use login ticket, so nothing else can sign in to it. It puts only the
+  target URL's host and port (and `--also-scope` hosts) in the scope; `allow_private` is set only by
+  `--allow-private`, so a public name that resolves to a local address is still refused. Against a remote engine it
+  adds that one rule to the existing scope and removes nothing. Imported requests and crawled links are untrusted:
+  the ones outside the scope are refused by the gate and never sent. `POST` forms are scanned only with
+  `--post-forms`. Findings and SARIF are written as text; the exit code comes from the severities of the findings.
 - *The spider (`bosun-crawl`, API `/crawl/*`, `bosun crawl run`, the Spider panel).* Every request, `robots.txt` and sitemaps
   included, goes through `Engine::send` and so through the gate as source `crawler` (an automated source: out of
   scope is refused, never prompted). Links are also checked against the scope before they are queued, so an

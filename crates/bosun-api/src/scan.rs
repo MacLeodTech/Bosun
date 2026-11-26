@@ -16,6 +16,7 @@ use axum::response::{IntoResponse, Response};
 use bosun_active::{Control, Finding, Options, Report, Sink, Strength, Target};
 use bosun_http::Exchange;
 use bosun_model::{FlowSource, now_ms};
+use bosun_proxy::ProxyEvent;
 
 use bosun_store::{Confidence, NewIssue, Role, Severity};
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,7 @@ struct Inner {
     findings: Vec<ScanFinding>,
     error: Option<String>,
     report: Option<Report>,
+    last_event: Option<std::time::Instant>,
 }
 
 struct Job {
@@ -364,10 +366,28 @@ impl Sink for ApiSink {
     }
 
     fn progress(&self, done: usize, total: usize, requests: u64) {
-        let mut g = lock(&self.job.inner);
-        g.units_done = done;
-        g.units_total = total;
-        g.requests = requests;
+        let ev = {
+            let mut g = lock(&self.job.inner);
+            g.units_done = done;
+            g.units_total = total;
+            g.requests = requests;
+            // At most four events a second (the last unit always goes out).
+            let quiet = g
+                .last_event
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250));
+            if quiet && done < total {
+                return;
+            }
+            g.last_event = Some(std::time::Instant::now());
+            ProxyEvent::ScanProgress {
+                id: self.job.id,
+                units_done: done as u64,
+                units_total: total as u64,
+                requests,
+                findings: g.findings.len() as u64,
+            }
+        };
+        self.st.inner.events.send(ev);
     }
 }
 
@@ -396,7 +416,23 @@ async fn run(st: AppState, job: Arc<Job>, opts: Options, targets: Vec<Target>) {
         let p = st.project();
         let _ = tokio::task::spawn_blocking(move || p.scan_commit(&[], &stored)).await;
     }
-    lock(&job.inner).done = true;
+    let ev = {
+        let mut g = lock(&job.inner);
+        g.done = true;
+        ProxyEvent::ScanDone {
+            id: job.id,
+            state: match (&g.error, g.stopped) {
+                (Some(_), _) => "failed",
+                (None, true) => "stopped",
+                (None, false) => "done",
+            }
+            .into(),
+            requests: g.requests,
+            findings: g.findings.len() as u64,
+            error: g.error.clone(),
+        }
+    };
+    st.inner.events.send(ev);
 }
 
 pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<ScanStartBody>) -> R {
@@ -447,6 +483,10 @@ pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<Sca
         )
         .await;
     let out = info(&job);
+    st.inner.events.send(ProxyEvent::ScanStarted {
+        id: job.id,
+        targets: targets.len() as u64,
+    });
     tokio::spawn(run(st.clone(), job, opts, targets));
     Ok(Json(out).into_response())
 }

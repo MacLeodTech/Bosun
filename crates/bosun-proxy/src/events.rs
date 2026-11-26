@@ -77,6 +77,27 @@ pub enum ProxyEvent {
         requests: u64,
         error: Option<String>,
     },
+    /// An active scan was accepted and is running.
+    ScanStarted {
+        id: u64,
+        targets: u64,
+    },
+    /// A running active scan moved on (sent at most four times a second). Fetch `/scan/scans/{id}`.
+    ScanProgress {
+        id: u64,
+        units_done: u64,
+        units_total: u64,
+        requests: u64,
+        findings: u64,
+    },
+    /// An active scan ended: `state` is `done`, `stopped` or `failed`.
+    ScanDone {
+        id: u64,
+        state: String,
+        requests: u64,
+        findings: u64,
+        error: Option<String>,
+    },
     /// One request of an Intruder attack finished. (The same fields as a stored result.)
     IntruderResult {
         attack_id: i64,

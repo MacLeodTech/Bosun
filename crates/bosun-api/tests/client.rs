@@ -190,6 +190,83 @@ async fn history_queries_run_on_the_server_and_mistakes_are_explained() {
 }
 
 #[tokio::test]
+async fn history_can_be_sorted_and_paged_by_any_column() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/b-second", "Content-Type: text/plain\r\n", b"1", None);
+    let b = recorded(&s, "/a-first", "Content-Type: text/html\r\n", b"22222", None);
+    let d = recorded(&s, "/c-third", "Content-Type: text/css\r\n", b"333", None);
+    let list = |sort: &str, asc: bool, offset: Option<u32>, limit: Option<u32>| {
+        let c = c.clone();
+        let sort = sort.to_string();
+        async move {
+            c.flows(&FlowQuery {
+                sort: Some(sort),
+                asc,
+                offset,
+                limit,
+                ..Default::default()
+            })
+            .await
+            .map(|v| v.into_iter().map(|f| f.id).collect::<Vec<_>>())
+        }
+    };
+    assert_eq!(list("id", false, None, None).await.unwrap(), [d, b, a]);
+    assert_eq!(list("path", true, None, None).await.unwrap(), [b, a, d]);
+    assert_eq!(list("path", false, None, None).await.unwrap(), [d, a, b]);
+    assert_eq!(list("size", false, None, None).await.unwrap(), [b, d, a]);
+    assert_eq!(list("mime", true, None, None).await.unwrap(), [d, b, a]);
+    // Paging a sorted list: the pages join up with nothing missing or repeated.
+    let first = list("path", true, None, Some(2)).await.unwrap();
+    let rest = list("path", true, Some(2), Some(2)).await.unwrap();
+    assert_eq!([first, rest].concat(), [b, a, d]);
+    // An unknown column is a mistake, not a guess.
+    let err = list("id; drop table flows", true, None, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("sort:"), "{err}");
+    assert_eq!(list("id", false, None, None).await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn tags_change_in_bulk_for_testers_only() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/a", "Content-Type: text/plain\r\n", b"1", None);
+    let b = recorded(&s, "/b", "Content-Type: text/plain\r\n", b"2", None);
+    assert_eq!(c.change_tags(&[a, b], &["review"], &[]).await.unwrap(), 2);
+    let tagged = |q: &str| {
+        let c = c.clone();
+        let q = q.to_string();
+        async move {
+            c.flows(&FlowQuery {
+                q: Some(q),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .len()
+        }
+    };
+    assert_eq!(tagged("tag:review").await, 2);
+    assert_eq!(c.change_tags(&[a], &[], &["REVIEW"]).await.unwrap(), 1);
+    assert_eq!(tagged("tag:review").await, 1);
+    for bad in [&[][..], &[a][..]] {
+        let tags: &[&str] = if bad.is_empty() { &["x"] } else { &[""] };
+        assert!(c.change_tags(bad, tags, &[]).await.is_err());
+    }
+    assert!(
+        Client::new(url(&s))
+            .unwrap()
+            .change_tags(&[a], &["x"], &[])
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}
+
+#[tokio::test]
 async fn saved_filters_are_kept_per_project_and_must_be_valid() {
     use bosun_client::SavedFilter;
     let s = stack(true).await;
@@ -637,6 +714,7 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/saved-filters", "saved_filters"),
         ("put", "/saved-filters", "put_saved_filters"),
         ("delete", "/flows", "delete_flows"),
+        ("post", "/flows/tags", "change_tags"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),
         ("get", "/flows/{id}/ws", "ws_messages"),

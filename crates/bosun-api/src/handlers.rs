@@ -77,6 +77,13 @@ pub struct FlowQuery {
     before: Option<FlowId>,
     after: Option<FlowId>,
     limit: Option<u32>,
+    /// `id` (default), `time`, `method`, `host`, `path`, `status`, `size`, `duration` or `mime`.
+    sort: Option<String>,
+    /// Oldest or smallest first.
+    #[serde(default)]
+    asc: bool,
+    /// Rows to skip when the list is sorted by something other than `id`.
+    offset: Option<u32>,
     /// A history query (see `docs/query-language.md`), combined with the fields above by `and`.
     q: Option<String>,
 }
@@ -102,7 +109,19 @@ pub async fn list_flows(State(st): State<AppState>, caller: Caller, Query(q): Qu
         }
         None => None,
     };
+    let sort = match q.sort.as_deref().filter(|s| !s.is_empty()) {
+        None => bosun_store::FlowSort::Id,
+        Some(s) => bosun_store::FlowSort::parse(s).ok_or_else(|| {
+            reject(
+                StatusCode::BAD_REQUEST,
+                "sort: expects id, time, method, host, path, status, size, duration or mime",
+            )
+        })?,
+    };
     let filter = FlowFilter {
+        sort,
+        ascending: q.asc,
+        offset: q.offset,
         query,
         text: q.text,
         host: q.host,
@@ -556,6 +575,40 @@ pub async fn annotate_flow(
     } else {
         reject(StatusCode::NOT_FOUND, "no such flow")
     })
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ChangeTags {
+    ids: Vec<FlowId>,
+    #[serde(default)]
+    add: Vec<String>,
+    #[serde(default)]
+    remove: Vec<String>,
+}
+
+const MAX_TAG_CHANGE_IDS: usize = 5_000;
+
+/// Add and remove tags on many flows at once. Returns how many flows changed.
+pub async fn change_tags(State(st): State<AppState>, caller: Caller, Json(b): Json<ChangeTags>) -> R {
+    caller.require(Role::Tester)?;
+    let bad = |t: &String| t.is_empty() || t.len() > 64 || t.chars().any(char::is_control);
+    if b.ids.is_empty() || b.ids.len() > MAX_TAG_CHANGE_IDS {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "ids: between 1 and 5000 flows at a time",
+        ));
+    }
+    if b.add.len() > 32 || b.remove.len() > 32 || b.add.iter().chain(&b.remove).any(bad) {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "tags: at most 32 of 1 to 64 characters, without control characters",
+        ));
+    }
+    let p = st.project();
+    let changed = blocking(move || p.change_tags(&b.ids, &b.add, &b.remove, 32))
+        .await?
+        .map_err(internal)?;
+    Ok(Json(serde_json::json!({ "changed": changed })).into_response())
 }
 
 #[derive(Deserialize)]

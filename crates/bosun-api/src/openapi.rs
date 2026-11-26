@@ -17,7 +17,7 @@ use bosun_proxy::{ProxyEvent, ProxyStats};
 use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
 
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
-use crate::handlers::{FlowOverview, QueryCheck, SavedFilter};
+use crate::handlers::{ChangeTags, FlowOverview, QueryCheck, SavedFilter};
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
 use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
 use bosun_proxy::rules::RuleSpec as MatchRule;
@@ -52,6 +52,10 @@ pub struct SsoInfo {
 #[derive(ToSchema, Serialize)]
 pub struct Deleted {
     pub deleted: u64,
+}
+#[derive(ToSchema, Serialize)]
+pub struct ChangedCount {
+    pub changed: u64,
 }
 #[derive(ToSchema, Serialize)]
 pub struct Forwarded {
@@ -174,11 +178,14 @@ fn sso_config() {}
 #[utoipa::path(post, path = "/auth/password", operation_id = "change_password", tag = "session", description = "Change your own password. Needs the viewer role or above.", request_body = PasswordBody, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn change_password() {}
 
-#[utoipa::path(get, path = "/flows", operation_id = "list_flows", tag = "history", description = "List recorded flows, newest first. Needs the viewer role or above.", params(("text" = Option<String>, Query), ("host" = Option<String>, Query), ("methods" = Option<String>, Query), ("status_min" = Option<i64>, Query), ("status_max" = Option<i64>, Query), ("in_scope_only" = Option<bool>, Query), ("source" = Option<String>, Query), ("hide_ext" = Option<String>, Query), ("before" = Option<i64>, Query), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("q" = Option<String>, Query, description = "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.")), responses((status = 200, description = "OK", body = Vec<FlowSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+#[utoipa::path(get, path = "/flows", operation_id = "list_flows", tag = "history", description = "List recorded flows, newest first unless sorted. Needs the viewer role or above.", params(("text" = Option<String>, Query), ("host" = Option<String>, Query), ("methods" = Option<String>, Query), ("status_min" = Option<i64>, Query), ("status_max" = Option<i64>, Query), ("in_scope_only" = Option<bool>, Query), ("source" = Option<String>, Query), ("hide_ext" = Option<String>, Query), ("before" = Option<i64>, Query), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("sort" = Option<String>, Query, description = "id (default), time, method, host, path, status, size, duration or mime. Ties break on the id."), ("asc" = Option<bool>, Query, description = "Oldest or smallest first."), ("offset" = Option<i64>, Query, description = "Rows to skip, for paging a list sorted by something other than id."), ("q" = Option<String>, Query, description = "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.")), responses((status = 200, description = "OK", body = Vec<FlowSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn list_flows() {}
 
 #[utoipa::path(get, path = "/flows/query", operation_id = "check_flow_query", tag = "history", description = "Check a history query without running it: the recognised terms with their positions, and every mistake. Needs the viewer role or above.", params(("q" = Option<String>, Query)), responses((status = 200, description = "OK", body = QueryCheck), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn check_flow_query() {}
+
+#[utoipa::path(post, path = "/flows/tags", operation_id = "change_tags", tag = "history", description = "Add and remove tags on many flows in one step (tags compare without regard to case; a flow keeps at most 32). Answers how many flows changed. Needs the tester role or above.", request_body = ChangeTags, responses((status = 200, description = "OK", body = ChangedCount), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn change_tags() {}
 
 #[utoipa::path(get, path = "/saved-filters", operation_id = "get_saved_filters", tag = "history", description = "The project's saved history filters. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<SavedFilter>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn get_saved_filters() {}
@@ -341,8 +348,8 @@ fn put_repeater_tabs() {}
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, check_flow_query, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
-    components(schemas(QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
+    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, check_flow_query, change_tags, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    components(schemas(ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
     tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
@@ -368,6 +375,7 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/auth/password"),
     ("get", "/flows"),
     ("get", "/flows/query"),
+    ("post", "/flows/tags"),
     ("get", "/saved-filters"),
     ("put", "/saved-filters"),
     ("delete", "/flows"),

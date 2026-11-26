@@ -120,6 +120,15 @@ pub struct FlowQuery {
     pub after: Option<FlowId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// `id` (the default), `time`, `method`, `host`, `path`, `status`, `size`, `duration` or `mime`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+    /// Oldest or smallest first.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub asc: bool,
+    /// Rows to skip, for paging a list sorted by something other than the id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
     /// A history query, such as `host:example.com status:4xx -ext:png login`. A mistake in it is an error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,

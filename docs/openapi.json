@@ -930,7 +930,7 @@
         "tags": [
           "history"
         ],
-        "description": "List recorded flows, newest first. Needs the viewer role or above.",
+        "description": "List recorded flows, newest first unless sorted. Needs the viewer role or above.",
         "operationId": "list_flows",
         "parameters": [
           {
@@ -1020,6 +1020,34 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "id (default), time, method, host, path, status, size, duration or mime. Ties break on the id.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "asc",
+            "in": "query",
+            "description": "Oldest or smallest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip, for paging a list sorted by something other than id.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1186,6 +1214,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/QueryCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/tags": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "description": "Add and remove tags on many flows in one step (tags compare without regard to case; a flow keeps at most 32). Answers how many flows changed. Needs the tester role or above.",
+        "operationId": "change_tags",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeTags"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangedCount"
                 }
               }
             }
@@ -4752,6 +4851,45 @@
           },
           "spki_sha256": {
             "type": "string"
+          }
+        }
+      },
+      "ChangeTags": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "add": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/i64"
+            }
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ChangedCount": {
+        "type": "object",
+        "required": [
+          "changed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

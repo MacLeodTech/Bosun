@@ -268,6 +268,21 @@ impl Client {
             .await
     }
 
+    /// Add and remove tags on many flows at once; returns how many flows changed.
+    pub async fn change_tags(&self, ids: &[FlowId], add: &[&str], remove: &[&str]) -> Result<u64> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            changed: u64,
+        }
+        let r: R = self
+            .json(
+                self.req(Method::POST, "/flows/tags")
+                    .json(&json!({ "ids": ids, "add": add, "remove": remove })),
+            )
+            .await?;
+        Ok(r.changed)
+    }
+
     /// Delete flows by id; returns how many were removed.
     pub async fn delete_flows(&self, ids: &[FlowId]) -> Result<u64> {
         #[derive(serde::Deserialize)]

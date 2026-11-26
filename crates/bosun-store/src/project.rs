@@ -59,7 +59,55 @@ pub struct NewWsMessage {
     pub truncated: bool,
 }
 
-/// History filter. Every field is optional; results are newest first.
+/// What the history list is ordered by. Ties break on the id, in the same direction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowSort {
+    #[default]
+    Id,
+    Time,
+    Method,
+    Host,
+    Path,
+    Status,
+    Size,
+    Duration,
+    Mime,
+}
+
+impl FlowSort {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "id" => Self::Id,
+            "time" => Self::Time,
+            "method" => Self::Method,
+            "host" => Self::Host,
+            "path" => Self::Path,
+            "status" => Self::Status,
+            "size" => Self::Size,
+            "duration" => Self::Duration,
+            "mime" => Self::Mime,
+            _ => return None,
+        })
+    }
+
+    /// The column, from a fixed list: never text from a caller.
+    fn column(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Time => "started_ms",
+            Self::Method => "method",
+            Self::Host => "host",
+            Self::Path => "path",
+            Self::Status => "status",
+            Self::Size => "response_len",
+            Self::Duration => "duration_ms",
+            Self::Mime => "mime",
+        }
+    }
+}
+
+/// History filter. Every field is optional; results are newest first unless `sort` says otherwise.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlowFilter {
     /// Full-text (substring) search over the request line, headers and decoded text bodies.
@@ -78,6 +126,15 @@ pub struct FlowFilter {
     /// Only flows with an id above this (for polling for new ones).
     pub after_id: Option<FlowId>,
     pub limit: Option<u32>,
+    /// The order of the results. The default is the id, newest first.
+    #[serde(default)]
+    pub sort: FlowSort,
+    /// Oldest or smallest first.
+    #[serde(default)]
+    pub ascending: bool,
+    /// Rows to skip, for paging through a sorted list (the id order pages with `before_id`).
+    #[serde(default)]
+    pub offset: Option<u32>,
     /// A parsed history query (see [`crate::query`]), combined with the fields above by `and`.
     #[serde(default)]
     pub query: Option<crate::query::Expr>,
@@ -623,8 +680,19 @@ impl Project {
             sql.push_str(" AND id > ?");
             args.push(V::Integer(a));
         }
-        sql.push_str(" ORDER BY id DESC LIMIT ?");
+        let dir = if f.ascending { "ASC" } else { "DESC" };
+        // Missing values (no response yet) go last in either direction.
+        let col = f.sort.column();
+        if f.sort == FlowSort::Id {
+            sql.push_str(&format!(" ORDER BY id {dir} LIMIT ?"));
+        } else {
+            sql.push_str(&format!(" ORDER BY {col} IS NULL, {col} {dir}, id {dir} LIMIT ?"));
+        }
         args.push(V::Integer(f.limit.unwrap_or(200).clamp(1, 5000).into()));
+        if let Some(o) = f.offset.filter(|o| *o > 0) {
+            sql.push_str(" OFFSET ?");
+            args.push(V::Integer(o.into()));
+        }
         let mut conn = self.db.read()?;
         // A query may not hold the connection for long: past the deadline SQLite stops it with an error.
         let deadline = std::time::Instant::now() + QUERY_TIME;
@@ -720,6 +788,48 @@ impl Project {
             n = conn.execute("UPDATE flows SET note = ?1 WHERE id = ?2", params![note, id])?;
         }
         Ok(n > 0)
+    }
+
+    /// Add and remove tags on many flows in one transaction. Tags compare without regard to case; a flow keeps at
+    /// most `max_tags` (extra additions are dropped). Returns how many flows changed.
+    pub fn change_tags(
+        &self,
+        ids: &[FlowId],
+        add: &[String],
+        remove: &[String],
+        max_tags: usize,
+    ) -> Result<usize, StoreError> {
+        let mut conn = self.db.write();
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        for id in ids {
+            let Some(old): Option<String> = tx
+                .query_row("SELECT tags FROM flows WHERE id = ?1", [id], |r| r.get(0))
+                .optional()?
+            else {
+                continue;
+            };
+            let old: Vec<String> = serde_json::from_str(&old).unwrap_or_default();
+            let mut next: Vec<String> = old
+                .iter()
+                .filter(|t| !remove.iter().any(|r| r.eq_ignore_ascii_case(t)))
+                .cloned()
+                .collect();
+            for a in add {
+                if next.len() < max_tags && !next.iter().any(|t| t.eq_ignore_ascii_case(a)) {
+                    next.push(a.clone());
+                }
+            }
+            if next != old {
+                tx.execute(
+                    "UPDATE flows SET tags = ?1 WHERE id = ?2",
+                    params![serde_json::to_string(&next).map_err(StoreError::Json)?, id],
+                )?;
+                changed += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// Delete flows (and blobs nothing refers to any more).
@@ -1697,6 +1807,32 @@ mod tests {
             })
             .unwrap();
         list.into_iter().map(|f| f.path).collect()
+    }
+
+    #[test]
+    fn tags_change_in_bulk_without_case_duplicates_and_within_the_cap() {
+        let p = Project::open_in_memory().unwrap();
+        let flows: Vec<_> = (0..3)
+            .map(|i| flow(&p, "a.test", &format!("/{i}"), 200, "x"))
+            .collect();
+        p.write_batch(&flows, &[]).unwrap();
+        let ids: Vec<_> = flows.iter().map(|f| f.id).collect();
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(p.change_tags(&ids, &s(&["Review", "review"]), &[], 4).unwrap(), 3);
+        let tags = |id| p.summaries(&[id]).unwrap()[0].tags.clone();
+        assert_eq!(tags(ids[0]), ["Review"], "one tag, whatever the case");
+        // Adding again changes nothing; removing is case-insensitive; the cap holds.
+        assert_eq!(p.change_tags(&ids, &s(&["REVIEW"]), &[], 4).unwrap(), 0);
+        assert_eq!(
+            p.change_tags(&ids[..1], &s(&["a", "b", "c", "d"]), &[], 4)
+                .unwrap(),
+            1
+        );
+        assert_eq!(tags(ids[0]), ["Review", "a", "b", "c"]);
+        assert_eq!(p.change_tags(&ids, &[], &s(&["review"]), 4).unwrap(), 3);
+        assert_eq!(tags(ids[1]), Vec::<String>::new());
+        // Ids that do not exist are skipped.
+        assert_eq!(p.change_tags(&[9999], &s(&["x"]), &[], 4).unwrap(), 0);
     }
 
     #[test]

@@ -249,7 +249,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description List recorded flows, newest first. Needs the viewer role or above. */
+        /** @description List recorded flows, newest first unless sorted. Needs the viewer role or above. */
         get: operations["list_flows"];
         put?: never;
         post?: never;
@@ -271,6 +271,23 @@ export interface paths {
         get: operations["check_flow_query"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flows/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Add and remove tags on many flows in one step (tags compare without regard to case; a flow keeps at most 32). Answers how many flows changed. Needs the tester role or above. */
+        post: operations["change_tags"];
         delete?: never;
         options?: never;
         head?: never;
@@ -948,6 +965,15 @@ export interface components {
             fingerprint_sha256: string;
             pem: string;
             spki_sha256: string;
+        };
+        ChangeTags: {
+            add?: string[];
+            ids: components["schemas"]["i64"][];
+            remove?: string[];
+        };
+        ChangedCount: {
+            /** Format: int64 */
+            changed: number;
         };
         /** @description The project that is open. */
         CurrentProject: {
@@ -2428,6 +2454,12 @@ export interface operations {
                 before?: number;
                 after?: number;
                 limit?: number;
+                /** @description id (default), time, method, host, path, status, size, duration or mime. Ties break on the id. */
+                sort?: string;
+                /** @description Oldest or smallest first. */
+                asc?: boolean;
+                /** @description Rows to skip, for paging a list sorted by something other than id. */
+                offset?: number;
                 /** @description A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400. */
                 q?: string;
             };
@@ -2562,6 +2594,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueryCheck"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    change_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeTags"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangedCount"];
                 };
             };
             /** @description Bad request */

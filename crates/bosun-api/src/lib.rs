@@ -358,6 +358,7 @@ pub fn router(st: AppState) -> Router {
         .route("/auth/password", post(auth::change_password))
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
         .route("/flows/query", get(h::check_flow_query))
+        .route("/flows/tags", post(h::change_tags))
         .route(
             "/saved-filters",
             get(h::get_saved_filters).put(h::put_saved_filters),

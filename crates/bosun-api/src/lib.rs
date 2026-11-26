@@ -359,6 +359,11 @@ pub fn router(st: AppState) -> Router {
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
         .route("/flows/query", get(h::check_flow_query))
         .route("/flows/tags", post(h::change_tags))
+        .route("/organizer", get(h::list_organizer).post(h::add_to_organizer))
+        .route(
+            "/organizer/{id}",
+            axum::routing::patch(h::update_organizer_item).delete(h::delete_organizer_item),
+        )
         .route(
             "/saved-filters",
             get(h::get_saved_filters).put(h::put_saved_filters),

@@ -267,6 +267,55 @@ async fn tags_change_in_bulk_for_testers_only() {
 }
 
 #[tokio::test]
+async fn the_organizer_keeps_requests_for_follow_up() {
+    use bosun_client::OrganizerStatus;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/a", "Content-Type: text/plain\r\n", b"1", None);
+    let b = recorded(&s, "/b", "Content-Type: text/plain\r\n", b"2", None);
+    assert!(c.organizer().await.unwrap().is_empty());
+    assert_eq!(c.add_to_organizer(&[a, b, a]).await.unwrap(), 2);
+    assert_eq!(c.add_to_organizer(&[a]).await.unwrap(), 0);
+    let list = c.organizer().await.unwrap();
+    assert_eq!(list.iter().map(|i| i.flow_id).collect::<Vec<_>>(), [b, a]);
+    let id = list[0].id;
+    c.update_organizer_item(id, Some(OrganizerStatus::Done), Some("reported"))
+        .await
+        .unwrap();
+    let item = &c.organizer().await.unwrap()[0];
+    assert_eq!(
+        (item.status, item.note.as_str()),
+        (OrganizerStatus::Done, "reported")
+    );
+    assert!(
+        c.update_organizer_item(9999, Some(OrganizerStatus::Done), None)
+            .await
+            .is_err()
+    );
+    assert!(
+        c.update_organizer_item(id, None, Some(&"x".repeat(10_001)))
+            .await
+            .is_err()
+    );
+    // Nothing to add, or far too much, is refused; deleting the flow takes its item along.
+    assert!(c.add_to_organizer(&[]).await.is_err());
+    assert_eq!(c.delete_flows(&[b]).await.unwrap(), 1);
+    assert_eq!(c.organizer().await.unwrap().len(), 1);
+    c.delete_organizer_item(c.organizer().await.unwrap()[0].id)
+        .await
+        .unwrap();
+    assert!(c.organizer().await.unwrap().is_empty());
+    assert!(
+        Client::new(url(&s))
+            .unwrap()
+            .add_to_organizer(&[a])
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}
+
+#[tokio::test]
 async fn saved_filters_are_kept_per_project_and_must_be_valid() {
     use bosun_client::SavedFilter;
     let s = stack(true).await;
@@ -715,6 +764,10 @@ fn the_client_covers_every_documented_operation() {
         ("put", "/saved-filters", "put_saved_filters"),
         ("delete", "/flows", "delete_flows"),
         ("post", "/flows/tags", "change_tags"),
+        ("get", "/organizer", "organizer"),
+        ("post", "/organizer", "add_to_organizer"),
+        ("patch", "/organizer/{id}", "update_organizer_item"),
+        ("delete", "/organizer/{id}", "delete_organizer_item"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),
         ("get", "/flows/{id}/ws", "ws_messages"),

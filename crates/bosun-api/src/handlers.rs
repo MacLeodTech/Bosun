@@ -229,6 +229,83 @@ pub async fn put_saved_filters(
     Ok(Json(list).into_response())
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+pub async fn list_organizer(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    let p = st.project();
+    let items = blocking(move || p.organizer_list()).await?.map_err(internal)?;
+    Ok(Json(items).into_response())
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct OrganizerAdd {
+    flow_ids: Vec<FlowId>,
+}
+
+/// Keep requests for follow-up. Answers how many were new.
+pub async fn add_to_organizer(State(st): State<AppState>, caller: Caller, Json(b): Json<OrganizerAdd>) -> R {
+    caller.require(Role::Tester)?;
+    if b.flow_ids.is_empty() || b.flow_ids.len() > 1_000 {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "flow_ids: between 1 and 1000 requests at a time",
+        ));
+    }
+    let p = st.project();
+    let added = blocking(move || p.organizer_add(&b.flow_ids, now_ms()))
+        .await?
+        .map_err(internal)?;
+    Ok(Json(serde_json::json!({ "added": added })).into_response())
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct OrganizerChange {
+    status: Option<bosun_store::OrganizerStatus>,
+    note: Option<String>,
+}
+
+pub async fn update_organizer_item(
+    State(st): State<AppState>,
+    caller: Caller,
+    Path(id): Path<i64>,
+    Json(b): Json<OrganizerChange>,
+) -> R {
+    caller.require(Role::Tester)?;
+    if b.note
+        .as_ref()
+        .is_some_and(|n| n.len() > bosun_store::MAX_ORGANIZER_NOTE)
+    {
+        return Err(reject(StatusCode::BAD_REQUEST, "note: too long"));
+    }
+    let p = st.project();
+    let found = blocking(move || p.organizer_update(id, b.status, b.note.as_deref(), now_ms()))
+        .await?
+        .map_err(internal)?;
+    Ok(if found {
+        empty(StatusCode::NO_CONTENT)
+    } else {
+        reject(StatusCode::NOT_FOUND, "no such item")
+    })
+}
+
+pub async fn delete_organizer_item(State(st): State<AppState>, caller: Caller, Path(id): Path<i64>) -> R {
+    caller.require(Role::Tester)?;
+    let p = st.project();
+    let found = blocking(move || p.organizer_delete(id))
+        .await?
+        .map_err(internal)?;
+    Ok(if found {
+        empty(StatusCode::NO_CONTENT)
+    } else {
+        reject(StatusCode::NOT_FOUND, "no such item")
+    })
+}
+
 /// A flow without its bodies: summary, each message's header block and size. The bodies come from the
 /// `/flows/{id}/{part}/body` endpoints, a piece at a time.
 #[derive(Serialize, utoipa::ToSchema)]

@@ -205,3 +205,14 @@ export async function sendToComparer(id: number, part: 'request' | 'response', s
     return false;
   }
 }
+
+/** Keep requests in the Organizer for follow-up. */
+export async function saveToOrganizer(ids: number[]): Promise<void> {
+  try {
+    const r = await api.post<{ added: number }>('/organizer', { flow_ids: ids.slice(0, 1000) });
+    inbox.organizerTick++;
+    say(r.added ? `Saved ${r.added} request${r.added === 1 ? '' : 's'} to the Organizer.` : 'Already in the Organizer.');
+  } catch (e) {
+    fail(e);
+  }
+}

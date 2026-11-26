@@ -107,6 +107,53 @@ impl FlowSort {
     }
 }
 
+/// Where a saved request stands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizerStatus {
+    #[default]
+    Todo,
+    InProgress,
+    Done,
+    Ignored,
+}
+
+impl OrganizerStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::InProgress => "in_progress",
+            Self::Done => "done",
+            Self::Ignored => "ignored",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        match s {
+            "in_progress" => Self::InProgress,
+            "done" => Self::Done,
+            "ignored" => Self::Ignored,
+            _ => Self::Todo,
+        }
+    }
+}
+
+/// A request kept in the Organizer, with the summary of the flow it points at.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct OrganizerItem {
+    pub id: i64,
+    pub flow_id: FlowId,
+    pub status: OrganizerStatus,
+    pub note: String,
+    pub added_ms: i64,
+    pub updated_ms: i64,
+    pub flow: FlowSummary,
+}
+
+/// The most items the Organizer lists, and the longest note.
+pub const MAX_ORGANIZER_ITEMS: usize = 5_000;
+pub const MAX_ORGANIZER_NOTE: usize = 10_000;
+
 /// History filter. Every field is optional; results are newest first unless `sort` says otherwise.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlowFilter {
@@ -235,6 +282,22 @@ const MIGRATIONS: &[migrate::Migration] = &[
             INSERT INTO blobs_v2 (hash, size, data) SELECT hash, size, data FROM blobs;
             DROP TABLE blobs;
             ALTER TABLE blobs_v2 RENAME TO blobs;
+        "#,
+    },
+    migrate::Migration {
+        version: 3,
+        rebuild: false,
+        what: "the Organizer: requests kept for follow-up, with a status and a note",
+        // One row per flow. No foreign key (the store does not switch them on): deleting a flow deletes its item.
+        sql: r#"
+            CREATE TABLE organizer (
+                id INTEGER PRIMARY KEY,
+                flow_id INTEGER NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'todo',
+                note TEXT NOT NULL DEFAULT '',
+                added_ms INTEGER NOT NULL,
+                updated_ms INTEGER NOT NULL
+            );
         "#,
     },
 ];
@@ -832,6 +895,96 @@ impl Project {
         Ok(changed)
     }
 
+    /// Keep these flows in the Organizer (ones already there are left as they are). Returns how many were added.
+    pub fn organizer_add(&self, ids: &[FlowId], now_ms: i64) -> Result<usize, StoreError> {
+        let mut conn = self.db.write();
+        let tx = conn.transaction()?;
+        let mut room =
+            MAX_ORGANIZER_ITEMS.saturating_sub(
+                tx.query_row("SELECT count(*) FROM organizer", [], |r| r.get::<_, i64>(0))? as usize,
+            );
+        let mut added = 0;
+        for id in ids {
+            if room == 0 {
+                break;
+            }
+            let n = tx.execute(
+                "INSERT INTO organizer (flow_id, added_ms, updated_ms)
+                 SELECT id, ?2, ?2 FROM flows WHERE id = ?1
+                 ON CONFLICT(flow_id) DO NOTHING",
+                params![id, now_ms],
+            )?;
+            added += n;
+            room -= n;
+        }
+        tx.commit()?;
+        Ok(added)
+    }
+
+    /// Newest first.
+    pub fn organizer_list(&self) -> Result<Vec<OrganizerItem>, StoreError> {
+        let rows: Vec<(i64, FlowId, String, String, i64, i64)> = {
+            let conn = self.db.read()?;
+            let mut stmt = conn.prepare(
+                "SELECT id, flow_id, status, note, added_ms, updated_ms FROM organizer ORDER BY id DESC LIMIT ?1",
+            )?;
+            let it = stmt.query_map([MAX_ORGANIZER_ITEMS as i64], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })?;
+            it.collect::<Result<_, _>>()?
+        };
+        let ids: Vec<FlowId> = rows.iter().map(|r| r.1).collect();
+        let flows: std::collections::HashMap<FlowId, FlowSummary> =
+            self.summaries(&ids)?.into_iter().map(|f| (f.id, f)).collect();
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, flow_id, status, note, added_ms, updated_ms)| {
+                Some(OrganizerItem {
+                    id,
+                    flow_id,
+                    status: OrganizerStatus::parse(&status),
+                    note,
+                    added_ms,
+                    updated_ms,
+                    flow: flows.get(&flow_id)?.clone(),
+                })
+            })
+            .collect())
+    }
+
+    /// Change an item's status and/or note. False if there is no such item.
+    pub fn organizer_update(
+        &self,
+        id: i64,
+        status: Option<OrganizerStatus>,
+        note: Option<&str>,
+        now_ms: i64,
+    ) -> Result<bool, StoreError> {
+        let conn = self.db.write();
+        let mut n = 0;
+        if let Some(s) = status {
+            n = conn.execute(
+                "UPDATE organizer SET status = ?1, updated_ms = ?2 WHERE id = ?3",
+                params![s.as_str(), now_ms, id],
+            )?;
+        }
+        if let Some(note) = note {
+            n = conn.execute(
+                "UPDATE organizer SET note = ?1, updated_ms = ?2 WHERE id = ?3",
+                params![note, now_ms, id],
+            )?;
+        }
+        Ok(n > 0)
+    }
+
+    pub fn organizer_delete(&self, id: i64) -> Result<bool, StoreError> {
+        Ok(self
+            .db
+            .write()
+            .execute("DELETE FROM organizer WHERE id = ?1", [id])?
+            > 0)
+    }
+
     /// Delete flows (and blobs nothing refers to any more).
     pub fn delete_flows(&self, ids: &[FlowId]) -> Result<usize, StoreError> {
         let mut conn = self.db.write();
@@ -839,6 +992,7 @@ impl Project {
         let mut n = 0;
         for id in ids {
             tx.execute("DELETE FROM flow_text WHERE rowid = ?1", [id])?;
+            tx.execute("DELETE FROM organizer WHERE flow_id = ?1", [id])?;
             n += tx.execute("DELETE FROM flows WHERE id = ?1", [id])?;
         }
         tx.execute(
@@ -1807,6 +1961,48 @@ mod tests {
             })
             .unwrap();
         list.into_iter().map(|f| f.path).collect()
+    }
+
+    #[test]
+    fn the_organizer_keeps_requests_with_a_status_and_a_note() {
+        let p = Project::open_in_memory().unwrap();
+        let flows: Vec<_> = (0..3)
+            .map(|i| flow(&p, "a.test", &format!("/{i}"), 200, "x"))
+            .collect();
+        p.write_batch(&flows, &[]).unwrap();
+        let ids: Vec<_> = flows.iter().map(|f| f.id).collect();
+        // Adding twice keeps one item per flow; an unknown flow is not added.
+        assert_eq!(p.organizer_add(&[ids[0], ids[1], ids[0], 9999], 5).unwrap(), 2);
+        assert_eq!(p.organizer_add(&[ids[0]], 6).unwrap(), 0);
+        let list = p.organizer_list().unwrap();
+        assert_eq!(
+            list.iter().map(|i| i.flow.path.as_str()).collect::<Vec<_>>(),
+            ["/1", "/0"]
+        );
+        assert!(
+            list.iter()
+                .all(|i| i.status == OrganizerStatus::Todo && i.note.is_empty())
+        );
+        let id = list[1].id;
+        assert!(
+            p.organizer_update(id, Some(OrganizerStatus::InProgress), Some("check the cookie"), 9)
+                .unwrap()
+        );
+        assert!(
+            !p.organizer_update(12345, Some(OrganizerStatus::Done), None, 9)
+                .unwrap()
+        );
+        let item = &p.organizer_list().unwrap()[1];
+        assert_eq!(
+            (item.status, item.note.as_str(), item.updated_ms),
+            (OrganizerStatus::InProgress, "check the cookie", 9)
+        );
+        // Deleting the flow takes its item with it; deleting an item leaves the flow.
+        p.delete_flows(&[ids[0]]).unwrap();
+        assert_eq!(p.organizer_list().unwrap().len(), 1);
+        assert!(p.organizer_delete(p.organizer_list().unwrap()[0].id).unwrap());
+        assert!(p.organizer_list().unwrap().is_empty());
+        assert_eq!(p.summaries(&[ids[1]]).unwrap().len(), 1);
     }
 
     #[test]

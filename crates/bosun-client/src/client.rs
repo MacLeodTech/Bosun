@@ -283,6 +283,45 @@ impl Client {
         Ok(r.changed)
     }
 
+    // --- organizer -----------------------------------------------------------------------------------------
+
+    pub async fn organizer(&self) -> Result<Vec<OrganizerItem>> {
+        self.json(self.req(Method::GET, "/organizer")).await
+    }
+
+    /// Keep requests for follow-up; returns how many were new.
+    pub async fn add_to_organizer(&self, flow_ids: &[FlowId]) -> Result<u64> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            added: u64,
+        }
+        let r: R = self
+            .json(
+                self.req(Method::POST, "/organizer")
+                    .json(&json!({ "flow_ids": flow_ids })),
+            )
+            .await?;
+        Ok(r.added)
+    }
+
+    pub async fn update_organizer_item(
+        &self,
+        id: i64,
+        status: Option<OrganizerStatus>,
+        note: Option<&str>,
+    ) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/organizer/{id}"))
+                .json(&json!({ "status": status, "note": note })),
+        )
+        .await
+    }
+
+    pub async fn delete_organizer_item(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/organizer/{id}")))
+            .await
+    }
+
     /// Delete flows by id; returns how many were removed.
     pub async fn delete_flows(&self, ids: &[FlowId]) -> Result<u64> {
         #[derive(serde::Deserialize)]

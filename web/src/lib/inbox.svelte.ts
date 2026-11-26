@@ -5,6 +5,9 @@ class Inbox {
   decoder = $state<{ text: string } | null>(null);
   comparer = $state<{ a?: string; b?: string } | null>(null);
 
+  /** Bumped when requests were saved to the Organizer, so its panel reloads. */
+  organizerTick = $state(0);
+
   toDecoder(text: string) {
     this.decoder = { text };
   }

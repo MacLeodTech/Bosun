@@ -813,6 +813,37 @@ test('send to: a response body goes to the Decoder, and a request and a response
   await expect(page.getByLabel('Right side')).toHaveValue(/^HTTP\/1\.1 200/);
 });
 
+test('organizer: a request is saved for follow-up with a status and a note, and both survive a reload', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  await page.locator('.row', { hasText: '/hello-history' }).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Organizer', exact: true }).click();
+  await expect(page.getByText('Saved 1 request to the Organizer.')).toBeVisible();
+
+  await page.getByRole('navigation').getByRole('button', { name: 'Organizer' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Organizer', exact: true });
+  const row = panel.getByRole('row', { name: /hello-history/ });
+  await expect(row).toBeVisible();
+  await row.getByRole('combobox', { name: /Status of request/ }).selectOption('in_progress');
+  await row.getByLabel(/Note for request/).fill('check the cache headers');
+  await row.getByLabel(/Note for request/).blur();
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'Organizer' }).click();
+  const again = page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByRole('row', { name: /hello-history/ });
+  await expect(again.getByRole('combobox', { name: /Status of request/ })).toHaveValue('in_progress');
+  await expect(again.getByLabel(/Note for request/)).toHaveValue('check the cache headers');
+
+  // The status filter, then Remove (the request stays in the history).
+  await page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByLabel('Show').selectOption('done');
+  await expect(page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByText('Nothing is done.')).toBeVisible();
+  await page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByLabel('Show').selectOption('all');
+  await again.getByRole('button', { name: /Remove request/ }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByText('Nothing saved yet.')).toBeVisible();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
+});
+
 test('shortcuts: Ctrl+R sends to the Repeater without reloading, and ? lists every shortcut and any conflict', async () => {
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();

@@ -6,6 +6,7 @@ import Intercept from '../pages/Intercept.svelte';
 import Repeater from '../pages/Repeater.svelte';
 import Decoder from '../pages/Decoder.svelte';
 import Comparer from '../pages/Comparer.svelte';
+import Organizer from '../pages/Organizer.svelte';
 import Rules from '../pages/Rules.svelte';
 import Target from '../pages/Target.svelte';
 import Projects from '../pages/Projects.svelte';
@@ -26,6 +27,7 @@ export const panels: PanelDef[] = [
   { id: 'history', title: 'HTTP history', component: History },
   { id: 'flow', title: 'Request / response', component: FlowDetail },
   { id: 'repeater', title: 'Repeater', component: Repeater },
+  { id: 'organizer', title: 'Organizer', component: Organizer },
   { id: 'decoder', title: 'Decoder', component: Decoder },
   { id: 'comparer', title: 'Comparer', component: Comparer },
   { id: 'rules', title: 'Match & replace', component: Rules },

@@ -233,6 +233,7 @@
     };
     return tidyMenu([
       { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'),
+      c('flow.organize', 'Organizer'),
       c('flow.decoder.request', 'Decoder: request'), c('flow.decoder.response', 'Decoder: response'),
       c('flow.comparer.request.a', 'Comparer: request as A'), c('flow.comparer.request.b', 'Comparer: request as B'),
       c('flow.comparer.response.a', 'Comparer: response as A'), c('flow.comparer.response.b', 'Comparer: response as B'),

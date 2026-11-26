@@ -437,3 +437,26 @@ pub struct SavedFilter {
     pub name: String,
     pub query: String,
 }
+
+/// Where a request in the Organizer stands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizerStatus {
+    #[default]
+    Todo,
+    InProgress,
+    Done,
+    Ignored,
+}
+
+/// A request kept in the Organizer.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OrganizerItem {
+    pub id: i64,
+    pub flow_id: FlowId,
+    pub status: OrganizerStatus,
+    pub note: String,
+    pub added_ms: i64,
+    pub updated_ms: i64,
+    pub flow: FlowSummary,
+}

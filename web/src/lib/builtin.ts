@@ -3,7 +3,7 @@
 
 import { api } from './api';
 import { commands, type Command } from './commands.svelte';
-import { copyAsCurl, copyMessage, copyUrls, deleteFlows, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
+import { copyAsCurl, copyMessage, copyUrls, deleteFlows, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
 import { panels } from './panels';
 import { session } from './session.svelte';
 import { shell } from './shell.svelte';
@@ -124,6 +124,7 @@ export function registerBuiltins(): () => void {
         },
       })),
     ),
+    { id: 'flow.organize', title: 'Save to Organizer', group: 'Request', when: (c) => tester() && hasFlows(c), run: (c) => saveToOrganizer(c.flows) },
     { id: 'flow.copy-url', title: 'Copy URL', group: 'Request', when: hasFlows, run: (c) => copyUrls(c.flows) },
     { id: 'flow.copy-curl', title: 'Copy as cURL', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyAsCurl(c.focus!) },
     { id: 'flow.copy-request', title: 'Copy request', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyMessage(c.focus!, 'request') },

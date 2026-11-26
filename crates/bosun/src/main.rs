@@ -10,6 +10,7 @@ use bosun_store::{AppDb, Role};
 use clap::{Parser, Subcommand};
 
 mod banner;
+mod client_cmd;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -61,6 +62,74 @@ enum Cmd {
     },
     /// Print an example configuration file.
     ExampleConfig,
+    /// Sign in to an engine (local or a server) and keep an API token in a profile.
+    Login {
+        #[arg(long)]
+        server: String,
+        /// Name for the saved profile.
+        #[arg(long, default_value = "default")]
+        profile: String,
+        /// Username (asked for when omitted; the password is read from stdin).
+        #[arg(short, long)]
+        username: Option<String>,
+    },
+    /// Show the engine you are signed in to.
+    Status {
+        #[command(flatten)]
+        conn: Conn,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The Repeater: send a request again.
+    Repeater {
+        #[command(subcommand)]
+        cmd: RepeaterCmd,
+    },
+}
+
+/// Which engine a client command talks to (else `$BOSUN_SERVER`/`$BOSUN_TOKEN`, else the default profile).
+#[derive(clap::Args, Debug)]
+struct Conn {
+    #[arg(long, global = true)]
+    server: Option<String>,
+    #[arg(long, global = true)]
+    profile: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum RepeaterCmd {
+    /// Send a raw request file (or stdin) to TARGET (`https://host[:port]`) and print the response body.
+    /// The status line goes to stderr. Exit code 0 when a response arrived, 3 when the scope refused it, 4 when
+    /// nothing came back.
+    Send {
+        target: String,
+        /// The raw request; `-` or omitted reads stdin.
+        file: Option<PathBuf>,
+        #[command(flatten)]
+        conn: Conn,
+        #[arg(long)]
+        http2: bool,
+        /// Send it this many times (a group).
+        #[arg(long, default_value_t = 1)]
+        count: u32,
+        /// sequential, parallel or single-packet.
+        #[arg(long, default_value = "sequential", value_parser = ["sequential", "parallel", "single-packet"])]
+        mode: String,
+        #[arg(long)]
+        update_content_length: bool,
+        #[arg(long)]
+        verify_tls: bool,
+        #[arg(long)]
+        follow_redirects: bool,
+        /// Send the bytes as they are: no LF to CRLF.
+        #[arg(long)]
+        exact: bool,
+        /// Print the status line and headers too, as curl -i does.
+        #[arg(short = 'i', long)]
+        include: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -232,6 +301,56 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     }
                 }
             }
+        }
+        Cmd::Login {
+            server,
+            profile,
+            username,
+        } => {
+            return tokio::runtime::Runtime::new()?.block_on(client_cmd::login(&server, &profile, username));
+        }
+        Cmd::Status { conn, json } => {
+            return tokio::runtime::Runtime::new()?.block_on(client_cmd::status(
+                conn.server.as_deref(),
+                conn.profile.as_deref(),
+                json,
+            ));
+        }
+        Cmd::Repeater {
+            cmd:
+                RepeaterCmd::Send {
+                    target,
+                    file,
+                    conn,
+                    http2,
+                    count,
+                    mode,
+                    update_content_length,
+                    verify_tls,
+                    follow_redirects,
+                    exact,
+                    include,
+                    json,
+                },
+        } => {
+            let a = client_cmd::SendArgs {
+                include,
+                target,
+                file,
+                http2,
+                count,
+                mode,
+                update_content_length,
+                verify_tls,
+                follow: follow_redirects,
+                exact,
+                json_out: json,
+            };
+            return tokio::runtime::Runtime::new()?.block_on(client_cmd::repeater_send(
+                conn.server.as_deref(),
+                conn.profile.as_deref(),
+                a,
+            ));
         }
         Cmd::ExampleConfig => print!("{}", include_str!("../../../bosun.toml.example")),
     }

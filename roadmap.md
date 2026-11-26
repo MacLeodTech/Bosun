@@ -54,7 +54,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   Items left out of PR #25 are under "UI follow-ups" below.
 - **In flight:** nothing.
 - **Next, in order** (see the phase plan below):
-  1. Finish WP-41 (only `bosun repeater send` is left; it needs WP-26). Small WP-42 leftovers: MD5 and SHA-1 (new
+  1. Small WP-42 leftovers: MD5 and SHA-1 (new
      dependencies), compression encoders, and `bosun decode` (with WP-26); "Send to Decoder or Comparer" is in WP-43.
   2. **Phase 3, track A (M2):** WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
      used every day). WP-38 and WP-39 are the M1 follow-ups.
@@ -423,7 +423,9 @@ Open packages only; finished ones are in `docs/releases.md`.
   - `history list|search|show|export` (HAR and ndjson), `scope get|set|add`, `rules get|set|import`,
     `intercept on|off|queue|forward|drop`, `ca export`, `status`, `events --follow`.
   - Output as tables, `--json` or `--ndjson`; meaningful exit codes; `--quiet`.
-  - Later packages add `repeater send` (M2) and `scan` (M5).
+  - Later packages add `scan` (M5). `repeater send` is done.
+- **Progress (2026-11-25):** `login` (a token in a 0600 profiles file), `status` and `repeater send` exist. The rest
+  of the list, and the OS keychain, are open.
 - **Done when:** integration tests run each command against an engine started in the test.
 
 ### WP-27 to WP-33: performance and depth
@@ -551,7 +553,8 @@ Open packages only; finished ones are in `docs/releases.md`.
   `/repeater/settings`, the `bosun-client` methods and the Repeater page (history, diff, send groups, the out-of-scope
   toggle) and tabs saved in the project (`/repeater/tabs`, kept in the project's settings table rather than a new
   table; responses are not saved). WebSocket sends are in the API (`/repeater/ws`: raw handshake, frames with any opcode, flags and mask, a listen window; recorded as a flow with messages). The Repeater page has a WebSocket mode (a frame list per tab, the frames shown as they were sent and
-  received). **Still open:** only `bosun repeater send` (needs the client commands of WP-26).
+  received), and `bosun repeater send` sends a raw request file (with `bosun login` and `bosun status` from WP-26 as
+  its base). WP-41 is complete.
 
 #### WP-43 History, Organizer, Logger and "send to" · Phase 3 · M
 

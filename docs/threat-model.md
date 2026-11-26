@@ -233,6 +233,11 @@ This document says what is protected, from whom, and how. Code comments refer ba
   capped (very different large inputs are reported coarsely) and the work runs off the async threads. The codecs are
   in `bosun-codec` (no I/O), covered by property tests and the `codec` fuzz target. Output is data for display as text;
   the UI never renders it as HTML.
+- *The client commands (`bosun login`, `status`, `repeater send`).* They are clients of the API like any other: the
+  server checks the role, the scope gate, the audit and the recording, so the CLI adds no way around them. `login` reads
+  the password from stdin, makes a 90-day API token and signs the session out again; the token is kept in
+  `profiles.json` in the client directory, created readable by its owner only (0600 on Unix; Windows relies on the
+  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. An OS keychain is not used yet.
 - *The Repeater API (`/repeater/send`, `/repeater/ws`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
   the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
   unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a

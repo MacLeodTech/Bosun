@@ -28,6 +28,9 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
   HTTP/2 multiplexing with a single-packet batch mode, `/repeater/send` and `/repeater/settings`, the `bosun-client`
   methods, and the Repeater page. What is left is in the roadmap's WP-41 entry.
 
+- **WP-41 finished** (PRs #28, #30, and the CLI PR). Repeater tabs saved in the project, `/repeater/ws`, the page's
+  WebSocket mode, and `bosun login`, `bosun status` and `bosun repeater send FILE`.
+
 ### WP-40: the raw request engine
 
 **WP-40** `bosun-http`: the raw request engine · Phase 3 · L

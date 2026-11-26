@@ -169,6 +169,8 @@ pub struct Connector {
     route: Route,
     tls: TlsConnector,
     guard: LoopGuard,
+    /// Lower-cased target host -> server name to send instead.
+    sni: Arc<std::collections::BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for Connector {
@@ -233,7 +235,16 @@ impl Connector {
             route,
             tls: TlsConnector::from(Arc::new(client_tls(verify_tls, alpn_h2))),
             guard,
+            sni: Arc::default(),
         })
+    }
+
+    /// Send a different TLS server name (SNI) to some targets: `host -> name`, hosts matched exactly and
+    /// case-insensitively. The certificate is verified against the name sent, when verification is on.
+    #[must_use]
+    pub fn with_sni_overrides(mut self, map: &std::collections::BTreeMap<String, String>) -> Self {
+        self.sni = Arc::new(map.iter().map(|(h, n)| (h.to_ascii_lowercase(), n.clone())).collect());
+        self
     }
 
     /// Open a TCP connection to `host:port` the way every outbound connection is opened: the self-target check,
@@ -306,8 +317,9 @@ impl tower_service::Service<Uri> for Connector {
             let port = dst.port_u16().unwrap_or(if https { 443 } else { 80 });
             let (tcp, reg) = this.connect_tcp(&host, port).await?;
             let conn = if https {
-                let name =
-                    ServerName::try_from(host.trim_start_matches('[').trim_end_matches(']').to_string())?;
+                let bare = host.trim_start_matches('[').trim_end_matches(']').to_string();
+                let sni = this.sni.get(&bare.to_ascii_lowercase()).cloned().unwrap_or(bare);
+                let name = ServerName::try_from(sni)?;
                 let tls = this.tls.connect(name, tcp).await?;
                 let h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
                 Conn {

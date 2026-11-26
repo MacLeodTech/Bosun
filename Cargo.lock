@@ -821,6 +821,7 @@ dependencies = [
  "bosun-store",
  "bytes",
  "criterion",
+ "flate2",
  "futures-util",
  "http",
  "http-body",

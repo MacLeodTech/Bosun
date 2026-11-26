@@ -373,6 +373,7 @@ pub fn router(st: AppState) -> Router {
         .route("/flows/{id}/ws", get(h::ws_messages))
         .route("/flows/{id}/engage", get(engage::flow_engage))
         .route("/flows/{id}/csrf-poc", get(engage::flow_csrf_poc))
+        .route("/analysis", get(engage::host_analysis))
         .route("/flows/{id}/{part}/body", get(h::flow_body))
         .route("/sitemap", get(h::site_map))
         .route("/scope", get(h::get_scope).put(h::put_scope))

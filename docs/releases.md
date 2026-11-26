@@ -9,6 +9,18 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-45 Engagement helpers, rest** (`wp-43`, 2026-11-26). `GET /analysis?host=&port=&limit=`: the distinct endpoints and
+  parameters of one host across the history, with counts, status codes and example values. Paths fold ids into
+  `{n}`, `{uuid}` and `{hex}`, so `/users/1` and `/users/2` are one endpoint. It reads the newest 5,000 requests
+  (at most 20,000) and a request body only for methods that can carry one (up to 64 KiB). The counting is
+  `bosun_codec::engage::Analyzer` (bounded: 5,000 endpoints and 5,000 parameters, then `truncated`), covered by unit
+  tests, the API test and the `engage` fuzz target. The Host analysis panel (History menu: "Analyse this host…") has
+  a Playwright test.
+- **WP-42 leftovers** (`wp-43`, 2026-11-26). MD5 and SHA-1 (`md-5` and `sha1`, the RustCrypto crates next to the
+  existing `sha2`; `cargo deny` passes), gzip, zlib, Brotli and Zstandard compression, in the API and the Decoder panel;
+  and `bosun decode [STEPS…] [--file F] [--smart] [--list] [--limit N]`, which runs the same chain offline on stdin or
+  a file. Exit code 2 names the failed step. Not done: nothing left of WP-42.
+
 - **Recorder under bursts** (PR #32). The proxy now counts refused connections, and a test pins how the recorder
   behaves under a burst (see the PR for what the 7,000 requests a second burst showed).
 - **WP-75 History query language and saved filters** (PR #33, UI in the `wp-43` branch). The grammar is parsed in Rust
@@ -28,7 +40,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 - **WP-45 Engagement helpers, first part** (`wp-43`). `bosun_codec::engage` (comments, scripts, links, forms,
   resources, URLs, quoted paths, request parameters, the CSRF page builder; an `engage` fuzz target),
   `GET /flows/{id}/engage`, `GET /flows/{id}/csrf-poc` (an attachment with a sandboxing CSP), the Findings panel and
-  History menu items. Left: analysing a target across the whole history.
+  History menu items. Analysing a target across the whole history is above.
 
 ## Phase 3 so far (on `main`)
 
@@ -87,7 +99,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 - **Done (PR #23 and the UI PR):** the `bosun-codec` crate (URL, HTML, Base64 and Base64url, hex, gzip, deflate, brotli,
   zstd, JWT, Unicode escapes, SHA-256 and SHA-512, smart decode, word and byte diff), the `/decoder/apply`,
   `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests, the `codec` fuzz target, and the
-  Decoder and Comparer panels. **Not done:** MD5 and SHA-1, compression encoders, and a `bosun decode` command (WP-26).
+  Decoder and Comparer panels. The MD5, SHA-1, compression encoders and `bosun decode` that were left are in the track A entry above.
 
 ### WP-44: Message editor
 

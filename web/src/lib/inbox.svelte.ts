@@ -5,6 +5,9 @@ class Inbox {
   decoder = $state<{ text: string } | null>(null);
   comparer = $state<{ a?: string; b?: string } | null>(null);
 
+  /** The host the Target analysis panel should show ("Analyse this host"). */
+  analysis = $state<{ host: string; port: number } | null>(null);
+
   /** Bumped when requests were saved to the Organizer, so its panel reloads. */
   organizerTick = $state(0);
 

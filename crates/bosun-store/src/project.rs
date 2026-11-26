@@ -200,6 +200,16 @@ pub struct SiteMapEntry {
     pub in_scope: bool,
 }
 
+/// One request of a host, for the target analysis.
+#[derive(Debug, Clone)]
+pub struct HostRequest {
+    pub id: FlowId,
+    pub method: String,
+    /// Path and query as sent.
+    pub path: String,
+    pub status: Option<u16>,
+}
+
 #[derive(Debug)]
 pub struct Project {
     db: Db,
@@ -1076,6 +1086,29 @@ impl Project {
                 last_status: r.get(5)?,
                 count: r.get(6)?,
                 in_scope: r.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The newest `limit` requests to exactly this host (any port unless `port` is given), newest first.
+    pub fn host_requests(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        limit: u32,
+    ) -> Result<Vec<HostRequest>, StoreError> {
+        let conn = self.db.read()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, method, path, status FROM flows
+             WHERE host = ?1 AND (?2 IS NULL OR port = ?2) ORDER BY id DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![host.to_ascii_lowercase(), port, limit], |r| {
+            Ok(HostRequest {
+                id: r.get(0)?,
+                method: r.get(1)?,
+                path: r.get(2)?,
+                status: r.get(3)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)

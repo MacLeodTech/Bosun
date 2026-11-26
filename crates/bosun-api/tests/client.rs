@@ -422,6 +422,66 @@ async fn engagement_helpers_report_a_response_and_build_a_csrf_page() {
 }
 
 #[tokio::test]
+async fn target_analysis_lists_endpoints_and_parameters_of_a_host() {
+    use bosun_client::ParamWhere;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    for (i, q) in ["?page=1&sort=asc", "?page=2", "?page=3&sort=desc"]
+        .iter()
+        .enumerate()
+    {
+        let path = format!("/items/{}{q}", 10 + i);
+        let req = format!("GET {path} HTTP/1.1\r\nHost: a.test\r\n\r\n");
+        common::recorded_exchange(&s, "GET", &path, req.as_bytes(), "", b"", None);
+    }
+    let login = b"POST /login HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nuser=a&pass=b";
+    common::recorded_exchange(&s, "POST", "/login", login, "", b"", None);
+    let json = b"POST /api/n HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/json\r\n\r\n{\"id\":7,\"user\":{\"role\":\"x\"}}";
+    common::recorded_exchange(&s, "POST", "/api/n", json, "", b"", None);
+
+    let r = c.host_analysis("A.test", None).await.unwrap();
+    assert_eq!(
+        (r.host.as_str(), r.requests, r.capped, r.truncated),
+        ("a.test", 5, false, false)
+    );
+    let items = &r.endpoints[0];
+    assert_eq!(
+        (items.method.as_str(), items.path.as_str(), items.count),
+        ("GET", "/items/{n}", 3)
+    );
+    assert_eq!(items.params, ["page", "sort"]);
+    assert_eq!(items.statuses.len(), 1);
+    let page = r.params.iter().find(|p| p.name == "page").unwrap();
+    assert_eq!(
+        (page.location, page.count, page.endpoints, page.values.len()),
+        (ParamWhere::Query, 3, 1, 3)
+    );
+    assert!(
+        r.params
+            .iter()
+            .any(|p| p.name == "pass" && p.location == ParamWhere::Form)
+    );
+    assert!(
+        r.params
+            .iter()
+            .any(|p| p.name == "user.role" && p.location == ParamWhere::Json)
+    );
+
+    // The port narrows it; another host, or a limit, changes what is read.
+    assert_eq!(c.host_analysis("a.test", Some(443)).await.unwrap().requests, 5);
+    assert_eq!(c.host_analysis("a.test", Some(8080)).await.unwrap().requests, 0);
+    assert_eq!(c.host_analysis("b.test", None).await.unwrap().requests, 0);
+    assert!(c.host_analysis("  ", None).await.is_err());
+    let anon = reqwest::Client::new();
+    let r = anon
+        .get(format!("{}/api/v1/analysis?host=a.test", url(&s)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test]
 async fn history_bodies_annotations_and_sitemap() {
     let s = stack(true).await;
     let c = admin(&s).await;
@@ -848,6 +908,7 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/flows/{id}/ws", "ws_messages"),
         ("get", "/flows/{id}/engage", "flow_engage"),
         ("get", "/flows/{id}/csrf-poc", "flow_csrf_poc"),
+        ("get", "/analysis", "host_analysis"),
         ("get", "/flows/{id}/{part}/body", "flow_body"),
         ("get", "/sitemap", "site_map"),
         ("get", "/scope", "scope"),

@@ -505,3 +505,42 @@ pub struct EngageReport {
     pub truncated: bool,
     pub undecoded: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct StatusCount {
+    pub status: u16,
+    pub count: u32,
+}
+
+/// One endpoint of a host: a method and a path with its ids replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct EndpointStat {
+    pub method: String,
+    pub path: String,
+    pub count: u32,
+    pub statuses: Vec<StatusCount>,
+    pub params: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ParamStat {
+    pub name: String,
+    #[serde(rename = "where")]
+    pub location: ParamWhere,
+    pub count: u32,
+    pub endpoints: u32,
+    pub values: Vec<String>,
+    pub more_values: bool,
+}
+
+/// The endpoints and parameters of one host across the history (WP-45).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HostAnalysis {
+    pub host: String,
+    pub port: Option<u16>,
+    pub capped: bool,
+    pub requests: u32,
+    pub endpoints: Vec<EndpointStat>,
+    pub params: Vec<ParamStat>,
+    pub truncated: bool,
+}

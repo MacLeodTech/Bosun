@@ -32,12 +32,13 @@ is in [docs/releases.md](docs/releases.md).
 - **Repeater**: raw requests sent byte for byte over HTTP/1.1 or HTTP/2 (opt-in connection reuse, single-packet
   batches), tabs saved in the project, a WebSocket mode, a message editor, response diff. Every send goes through
   the scope gate.
-- **Decoder and Comparer**: encode, decode and hash chains, smart decode, and a diff of two items. "Send to Decoder"
+- **Decoder and Comparer**: encode, decode, compress and hash chains (MD5, SHA-1, SHA-2), smart decode, and a diff of two items. `bosun decode` runs the same chains from the command line, offline. "Send to Decoder"
   and "Send to Comparer" are in the History menu.
 - **Export**: copy as cURL (POSIX shells and PowerShell), snippets in Python, JavaScript and Go, and HAR 1.2. Cookie
   and authorization values are written as `REDACTED` unless you tick "Keep cookies and authorization values".
 - **Findings panel**: comments, scripts, links, forms, references and parameters found in a message, and a CSRF
-  proof of concept page for a request (downloaded as an attachment with a sandboxing CSP).
+  proof of concept page for a request (downloaded as an attachment with a sandboxing CSP). The **Host analysis**
+  panel counts the distinct endpoints and parameters of a host across the whole history.
 - **Target**: site map and a scope editor (include/exclude rules). Every active tool sends only to in-scope
   targets.
 - **Open browser**: launches Chromium/Chrome with its own profile, already using the proxy and trusting the CA by

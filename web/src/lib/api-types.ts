@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The distinct endpoints (ids in paths replaced by {n}, {uuid} and {hex}) and parameters of one host across the history, with counts, status codes and example values. Reads the newest 5,000 requests of the host (?limit up to 20,000); `capped` says there were more. Needs the viewer role. */
+        get: operations["host_analysis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -1117,6 +1134,17 @@ export interface components {
         };
         /** @enum {string} */
         Direction: "client_to_server" | "server_to_client";
+        EndpointStat: {
+            /** Format: int32 */
+            count: number;
+            method: string;
+            /** @description The names of the parameters seen on this endpoint (at most 100). */
+            params: string[];
+            /** @description The path without its query, with ids replaced: `/users/{n}`, `/files/{uuid}`, `/blob/{hex}`. */
+            path: string;
+            /** @description How often each response status came back (requests with no response are not listed). */
+            statuses: components["schemas"]["StatusCount"][];
+        };
         EngageReport: {
             /** @description What the response holds: comments, scripts, links, forms, resources, URLs and quoted paths. */
             findings: components["schemas"]["Finding"][];
@@ -1198,6 +1226,13 @@ export interface components {
             /** Format: int64 */
             forwarded: number;
         };
+        HostAnalysis: components["schemas"]["TargetAnalysis"] & {
+            /** @description The host has more recorded requests than were read; the newest were. */
+            capped: boolean;
+            host: string;
+            /** Format: int32 */
+            port?: number | null;
+        };
         InterceptItem: components["schemas"]["InterceptSummary"] & {
             /**
              * Format: byte
@@ -1275,7 +1310,7 @@ export interface components {
          * @description One step of a chain.
          * @enum {string}
          */
-        Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "sha256" | "sha512";
+        Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "gzip_encode" | "deflate_encode" | "brotli_encode" | "zstd_encode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "md5" | "sha1" | "sha256" | "sha512";
         OrganizerAdd: {
             flow_ids: components["schemas"]["i64"][];
         };
@@ -1304,6 +1339,24 @@ export interface components {
         Param: {
             name: string;
             value: string;
+            where: components["schemas"]["ParamWhere"];
+        };
+        ParamStat: {
+            /**
+             * Format: int32
+             * @description Requests that carried it.
+             */
+            count: number;
+            /**
+             * Format: int32
+             * @description Distinct endpoints it appeared on (counted up to 100).
+             */
+            endpoints: number;
+            /** @description More distinct values than `values` holds: likely an identifier, a token or free text, not a flag. */
+            more_values: boolean;
+            name: string;
+            /** @description The first distinct values seen. */
+            values: string[];
             where: components["schemas"]["ParamWhere"];
         };
         /** @enum {string} */
@@ -1598,6 +1651,12 @@ export interface components {
             setup_required: boolean;
             version: string;
         };
+        StatusCount: {
+            /** Format: int32 */
+            count: number;
+            /** Format: int32 */
+            status: number;
+        };
         StepError: {
             message: string;
             /** @description Which step failed (0-based). */
@@ -1635,6 +1694,18 @@ export interface components {
             next?: number;
             /** @description One object per tab (target, request text, options). Responses are not stored. */
             tabs: unknown[];
+        };
+        TargetAnalysis: {
+            /** @description Most requested first. */
+            endpoints: components["schemas"]["EndpointStat"][];
+            params: components["schemas"]["ParamStat"][];
+            /**
+             * Format: int32
+             * @description Requests analysed.
+             */
+            requests: number;
+            /** @description A limit was hit: there were more endpoints or parameters than are listed. */
+            truncated: boolean;
         };
         /** @description A recognised term, for showing as a chip: where it is in the query and what it says. */
         TermSpan: {
@@ -1774,6 +1845,60 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    host_analysis: {
+        parameters: {
+            query: {
+                /** @description Exact host name */
+                host: string;
+                /** @description Only this port */
+                port?: number;
+                /** @description How many of the newest requests to read */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostAnalysis"];
+                };
+            };
+            /** @description No host given */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     audit_log: {
         parameters: {
             query?: {

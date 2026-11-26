@@ -284,6 +284,17 @@ export async function saveToOrganizer(ids: number[]): Promise<void> {
 }
 
 /** Save a CSRF proof of concept for the request as an HTML file. It is only a download: it is never shown here. */
+/** Open the target analysis for the host (and port) of a flow. */
+export async function analyseHost(id: number): Promise<void> {
+  try {
+    const m = await fetchMeta(id);
+    inbox.analysis = { host: m.host, port: m.port };
+    workspace.open('analysis');
+  } catch (e) {
+    fail(e);
+  }
+}
+
 export async function downloadCsrfPoc(id: number, auto: boolean): Promise<void> {
   try {
     const r = await fetch(`/api/v1/flows/${id}/csrf-poc${auto ? '?auto=1' : ''}`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });

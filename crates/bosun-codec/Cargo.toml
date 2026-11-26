@@ -17,6 +17,8 @@ flate2.workspace = true
 brotli.workspace = true
 zstd.workspace = true
 sha2.workspace = true
+md-5.workspace = true
+sha1.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

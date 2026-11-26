@@ -10,6 +10,90 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/analysis": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "The distinct endpoints (ids in paths replaced by {n}, {uuid} and {hex}) and parameters of one host across the history, with counts, status codes and example values. Reads the newest 5,000 requests of the host (?limit up to 20,000); `capped` says there were more. Needs the viewer role.",
+        "operationId": "host_analysis",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "query",
+            "description": "Exact host name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "port",
+            "in": "query",
+            "description": "Only this port",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many of the newest requests to read",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostAnalysis"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No host given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/audit": {
       "get": {
         "tags": [
@@ -5562,6 +5646,44 @@
           "server_to_client"
         ]
       },
+      "EndpointStat": {
+        "type": "object",
+        "required": [
+          "method",
+          "path",
+          "count",
+          "statuses",
+          "params"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "method": {
+            "type": "string"
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the parameters seen on this endpoint (at most 100)."
+          },
+          "path": {
+            "type": "string",
+            "description": "The path without its query, with ids replaced: `/users/{n}`, `/files/{uuid}`, `/blob/{hex}`."
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusCount"
+            },
+            "description": "How often each response status came back (requests with no response are not listed)."
+          }
+        }
+      },
       "EngageReport": {
         "type": "object",
         "required": [
@@ -5851,6 +5973,37 @@
           }
         }
       },
+      "HostAnalysis": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TargetAnalysis"
+          },
+          {
+            "type": "object",
+            "required": [
+              "host",
+              "capped"
+            ],
+            "properties": {
+              "capped": {
+                "type": "boolean",
+                "description": "The host has more recorded requests than were read; the newest were."
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
       "InterceptItem": {
         "allOf": [
           {
@@ -6121,9 +6274,15 @@
           "deflate_decode",
           "brotli_decode",
           "zstd_decode",
+          "gzip_encode",
+          "deflate_encode",
+          "brotli_encode",
+          "zstd_encode",
           "jwt_decode",
           "unicode_escape",
           "unicode_unescape",
+          "md5",
+          "sha1",
           "sha256",
           "sha512"
         ]
@@ -6225,6 +6384,48 @@
           },
           "value": {
             "type": "string"
+          },
+          "where": {
+            "$ref": "#/components/schemas/ParamWhere"
+          }
+        }
+      },
+      "ParamStat": {
+        "type": "object",
+        "required": [
+          "name",
+          "where",
+          "count",
+          "endpoints",
+          "values",
+          "more_values"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests that carried it.",
+            "minimum": 0
+          },
+          "endpoints": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Distinct endpoints it appeared on (counted up to 100).",
+            "minimum": 0
+          },
+          "more_values": {
+            "type": "boolean",
+            "description": "More distinct values than `values` holds: likely an identifier, a token or free text, not a flag."
+          },
+          "name": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The first distinct values seen."
           },
           "where": {
             "$ref": "#/components/schemas/ParamWhere"
@@ -7196,6 +7397,25 @@
           }
         }
       },
+      "StatusCount": {
+        "type": "object",
+        "required": [
+          "status",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "StepError": {
         "type": "object",
         "required": [
@@ -7283,6 +7503,40 @@
             "type": "array",
             "items": {},
             "description": "One object per tab (target, request text, options). Responses are not stored."
+          }
+        }
+      },
+      "TargetAnalysis": {
+        "type": "object",
+        "required": [
+          "requests",
+          "endpoints",
+          "params",
+          "truncated"
+        ],
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointStat"
+            },
+            "description": "Most requested first."
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParamStat"
+            }
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests analysed.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "A limit was hit: there were more endpoints or parameters than are listed."
           }
         }
       },

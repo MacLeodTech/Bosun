@@ -58,8 +58,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   `wp-43` branch (WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
   merge `main` into the next branch and regenerate `docs/openapi.json` and `web/src/lib/api-types.ts` if they conflict.
 - **Next, in order** (see the phase plan below):
-  1. Small WP-42 leftovers: MD5 and SHA-1 (new dependencies), compression encoders, and `bosun decode` (with WP-26).
-  2. **Phase 3, track A (M2):** the rest of WP-43 and WP-45 (small). WP-38 and WP-39 are the M1 follow-ups.
+  1. **Phase 3, track A (M2):** only "Send to Intruder" is left of WP-43, and it waits for WP-47. WP-38 and WP-39 are the M1 follow-ups.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
      release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
      is built with Tauri for now; WP-18 (WinUI 3) is still planned.
@@ -189,14 +188,13 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-42, WP-45, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-43 | History, Organizer, Logger and "send to" (rest) | 3 | S | WP-35, WP-41 |
-| [ ] | WP-45 | Engagement helpers (rest) | 3 | S | WP-41 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
 | [ ] | WP-39 | TOTP second factor | 3 | M | WP-07 |
 | [ ] | WP-23 | Server mode in the engine | 3 | M | WP-03 |
@@ -544,16 +542,10 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 #### WP-43 History, Organizer, Logger and "send to": what is left · Phase 3 · S
 
-- **Do:** "Send to Intruder" from every message view (waits for WP-47). A separate Logger panel only if panels become
+- **Do:** "Send to Intruder" from every message view and the History menu. It needs the Intruder panel, so it waits for WP-47. A separate Logger panel only if panels become
   multi-instance (History already shows every source through the Source column and `source:`). The query bar's reuse
   for Intruder results is in WP-47.
 - **Done when:** a Playwright test sends a request to the Intruder.
-
-#### WP-45 Engagement helpers: what is left · Phase 3 · S
-
-- **Do:** analyse a target across the whole history: the distinct endpoints and parameters of a host, with counts.
-  (The per-request Findings panel, the parameter list and the CSRF proof of concept are done.)
-- **Done when:** unit tests on recorded fixtures; a Playwright test opens the analysis for a host.
 
 #### WP-46 Optional `legacy-tls` backend · Phase 4 · M
 
@@ -935,7 +927,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] "Send to Intruder" (Repeater, Comparer and Decoder are done) → **WP-43**
 - [ ] Request editor with syntax highlighting (CodeMirror 6), a hex editor, and pretty-printing of JSON, XML and
   HTML (as text, never rendered) → **WP-44**
-- [ ] Engagement helpers: analyse a target across the history (parameters and endpoints) → **WP-45**
 - [ ] The scope gate enforced for every tool request (refuse out-of-scope, a per-host rate limit, the stop switch),
   with pinned addresses: **WP-10** must land first
 - [ ] Map Local, Map Remote and throttling → **WP-76**

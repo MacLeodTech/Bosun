@@ -28,6 +28,12 @@
     { id: 'base64url_encode', label: 'Base64url encode', group: 'Encode' },
     { id: 'hex_encode', label: 'Hex encode', group: 'Encode' },
     { id: 'unicode_escape', label: 'Unicode escape', group: 'Encode' },
+    { id: 'gzip_encode', label: 'gzip compress', group: 'Encode' },
+    { id: 'deflate_encode', label: 'deflate (zlib) compress', group: 'Encode' },
+    { id: 'brotli_encode', label: 'Brotli compress', group: 'Encode' },
+    { id: 'zstd_encode', label: 'Zstandard compress', group: 'Encode' },
+    { id: 'md5', label: 'MD5', group: 'Hash' },
+    { id: 'sha1', label: 'SHA-1', group: 'Hash' },
     { id: 'sha256', label: 'SHA-256', group: 'Hash' },
     { id: 'sha512', label: 'SHA-512', group: 'Hash' },
   ];

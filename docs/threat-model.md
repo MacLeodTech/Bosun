@@ -250,6 +250,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
   capped (very different large inputs are reported coarsely) and the work runs off the async threads. The codecs are
   in `bosun-codec` (no I/O), covered by property tests and the `codec` fuzz target. Output is data for display as text;
   the UI never renders it as HTML.
+- *`bosun decode`.* The Decoder's chain on stdin or a file, in the user's own process: no engine, no network, no
+  account. Input and every step's output are capped (`--limit`, 16 MiB by default), so a decompression bomb ends the
+  chain with exit code 2. MD5 and SHA-1 are offered to match what targets compute, not for anything Bosun protects.
+- *The host analysis (`/analysis`).* Read-only on stored requests, so the viewer role is enough; it sends nothing
+  and writes nothing, so it needs no gate check or audit entry. Cost is bounded: at most 20,000 requests are read,
+  a request body only up to 64 KiB, and the result holds at most 5,000 endpoints and 5,000 parameters with a few
+  short example values each. The work runs off the async threads. Every name, path and value in the result is the
+  target's text; the UI shows it as text only, and a link back to the history only fills the filter bar.
 - *The client commands (`bosun login`, `status`, `repeater send`).* They are clients of the API like any other: the
   server checks the role, the scope gate, the audit and the recording, so the CLI adds no way around them. `login` reads
   the password from stdin, makes a 90-day API token and signs the session out again; the token is kept in

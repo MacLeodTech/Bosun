@@ -878,6 +878,32 @@ test('findings: a response is searched for scripts and resources, shown as text,
   await applyFilter('');
 });
 
+test('host analysis: the endpoints and parameters of a host are counted across the history', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  // Three requests to one endpoint with different ids, so the analysis folds them into one row.
+  for (const n of [11, 12, 13]) {
+    expect(await viaProxy(PROXY_PORT, `${TARGET}/analysis-probe/${n}?page=${n}&sort=asc`)).toMatchObject({ status: 200 });
+  }
+  await applyFilter('path:/analysis-probe');
+  const row = page.locator('.row', { hasText: '/analysis-probe/13' }).first();
+  await expect(row).toBeVisible();
+  await row.click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Analyse this host…' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Host analysis' });
+  const endpoint = panel.getByRole('table', { name: 'Endpoints' }).getByRole('row', { name: /\/analysis-probe\/\{n\}/ });
+  await expect(endpoint).toBeVisible();
+  await expect(endpoint).toContainText('GET');
+  await expect(endpoint.getByRole('cell').nth(2)).toHaveText('3');
+  await expect(endpoint).toContainText('page, sort');
+  const page_ = panel.getByRole('table', { name: 'Parameters' }).getByRole('row', { name: /^query page / });
+  await expect(page_).toContainText('11 · 12 · 13');
+  await panel.getByRole('searchbox', { name: 'Filter the analysis' }).fill('nothing-like-this');
+  await expect(panel.getByRole('table', { name: 'Endpoints' }).getByText('Nothing matches.')).toBeVisible();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+});
+
 test('organizer: a request is saved for follow-up with a status and a note, and both survive a reload', async () => {
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();

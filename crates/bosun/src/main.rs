@@ -80,6 +80,26 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Run the Decoder on a file or stdin, offline (no engine needed). The result goes to stdout.
+    ///
+    /// STEPS are Decoder operations, applied in order: url_decode, base64_decode, gzip_decode, sha256 and so on
+    /// (`--list` shows them all). With `--smart` and no steps, the layers are peeled automatically.
+    Decode {
+        /// The operations, in order.
+        steps: Vec<String>,
+        /// Read this file instead of stdin.
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Peel layers automatically (only when no steps are given).
+        #[arg(long)]
+        smart: bool,
+        /// Print the operation names and exit.
+        #[arg(long)]
+        list: bool,
+        /// Largest output of any step, in bytes.
+        #[arg(long, default_value_t = 16 << 20)]
+        limit: usize,
+    },
     /// The Repeater: send a request again.
     Repeater {
         #[command(subcommand)]
@@ -352,8 +372,70 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 a,
             ));
         }
+        Cmd::Decode {
+            steps,
+            file,
+            smart,
+            list,
+            limit,
+        } => return decode_cmd(&steps, file.as_deref(), smart, list, limit),
         Cmd::ExampleConfig => print!("{}", include_str!("../../../bosun.toml.example")),
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `bosun decode`: the Decoder's chain on stdin or a file. Exit code 0 on success, 2 on a failed step.
+fn decode_cmd(
+    steps: &[String],
+    file: Option<&std::path::Path>,
+    smart: bool,
+    list: bool,
+    limit: usize,
+) -> Result<ExitCode> {
+    use std::io::Read;
+    if list {
+        for op in bosun_codec::Op::ALL {
+            println!("{}", op.name());
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let ops = steps
+        .iter()
+        .map(|s| {
+            bosun_codec::Op::from_name(s).with_context(|| format!("unknown operation `{s}` (see --list)"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if smart && !ops.is_empty() {
+        bail!("--smart is for when no steps are given");
+    }
+    let mut input = Vec::new();
+    match file {
+        Some(p) => input = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?,
+        None => {
+            std::io::stdin()
+                .lock()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut input)?;
+        }
+    }
+    if input.len() > limit {
+        bail!("the input is larger than the {limit}-byte limit");
+    }
+    let out = if smart || ops.is_empty() {
+        let layers = bosun_codec::smart_decode(&input, limit, 16);
+        for (op, _) in &layers {
+            eprintln!("{}", op.name());
+        }
+        layers.into_iter().last().map_or(input, |(_, o)| o)
+    } else {
+        let (mut outs, err) = bosun_codec::apply_chain(&ops, &input, limit);
+        if let Some((step, e)) = err {
+            eprintln!("step {} ({}): {e}", step + 1, ops[step].name());
+            return Ok(ExitCode::from(2));
+        }
+        outs.pop().unwrap_or(input)
+    };
+    std::io::stdout().lock().write_all(&out)?;
     Ok(ExitCode::SUCCESS)
 }
 

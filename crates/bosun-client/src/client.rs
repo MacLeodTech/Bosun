@@ -366,6 +366,15 @@ impl Client {
             .await
     }
 
+    /// The distinct endpoints and parameters of a host across the history, with counts.
+    pub async fn host_analysis(&self, host: &str, port: Option<u16>) -> Result<HostAnalysis> {
+        let mut rb = self.req(Method::GET, "/analysis").query(&[("host", host)]);
+        if let Some(p) = port {
+            rb = rb.query(&[("port", p)]);
+        }
+        self.json(rb).await
+    }
+
     /// A CSRF proof of concept for the request, as HTML text.
     pub async fn flow_csrf_poc(&self, id: FlowId, auto_submit: bool) -> Result<String> {
         let mut rb = self.req(Method::GET, &format!("/flows/{id}/csrf-poc"));

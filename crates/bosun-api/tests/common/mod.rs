@@ -160,6 +160,7 @@ pub fn recorded_exchange(
                 source: FlowSource::Proxy,
                 started_ms: 1,
                 duration_ms: Some(1),
+                ttfb_ms: None,
                 scheme: Scheme::Https,
                 host: "a.test".into(),
                 port: 443,

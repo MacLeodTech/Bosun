@@ -61,6 +61,98 @@ pub struct InterceptSettings {
     pub timeout_secs: Option<u64>,
 }
 
+/// Which responses are held when response interception is on. Every condition that is set must match; an empty
+/// filter holds every response.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ResponseFilter {
+    /// Status codes or classes, such as `404`, `5xx` (any one may match). Empty: any status.
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    /// Substrings of the `Content-Type` (any one may match, case-insensitive). Empty: any type.
+    #[serde(default)]
+    pub mime_contains: Vec<String>,
+    /// A substring that must appear in the response's header lines (case-insensitive).
+    #[serde(default)]
+    pub header_contains: Option<String>,
+    /// A substring that must appear in the response body (the body is buffered to check it).
+    #[serde(default)]
+    pub body_contains: Option<String>,
+    /// Hold only responses whose request was held too.
+    #[serde(default)]
+    pub only_if_request_held: bool,
+}
+
+impl ResponseFilter {
+    /// Statuses must be `NNN` or `Nxx`; a filter with a bad entry is refused.
+    pub fn validate(&self) -> Result<(), String> {
+        for s in &self.statuses {
+            let b = s.trim().as_bytes();
+            let ok = b.len() == 3
+                && b[0].is_ascii_digit()
+                && (b[1..].iter().all(u8::is_ascii_digit) || b[1..].eq_ignore_ascii_case(b"xx"));
+            if !ok {
+                return Err(format!("status {s:?} is not a code (404) or a class (5xx)"));
+            }
+        }
+        for s in self
+            .mime_contains
+            .iter()
+            .chain(&self.header_contains)
+            .chain(&self.body_contains)
+        {
+            if s.len() > 1024 {
+                return Err("a filter value is longer than 1024 bytes".into());
+            }
+        }
+        if self.statuses.len() > 64 || self.mime_contains.len() > 64 {
+            return Err("too many filter entries (64 at most)".into());
+        }
+        Ok(())
+    }
+
+    fn head_matches(&self, request_held: bool, status: u16, head: &str) -> bool {
+        if self.only_if_request_held && !request_held {
+            return false;
+        }
+        if !self.statuses.is_empty() {
+            let code = format!("{status:03}");
+            let ok = self.statuses.iter().any(|s| {
+                let s = s.trim();
+                s.len() == 3 && (s == code || s[1..].eq_ignore_ascii_case("xx") && s[..1] == code[..1])
+            });
+            if !ok {
+                return false;
+            }
+        }
+        let lower = head.to_ascii_lowercase();
+        if !self.mime_contains.is_empty() {
+            let ct = lower
+                .lines()
+                .find_map(|l| l.strip_prefix("content-type:"))
+                .unwrap_or("");
+            if !self
+                .mime_contains
+                .iter()
+                .any(|m| ct.contains(&m.to_ascii_lowercase()))
+            {
+                return false;
+            }
+        }
+        self.header_contains
+            .as_ref()
+            .is_none_or(|h| lower.contains(&h.to_ascii_lowercase()))
+    }
+}
+
+/// What the filter says about a response before its body is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RespHold {
+    No,
+    Yes,
+    /// Hold only if the body matches (see [`InterceptController::body_matches`]).
+    IfBody,
+}
+
 /// The queue is full; the message was not held (and must not be forwarded as if it had been).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueueFull;
@@ -75,6 +167,7 @@ pub struct InterceptController {
     requests: AtomicBool,
     responses: AtomicBool,
     in_scope_only: AtomicBool,
+    filter: std::sync::RwLock<ResponseFilter>,
     next_id: AtomicU64,
     pending: Mutex<BTreeMap<u64, (InterceptItem, oneshot::Sender<Decision>)>>,
     events: EventSender,
@@ -95,6 +188,7 @@ impl InterceptController {
             requests: AtomicBool::new(false),
             responses: AtomicBool::new(false),
             in_scope_only: AtomicBool::new(true),
+            filter: Default::default(),
             next_id: AtomicU64::new(1),
             pending: Mutex::new(BTreeMap::new()),
             events,
@@ -145,6 +239,43 @@ impl InterceptController {
             requests: s.requests,
             responses: s.responses,
         });
+    }
+
+    pub fn response_filter(&self) -> ResponseFilter {
+        self.filter.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn set_response_filter(&self, f: ResponseFilter) {
+        *self.filter.write().unwrap_or_else(|e| e.into_inner()) = f;
+    }
+
+    /// Whether to hold a response, judged from its head (`head` is the status line and headers as text).
+    pub fn response_hold(&self, in_scope: bool, request_held: bool, status: u16, head: &str) -> RespHold {
+        if !self.should_hold(Phase::Response, in_scope) {
+            return RespHold::No;
+        }
+        let f = self.filter.read().unwrap_or_else(|e| e.into_inner());
+        if !f.head_matches(request_held, status, head) {
+            RespHold::No
+        } else if f.body_contains.is_some() {
+            RespHold::IfBody
+        } else {
+            RespHold::Yes
+        }
+    }
+
+    pub fn body_matches(&self, body: &[u8]) -> bool {
+        match &self
+            .filter
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .body_contains
+        {
+            Some(n) if !n.is_empty() => body
+                .windows(n.len())
+                .any(|w| w.eq_ignore_ascii_case(n.as_bytes())),
+            _ => true,
+        }
     }
 
     pub fn should_hold(&self, phase: Phase, in_scope: bool) -> bool {
@@ -275,6 +406,41 @@ impl Drop for Cleanup<'_> {
                 .events
                 .send(ProxyEvent::InterceptResolved { id: self.id });
         }
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    #[test]
+    fn filter_matches_status_mime_header() {
+        let f = ResponseFilter {
+            statuses: vec!["5xx".into(), "404".into()],
+            mime_contains: vec!["JSON".into()],
+            header_contains: Some("x-debug".into()),
+            ..Default::default()
+        };
+        let head = "HTTP/1.1 500 X\r\nContent-Type: application/json\r\nX-Debug: 1\r\n\r\n";
+        assert!(f.head_matches(false, 500, head));
+        assert!(f.head_matches(false, 404, head));
+        assert!(!f.head_matches(false, 200, head));
+        assert!(!f.head_matches(false, 500, &head.replace("json", "html")));
+        assert!(!f.head_matches(false, 500, &head.replace("X-Debug", "X-Other")));
+        let g = ResponseFilter {
+            only_if_request_held: true,
+            ..Default::default()
+        };
+        assert!(!g.head_matches(false, 200, head) && g.head_matches(true, 200, head));
+        assert!(
+            ResponseFilter {
+                statuses: vec!["50".into()],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(f.validate().is_ok());
     }
 }
 

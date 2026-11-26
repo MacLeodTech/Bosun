@@ -122,6 +122,9 @@ pub struct FlowSummary {
     /// Unix time in milliseconds when the request was received.
     pub started_ms: i64,
     pub duration_ms: Option<i64>,
+    /// Milliseconds from the request being received to the response head arriving.
+    #[serde(default)]
+    pub ttfb_ms: Option<i64>,
     pub scheme: Scheme,
     pub host: String,
     pub port: u16,

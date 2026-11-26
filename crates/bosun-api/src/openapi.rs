@@ -12,7 +12,7 @@ use utoipa::OpenApi;
 use utoipa::ToSchema;
 
 use bosun_model::{FlowSummary, WsMessage};
-use bosun_proxy::intercept::{Decision, InterceptItem, InterceptSettings, InterceptSummary};
+use bosun_proxy::intercept::{Decision, InterceptItem, InterceptSettings, InterceptSummary, ResponseFilter};
 use bosun_proxy::{ProxyEvent, ProxyStats};
 use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
 
@@ -332,6 +332,12 @@ fn get_intercept() {}
 #[utoipa::path(put, path = "/intercept", operation_id = "put_intercept", tag = "intercept", description = "Change interception settings. Needs the tester role or above.", request_body = InterceptSettings, responses((status = 200, description = "OK", body = InterceptSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn put_intercept() {}
 
+#[utoipa::path(get, path = "/intercept/response-filter", operation_id = "get_response_filter", tag = "intercept", description = "Which responses are held when response interception is on. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ResponseFilter), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_response_filter() {}
+
+#[utoipa::path(put, path = "/intercept/response-filter", operation_id = "put_response_filter", tag = "intercept", description = "Change which responses are held (audited). Needs the tester role or above.", request_body = ResponseFilter, responses((status = 200, description = "OK", body = ResponseFilter), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_response_filter() {}
+
 #[utoipa::path(get, path = "/intercept/queue", operation_id = "intercept_queue", tag = "intercept", description = "Held messages. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<InterceptSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn intercept_queue() {}
 
@@ -483,8 +489,8 @@ fn intruder_stop() {}
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
-    components(schemas(LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
+    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    components(schemas(ResponseFilter, LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
     tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "intruder"), (name = "sequencer"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
@@ -540,6 +546,8 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("put", "/rules"),
     ("get", "/intercept"),
     ("put", "/intercept"),
+    ("get", "/intercept/response-filter"),
+    ("put", "/intercept/response-filter"),
     ("get", "/intercept/queue"),
     ("get", "/intercept/queue/{id}"),
     ("post", "/intercept/queue/{id}"),

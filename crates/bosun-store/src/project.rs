@@ -32,6 +32,8 @@ pub struct NewFlow {
     pub source: FlowSource,
     pub started_ms: i64,
     pub duration_ms: Option<i64>,
+    /// Milliseconds from the request being received to the response head arriving.
+    pub ttfb_ms: Option<i64>,
     pub scheme: Scheme,
     pub host: String,
     pub port: u16,
@@ -72,6 +74,8 @@ pub enum FlowSort {
     Status,
     Size,
     Duration,
+    Ttfb,
+    ReqSize,
     Mime,
 }
 
@@ -86,6 +90,8 @@ impl FlowSort {
             "status" => Self::Status,
             "size" => Self::Size,
             "duration" => Self::Duration,
+            "ttfb" => Self::Ttfb,
+            "req_size" => Self::ReqSize,
             "mime" => Self::Mime,
             _ => return None,
         })
@@ -102,6 +108,8 @@ impl FlowSort {
             Self::Status => "status",
             Self::Size => "response_len",
             Self::Duration => "duration_ms",
+            Self::Ttfb => "ttfb_ms",
+            Self::ReqSize => "request_len",
             Self::Mime => "mime",
         }
     }
@@ -352,6 +360,12 @@ const MIGRATIONS: &[migrate::Migration] = &[
                 PRIMARY KEY (attack_id, idx)
             ) WITHOUT ROWID;
         "#,
+    },
+    migrate::Migration {
+        version: 5,
+        rebuild: false,
+        what: "time to first byte in history",
+        sql: "ALTER TABLE flows ADD COLUMN ttfb_ms INTEGER;",
     },
 ];
 
@@ -679,9 +693,9 @@ impl Project {
             tx.execute(
                 "INSERT INTO flows (id, source, started_ms, duration_ms, scheme, host, port, method, path,
                     base_path, http_version, status, request_len, response_len, mime, in_scope, edited, error,
-                    req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated)
+                    req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated, ttfb_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-                    ?20, ?21, ?22, ?23)",
+                    ?20, ?21, ?22, ?23, ?24)",
                 params![
                     f.id,
                     f.source.as_str(),
@@ -706,6 +720,7 @@ impl Project {
                     resp,
                     orig_resp,
                     f.response_truncated,
+                    f.ttfb_ms,
                 ],
             )?;
             tx.execute(
@@ -1189,7 +1204,7 @@ impl Project {
 }
 
 const SUMMARY_COLS: &str = "id, source, started_ms, duration_ms, scheme, host, port, method, path, http_version, \
-     status, request_len, response_len, mime, in_scope, edited, error, tags, note, 0";
+     status, request_len, response_len, mime, in_scope, edited, error, tags, note, ttfb_ms";
 
 fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<FlowSummary> {
     let source: String = r.get(1)?;
@@ -1215,6 +1230,7 @@ fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<FlowSummary> {
         error: r.get(16)?,
         tags: serde_json::from_str(&tags).unwrap_or_default(),
         note: r.get(18)?,
+        ttfb_ms: r.get(19)?,
     })
 }
 
@@ -1573,6 +1589,7 @@ mod tests {
             source: FlowSource::Proxy,
             started_ms: 1,
             duration_ms: Some(5),
+            ttfb_ms: None,
             scheme: Scheme::Https,
             host: host.into(),
             port: 443,

@@ -43,7 +43,9 @@ struct ReqState {
     raw: Vec<u8>,
     original: Option<Vec<u8>>,
     /// The streamed request body's captured bytes, appended to `raw` (and `original`) when the flow is stored.
-    tail: Option<Arc<std::sync::Mutex<Vec<u8>>>>,
+    tail: Option<Arc<Tail>>,
+    /// Milliseconds until the response head arrived.
+    ttfb_ms: Option<i64>,
     method: String,
     path: String,
     version: String,
@@ -59,22 +61,89 @@ impl ReqState {
         }
     }
 
-    /// The text to store: the head, plus the captured streamed body if there was one.
-    fn finish(mut self) -> (String, String, String, Vec<u8>, Option<Vec<u8>>) {
-        let tail = self
-            .tail
-            .take()
-            .map(|t| std::mem::take(&mut *t.lock().unwrap_or_else(|e| e.into_inner())));
+    /// The text to store: the head, plus the captured streamed body if the upload has ended. When it has not, the
+    /// tail is returned to be appended once it does (see [`submit`]).
+    fn finish(mut self) -> Finished {
         let mut raw = std::mem::take(&mut self.raw);
         let mut original = self.original.take();
-        if let Some(t) = tail {
-            if let Some(o) = &mut original {
-                o.extend_from_slice(&t);
+        let pending = match self.tail.take() {
+            Some(t) if t.is_done() => {
+                let d = t.take();
+                if let Some(o) = &mut original {
+                    o.extend_from_slice(&d);
+                }
+                raw.extend_from_slice(&d);
+                None
             }
-            raw.extend_from_slice(&t);
-        }
-        (self.method, self.path, self.version, raw, original)
+            other => other,
+        };
+        (self.method, self.path, self.version, raw, original, pending)
     }
+}
+
+/// Method, path, version, the request text, its original text and a not yet finished upload.
+type Finished = (
+    String,
+    String,
+    String,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Option<Arc<Tail>>,
+);
+
+/// A streamed request body's captured bytes and whether the upload has ended.
+struct Tail {
+    data: std::sync::Mutex<Vec<u8>>,
+    done: tokio::sync::watch::Sender<bool>,
+}
+
+impl Tail {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            data: Default::default(),
+            done: tokio::sync::watch::channel(false).0,
+        })
+    }
+    fn is_done(&self) -> bool {
+        *self.done.borrow()
+    }
+    fn take(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.data.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+    fn complete(&self, captured: Vec<u8>) {
+        *self.data.lock().unwrap_or_else(|e| e.into_inner()) = captured;
+        self.done.send_replace(true);
+    }
+}
+
+/// A flow ready to store, except that its streamed request body may still be uploading.
+struct Built {
+    flow: NewFlow,
+    pending: Option<Arc<Tail>>,
+}
+
+/// How long a recorded flow waits for a request upload that outlives its response.
+const UPLOAD_WAIT: Duration = Duration::from_secs(300);
+
+/// Store a flow. When the response ended before the request upload did, the flow is stored once the upload ends
+/// (or is cut off), so it holds the whole request body and not only what was captured so far.
+fn submit(active: &Arc<Active>, built: Built) {
+    let Built { mut flow, pending } = built;
+    let Some(tail) = pending else {
+        active.recorder.flow(flow);
+        return;
+    };
+    let active = active.clone();
+    tokio::spawn(async move {
+        let mut rx = tail.done.subscribe();
+        let _ = tokio::time::timeout(UPLOAD_WAIT, rx.wait_for(|d| *d)).await;
+        let d = tail.take();
+        if let Some(o) = &mut flow.original_request {
+            o.extend_from_slice(&d);
+        }
+        flow.request.extend_from_slice(&d);
+        active.recorder.flow(flow);
+    });
 }
 
 /// The magic host served by the proxy itself (CA download), like `http://burp` in other tools.
@@ -733,13 +802,13 @@ impl Shared {
                     discard_body(limited).await;
                     return busy();
                 };
-                let slot = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let slot = Tail::new();
                 let slot2 = slot.clone();
                 let tee = TeeBody::new(
                     limited,
                     self.cfg.record_body_limit,
                     Box::new(move |captured, _truncated, _error| {
-                        *slot2.lock().unwrap_or_else(|e| e.into_inner()) = captured;
+                        slot2.complete(captured);
                     }),
                 )
                 .with_reservation(&self.budget, admit);
@@ -789,6 +858,7 @@ impl Shared {
             },
             original: None,
             tail,
+            ttfb_ms: None,
             method: parts.method.as_str().to_string(),
             path: path.clone(),
             version: version.to_string(),
@@ -817,19 +887,22 @@ impl Shared {
             match held {
                 Decision::Drop => {
                     if record {
-                        active.recorder.flow(self.new_flow(
-                            flow_id.unwrap_or_default(),
-                            &target,
-                            started,
-                            t0,
-                            req_state,
-                            None,
-                            None,
-                            None,
-                            false,
-                            Some("dropped in the intercept queue".into()),
-                            in_scope,
-                        ));
+                        submit(
+                            &active,
+                            self.new_flow(
+                                flow_id.unwrap_or_default(),
+                                &target,
+                                started,
+                                t0,
+                                req_state,
+                                None,
+                                None,
+                                None,
+                                false,
+                                Some("dropped in the intercept queue".into()),
+                                in_scope,
+                            ),
+                        );
                     }
                     return text(
                         StatusCode::BAD_GATEWAY,
@@ -927,23 +1000,29 @@ impl Shared {
         )
         .await
         {
-            Ok(Ok(r)) => r,
+            Ok(Ok(r)) => {
+                req_state.ttfb_ms = Some(t0.elapsed().as_millis() as i64);
+                r
+            }
             Ok(Err(e)) => {
                 let msg = error_chain(&e);
                 if record {
-                    active.recorder.flow(self.new_flow(
-                        flow_id.unwrap_or_default(),
-                        &target,
-                        started,
-                        t0,
-                        req_state,
-                        None,
-                        None,
-                        None,
-                        false,
-                        Some(msg.clone()),
-                        in_scope,
-                    ));
+                    submit(
+                        &active,
+                        self.new_flow(
+                            flow_id.unwrap_or_default(),
+                            &target,
+                            started,
+                            t0,
+                            req_state,
+                            None,
+                            None,
+                            None,
+                            false,
+                            Some(msg.clone()),
+                            in_scope,
+                        ),
+                    );
                 }
                 return text(
                     StatusCode::BAD_GATEWAY,
@@ -953,19 +1032,22 @@ impl Shared {
             Err(_) => {
                 let msg = "timed out waiting for the response".to_string();
                 if record {
-                    active.recorder.flow(self.new_flow(
-                        flow_id.unwrap_or_default(),
-                        &target,
-                        started,
-                        t0,
-                        req_state,
-                        None,
-                        None,
-                        None,
-                        false,
-                        Some(msg.clone()),
-                        in_scope,
-                    ));
+                    submit(
+                        &active,
+                        self.new_flow(
+                            flow_id.unwrap_or_default(),
+                            &target,
+                            started,
+                            t0,
+                            req_state,
+                            None,
+                            None,
+                            None,
+                            false,
+                            Some(msg.clone()),
+                            in_scope,
+                        ),
+                    );
                 }
                 return text(StatusCode::GATEWAY_TIMEOUT, &msg);
             }
@@ -983,19 +1065,22 @@ impl Shared {
             && let (Some(client_upgrade), Some(server_upgrade)) = (client_upgrade, server_upgrade)
         {
             if record {
-                active.recorder.flow(self.new_flow(
-                    flow_id.unwrap_or_default(),
-                    &target,
-                    started,
-                    t0,
-                    req_state,
-                    Some(rparts.status.as_u16()),
-                    Some(head),
-                    None,
-                    false,
-                    None,
-                    in_scope,
-                ));
+                submit(
+                    &active,
+                    self.new_flow(
+                        flow_id.unwrap_or_default(),
+                        &target,
+                        started,
+                        t0,
+                        req_state,
+                        Some(rparts.status.as_u16()),
+                        Some(head),
+                        None,
+                        false,
+                        None,
+                        in_scope,
+                    ),
+                );
             }
             let recorder = active.recorder.clone();
             let ws_id = flow_id.unwrap_or_default();
@@ -1017,8 +1102,14 @@ impl Shared {
             return r;
         }
 
-        let need_buffer = self.intercept.should_hold(Phase::Response, in_scope)
-            || rules.has(|t| t == RuleTarget::ResponseBody);
+        let resp_hold = self.intercept.response_hold(
+            in_scope,
+            hold_request,
+            rparts.status.as_u16(),
+            &String::from_utf8_lossy(&head),
+        );
+        let need_buffer =
+            resp_hold != crate::intercept::RespHold::No || rules.has(|t| t == RuleTarget::ResponseBody);
         if need_buffer {
             let (rbody, _resp_mem) =
                 match collect_budgeted(&mut rbody, self.cfg.max_buffered_response, &self.budget).await {
@@ -1027,19 +1118,22 @@ impl Shared {
                     Err(e) => {
                         let msg = format!("failed to read the response body: {e:?}");
                         if record {
-                            active.recorder.flow(self.new_flow(
-                                flow_id.unwrap_or_default(),
-                                &target,
-                                started,
-                                t0,
-                                req_state,
-                                Some(rparts.status.as_u16()),
-                                Some(head),
-                                None,
-                                false,
-                                Some(msg.clone()),
-                                in_scope,
-                            ));
+                            submit(
+                                &active,
+                                self.new_flow(
+                                    flow_id.unwrap_or_default(),
+                                    &target,
+                                    started,
+                                    t0,
+                                    req_state,
+                                    Some(rparts.status.as_u16()),
+                                    Some(head),
+                                    None,
+                                    false,
+                                    Some(msg.clone()),
+                                    in_scope,
+                                ),
+                            );
                         }
                         return text(StatusCode::BAD_GATEWAY, &msg);
                     }
@@ -1049,7 +1143,9 @@ impl Shared {
             if let Some(new) = rules.apply_response(&resp_raw, true) {
                 original_response = Some(std::mem::replace(&mut resp_raw, new));
             }
-            if self.intercept.should_hold(Phase::Response, in_scope) {
+            if resp_hold == crate::intercept::RespHold::Yes
+                || (resp_hold == crate::intercept::RespHold::IfBody && self.intercept.body_matches(&rbody))
+            {
                 let id = *flow_id.get_or_insert_with(|| active.project.next_flow_id());
                 let held = self
                     .intercept
@@ -1068,19 +1164,22 @@ impl Shared {
                 match held {
                     Decision::Drop => {
                         if record {
-                            active.recorder.flow(self.new_flow(
-                                flow_id.unwrap_or_default(),
-                                &target,
-                                started,
-                                t0,
-                                req_state,
-                                status_of(&resp_raw),
-                                Some(resp_raw),
-                                original_response,
-                                false,
-                                Some("response dropped in the intercept queue".into()),
-                                in_scope,
-                            ));
+                            submit(
+                                &active,
+                                self.new_flow(
+                                    flow_id.unwrap_or_default(),
+                                    &target,
+                                    started,
+                                    t0,
+                                    req_state,
+                                    status_of(&resp_raw),
+                                    Some(resp_raw),
+                                    original_response,
+                                    false,
+                                    Some("response dropped in the intercept queue".into()),
+                                    in_scope,
+                                ),
+                            );
                         }
                         return text(
                             StatusCode::BAD_GATEWAY,
@@ -1114,19 +1213,22 @@ impl Shared {
                 Response::from_parts(rparts, full(rbody))
             };
             if record {
-                active.recorder.flow(self.new_flow(
-                    flow_id.unwrap_or_default(),
-                    &target,
-                    started,
-                    t0,
-                    req_state,
-                    status,
-                    Some(resp_raw),
-                    original_response,
-                    false,
-                    None,
-                    in_scope,
-                ));
+                submit(
+                    &active,
+                    self.new_flow(
+                        flow_id.unwrap_or_default(),
+                        &target,
+                        started,
+                        t0,
+                        req_state,
+                        status,
+                        Some(resp_raw),
+                        original_response,
+                        false,
+                        None,
+                        in_scope,
+                    ),
+                );
             }
             return response;
         }
@@ -1171,19 +1273,22 @@ impl Shared {
                     h.extend_from_slice(&captured);
                     h
                 });
-                active.recorder.flow(shared.new_flow(
-                    flow_id.unwrap_or_default(),
-                    &target,
-                    started,
-                    t0,
-                    req_state,
-                    status,
-                    Some(full_resp),
-                    orig,
-                    truncated,
-                    error,
-                    in_scope,
-                ));
+                submit(
+                    &active,
+                    shared.new_flow(
+                        flow_id.unwrap_or_default(),
+                        &target,
+                        started,
+                        t0,
+                        req_state,
+                        status,
+                        Some(full_resp),
+                        orig,
+                        truncated,
+                        error,
+                        in_scope,
+                    ),
+                );
             }),
         );
         Response::from_parts(rparts, UnsyncBoxBody::new(tee.with_budget(&self.budget)))
@@ -1203,13 +1308,15 @@ impl Shared {
         truncated: bool,
         error: Option<String>,
         in_scope: bool,
-    ) -> NewFlow {
-        let (method, path, http_version, request, original_request) = request.finish();
-        NewFlow {
+    ) -> Built {
+        let ttfb_ms = request.ttfb_ms;
+        let (method, path, http_version, request, original_request, pending) = request.finish();
+        let flow = NewFlow {
             id,
             source: FlowSource::Proxy,
             started_ms: started,
             duration_ms: Some(t0.elapsed().as_millis() as i64),
+            ttfb_ms,
             scheme: target.scheme,
             host: target.host.clone(),
             port: target.port,
@@ -1225,7 +1332,8 @@ impl Shared {
             response,
             original_response,
             response_truncated: truncated,
-        }
+        };
+        Built { flow, pending }
     }
 }
 

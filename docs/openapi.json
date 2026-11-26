@@ -2697,6 +2697,136 @@
         }
       }
     },
+    "/intercept/response-filter": {
+      "get": {
+        "tags": [
+          "intercept"
+        ],
+        "description": "Which responses are held when response interception is on. Needs the viewer role or above.",
+        "operationId": "get_response_filter",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseFilter"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "intercept"
+        ],
+        "description": "Change which responses are held (audited). Needs the tester role or above.",
+        "operationId": "put_response_filter",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResponseFilter"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseFilter"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/intruder/attacks": {
       "get": {
         "tags": [
@@ -7671,6 +7801,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "ttfb_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds from the request being received to the response head arriving."
           }
         }
       },
@@ -9373,6 +9511,44 @@
           "allow_out_of_scope": {
             "type": "boolean",
             "description": "Let the Repeater send to hosts outside the scope. Starts off, and goes back off when a project is opened."
+          }
+        }
+      },
+      "ResponseFilter": {
+        "type": "object",
+        "description": "Which responses are held when response interception is on. Every condition that is set must match; an empty\nfilter holds every response.",
+        "properties": {
+          "body_contains": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A substring that must appear in the response body (the body is buffered to check it)."
+          },
+          "header_contains": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A substring that must appear in the response's header lines (case-insensitive)."
+          },
+          "mime_contains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Substrings of the `Content-Type` (any one may match, case-insensitive). Empty: any type."
+          },
+          "only_if_request_held": {
+            "type": "boolean",
+            "description": "Hold only responses whose request was held too."
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Status codes or classes, such as `404`, `5xx` (any one may match). Empty: any status."
           }
         }
       },

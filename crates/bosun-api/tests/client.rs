@@ -631,6 +631,19 @@ async fn scope_rules_proxy_and_ca() {
     };
     assert_eq!(c.put_intercept(&want).await.unwrap(), want);
     assert_eq!(c.intercept().await.unwrap(), want);
+    let f = bosun_client::ResponseFilter {
+        statuses: vec!["5xx".into()],
+        mime_contains: vec!["json".into()],
+        ..Default::default()
+    };
+    assert_eq!(c.put_response_filter(&f).await.unwrap(), f);
+    assert_eq!(c.response_filter().await.unwrap(), f);
+    let bad = bosun_client::ResponseFilter {
+        statuses: vec!["fifty".into()],
+        ..Default::default()
+    };
+    assert!(c.put_response_filter(&bad).await.is_err());
+    assert_eq!(c.response_filter().await.unwrap(), f);
     assert!(c.intercept_queue().await.unwrap().is_empty());
     assert_eq!(c.intercept_forward_all().await.unwrap(), 0);
     assert!(c.intercept_item(1).await.unwrap_err().is_not_found());
@@ -655,7 +668,12 @@ async fn scope_rules_proxy_and_ca() {
     assert!(c.launch_browser().await.unwrap_err().is_forbidden());
 
     let audit = c.audit(None, None).await.unwrap();
-    for a in ["scope.update", "rules.update", "intercept.settings"] {
+    for a in [
+        "scope.update",
+        "rules.update",
+        "intercept.settings",
+        "intercept.response_filter",
+    ] {
         assert!(audit.iter().any(|e| e.action == a), "{a} missing");
     }
 }
@@ -925,6 +943,8 @@ fn the_client_covers_every_documented_operation() {
         ("put", "/rules", "put_rules"),
         ("get", "/intercept", "intercept"),
         ("put", "/intercept", "put_intercept"),
+        ("get", "/intercept/response-filter", "response_filter"),
+        ("put", "/intercept/response-filter", "put_response_filter"),
         ("get", "/intercept/queue", "intercept_queue"),
         ("get", "/intercept/queue/{id}", "intercept_item"),
         ("post", "/intercept/queue/{id}", "intercept_decide"),

@@ -586,6 +586,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/intercept/response-filter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Which responses are held when response interception is on. Needs the viewer role or above. */
+        get: operations["get_response_filter"];
+        /** @description Change which responses are held (audited). Needs the tester role or above. */
+        put: operations["put_response_filter"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/intruder/attacks": {
         parameters: {
             query?: never;
@@ -1701,6 +1719,11 @@ export interface components {
             /** Format: int32 */
             status?: number | null;
             tags: string[];
+            /**
+             * Format: int64
+             * @description Milliseconds from the request being received to the response head arriving.
+             */
+            ttfb_ms?: number | null;
         };
         Forwarded: {
             /** Format: int64 */
@@ -2202,6 +2225,22 @@ export interface components {
         RepeaterSettings: {
             /** @description Let the Repeater send to hosts outside the scope. Starts off, and goes back off when a project is opened. */
             allow_out_of_scope: boolean;
+        };
+        /**
+         * @description Which responses are held when response interception is on. Every condition that is set must match; an empty
+         *     filter holds every response.
+         */
+        ResponseFilter: {
+            /** @description A substring that must appear in the response body (the body is buffered to check it). */
+            body_contains?: string | null;
+            /** @description A substring that must appear in the response's header lines (case-insensitive). */
+            header_contains?: string | null;
+            /** @description Substrings of the `Content-Type` (any one may match, case-insensitive). Empty: any type. */
+            mime_contains?: string[];
+            /** @description Hold only responses whose request was held too. */
+            only_if_request_held?: boolean;
+            /** @description Status codes or classes, such as `404`, `5xx` (any one may match). Empty: any status. */
+            statuses?: string[];
         };
         ResultsReply: {
             rows: components["schemas"]["Row"][];
@@ -4784,6 +4823,122 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_response_filter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResponseFilter"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_response_filter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResponseFilter"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResponseFilter"];
+                };
             };
             /** @description Bad request */
             400: {

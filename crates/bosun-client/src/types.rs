@@ -283,6 +283,21 @@ pub struct InterceptSettings {
     pub timeout_secs: Option<u64>,
 }
 
+/// Which responses are held when response interception is on (every condition set must match).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseFilter {
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    #[serde(default)]
+    pub mime_contains: Vec<String>,
+    #[serde(default)]
+    pub header_contains: Option<String>,
+    #[serde(default)]
+    pub body_contains: Option<String>,
+    #[serde(default)]
+    pub only_if_request_held: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {

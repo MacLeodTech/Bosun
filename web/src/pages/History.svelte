@@ -443,6 +443,8 @@
               {:else if k === 'length'}<span class="c-length tnum">{fmtSize(f.response_len ?? 0)}</span>
               {:else if k === 'mime'}<span class="c-mime">{f.mime ?? ''}</span>
               {:else if k === 'time'}<span class="c-time tnum">{fmtTime(f.started_ms)}</span>
+              {:else if k === 'ttfb'}<span class="c-ttfb tnum">{f.ttfb_ms == null ? '' : `${f.ttfb_ms} ms`}</span>
+              {:else if k === 'reqlen'}<span class="c-reqlen tnum">{f.request_len}</span>
               {:else if k === 'duration'}<span class="c-duration tnum">{f.duration_ms == null ? '' : `${f.duration_ms} ms`}</span>
               {:else if k === 'source'}<span class="c-source">{f.source}</span>
               {:else if k === 'tags'}<span class="c-tags">{plainTags(f.tags).join(', ')}</span>

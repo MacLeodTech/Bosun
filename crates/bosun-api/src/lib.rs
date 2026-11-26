@@ -49,6 +49,7 @@ pub const SETTING_SCOPE: &str = "scope";
 pub const SETTING_RULES: &str = "match_replace";
 pub const SETTING_SAVED_FILTERS: &str = "saved_filters";
 pub const SETTING_INTERCEPT: &str = "intercept";
+pub const SETTING_RESPONSE_FILTER: &str = "intercept_response_filter";
 pub const SETTING_REPEATER_TABS: &str = "repeater_tabs";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -409,6 +410,10 @@ pub fn router(st: AppState) -> Router {
         .route("/scope", get(h::get_scope).put(h::put_scope))
         .route("/rules", get(h::get_rules).put(h::put_rules))
         .route("/intercept", get(h::get_intercept).put(h::put_intercept))
+        .route(
+            "/intercept/response-filter",
+            get(h::get_response_filter).put(h::put_response_filter),
+        )
         .route("/intercept/queue", get(h::intercept_queue))
         .route(
             "/intercept/queue/{id}",

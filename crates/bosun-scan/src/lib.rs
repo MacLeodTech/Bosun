@@ -6,7 +6,6 @@
 //! path: the proxy never waits for it, and it pauses between batches so the database writer stays free for the
 //! recorder.
 
-mod head;
 pub mod rules;
 mod scanner;
 

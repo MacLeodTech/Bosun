@@ -210,3 +210,43 @@ async fn the_report_is_an_inert_attachment_with_secrets_redacted() {
             .is_unauthorized()
     );
 }
+
+#[tokio::test]
+async fn a_tracker_export_is_redacted_tester_only_and_audited() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let _scanner = bosun_scan::Scanner::start(&s.state.project());
+    recorded(
+        &s,
+        "/p?token=hunter2secret",
+        "Content-Type: text/plain\r\nSet-Cookie: sid=cookievalue99\r\n",
+        b"x",
+        None,
+    );
+    let id = settled(&c).await.issues[0].id;
+    for t in ["github", "jira", "linear"] {
+        let v = c.issue_tracker(id, t, true).await.unwrap();
+        let text = v.to_string();
+        assert!(
+            !text.contains("hunter2secret") && !text.contains("cookievalue99"),
+            "{t} leaks"
+        );
+        assert!(v["payload"].is_object());
+    }
+    assert!(c.issue_tracker(id, "bugzilla", true).await.is_err());
+    assert!(c.issue_tracker(id + 999, "github", true).await.is_err());
+    let anon = Client::new(url(&s)).unwrap();
+    assert!(
+        anon.issue_tracker(id, "github", true)
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+    assert!(
+        c.audit(None, Some(50))
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| e.action == "issues.tracker_export")
+    );
+}

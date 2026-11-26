@@ -783,7 +783,8 @@ impl Client {
     /// Start a spider crawl. `body` is the `StartBody` of the API: `start` URLs and optionally depth, page limit,
     /// form options and headers. Returns the crawl as it starts.
     pub async fn crawl_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
-        self.json(self.req(Method::POST, "/crawl/crawls").json(body)).await
+        self.json(self.req(Method::POST, "/crawl/crawls").json(body))
+            .await
     }
 
     /// The crawls of this run of the server, newest first.
@@ -1067,6 +1068,18 @@ impl Client {
             rb = rb.query(&[("redact", "0")]);
         }
         Ok(self.check(rb.send().await?).await?.bytes().await?)
+    }
+
+    /// One issue prepared for a tracker (`github`, `jira` or `linear`): title, Markdown body and the create-issue
+    /// JSON, to copy or post by hand. Secrets are redacted unless `redact` is false (tester role; audited either way).
+    pub async fn issue_tracker(&self, id: i64, tracker: &str, redact: bool) -> Result<serde_json::Value> {
+        let mut rb = self
+            .req(Method::GET, &format!("/issues/{id}/tracker"))
+            .query(&[("tracker", tracker)]);
+        if !redact {
+            rb = rb.query(&[("redact", "0")]);
+        }
+        Ok(self.check(rb.send().await?).await?.json().await?)
     }
 
     /// Queue every recorded flow for the scanner again.

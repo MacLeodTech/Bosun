@@ -11,7 +11,14 @@ async fn imports_become_repeater_tabs_without_sending_anything() {
     let (c, csrf) = s.admin().await;
     let post = |b: Value| {
         let (c, csrf, url) = (c.clone(), csrf.clone(), s.url("/import"));
-        async move { c.post(url).header("x-csrf-token", csrf).json(&b).send().await.unwrap() }
+        async move {
+            c.post(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+        }
     };
 
     // A dry run saves nothing.
@@ -21,20 +28,39 @@ async fn imports_become_repeater_tabs_without_sending_anything() {
         .await
         .unwrap();
     assert_eq!((r["parsed"].as_u64(), r["added"].as_u64()), (Some(2), Some(0)));
-    let tabs: Value = c.get(s.url("/repeater/tabs")).send().await.unwrap().json().await.unwrap();
-    assert_eq!(tabs["tabs"].as_array().unwrap().len(), 0);
-
-    // A real one saves tabs, lists the hosts, is audited, and sends nothing (the hosts do not resolve).
-    let r: Value = post(json!({ "format": "urls", "content": "http://nowhere.invalid:9/a\nhttps://other.invalid/b?x=1\n" }))
+    let tabs: Value = c
+        .get(s.url("/repeater/tabs"))
+        .send()
         .await
+        .unwrap()
         .json()
         .await
         .unwrap();
+    assert_eq!(tabs["tabs"].as_array().unwrap().len(), 0);
+
+    // A real one saves tabs, lists the hosts, is audited, and sends nothing (the hosts do not resolve).
+    let r: Value = post(
+        json!({ "format": "urls", "content": "http://nowhere.invalid:9/a\nhttps://other.invalid/b?x=1\n" }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
     assert_eq!(r["added"], 2);
     assert_eq!(r["hosts"], json!(["nowhere.invalid:9", "other.invalid:443"]));
-    let tabs: Value = c.get(s.url("/repeater/tabs")).send().await.unwrap().json().await.unwrap();
+    let tabs: Value = c
+        .get(s.url("/repeater/tabs"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     let t = &tabs["tabs"][1];
-    assert_eq!((t["host"].as_str(), t["port"].as_u64()), (Some("other.invalid"), Some(443)));
+    assert_eq!(
+        (t["host"].as_str(), t["port"].as_u64()),
+        (Some("other.invalid"), Some(443))
+    );
     assert_eq!(t["request"], "GET /b?x=1 HTTP/1.1\r\nHost: other.invalid\r\n\r\n");
     assert_ne!(tabs["tabs"][0]["id"], t["id"]);
     let audit: Value = c.get(s.url("/audit")).send().await.unwrap().json().await.unwrap();
@@ -45,10 +71,22 @@ async fn imports_become_repeater_tabs_without_sending_anything() {
     // Hostile and wrong input is refused cleanly.
     let bomb = "<!DOCTYPE x [<!ENTITY a \"aa\">]><items><item><url>&a;</url></item></items>";
     for (b, want) in [
-        (json!({ "format": "burp", "content": bomb }), StatusCode::UNPROCESSABLE_ENTITY),
-        (json!({ "format": "graphql", "content": "{}" }), StatusCode::UNPROCESSABLE_ENTITY),
-        (json!({ "format": "har", "content": "not json" }), StatusCode::UNPROCESSABLE_ENTITY),
-        (json!({ "format": "urls", "content": "http://a.test/", "base_url": "ftp://x" }), StatusCode::BAD_REQUEST),
+        (
+            json!({ "format": "burp", "content": bomb }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            json!({ "format": "graphql", "content": "{}" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            json!({ "format": "har", "content": "not json" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            json!({ "format": "urls", "content": "http://a.test/", "base_url": "ftp://x" }),
+            StatusCode::BAD_REQUEST,
+        ),
     ] {
         assert_eq!(post(b.clone()).await.status(), want, "{b}");
     }

@@ -213,6 +213,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
   API's CSP layer keeps a handler's stricter policy), and the UI saves it as a file instead of showing it. A
   Playwright test opens a saved report and checks that no script exists and nothing is requested. `bosun report
   --input` renders a file offline.
+- *Issue tracker export (WP-85).* `GET /issues/{id}/tracker` prepares one issue (title, Markdown body, the
+  create-issue JSON for GitHub, Jira or Linear) for the user to copy or post by hand. Bosun makes no request to any
+  tracker, so there is no tracker credential, destination or outbound path to guard; the vault-backed push in the
+  roadmap is not built. Because the text leaves Bosun, the endpoint needs the tester role, redacts secrets by
+  default (the same redaction as reports; `redact=0` keeps them), and every export is audited
+  (`issues.tracker_export`). Content goes into JSON string fields and Markdown that is escaped and fenced, never
+  rendered in the UI's origin.
 - *An open proxy.* The proxy refuses to start on a non-loopback address without proxy authentication or a
   client allowlist. The same check applies to every listener added while running (`POST /proxy/listeners`), so an
   admin cannot open one by mistake; each listener has its own credentials and allowlist, and a listener's

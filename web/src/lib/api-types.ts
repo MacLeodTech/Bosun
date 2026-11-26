@@ -883,6 +883,23 @@ export interface paths {
         patch: operations["change_issue"];
         trace?: never;
     };
+    "/issues/{id}/tracker": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One issue prepared for GitHub, Jira or Linear: title, Markdown body, labels and the JSON body of the tracker's create-issue call, to copy or post by hand. Bosun makes no request to the tracker. Secrets are redacted unless redact=0. Needs the tester role; every export is audited. */
+        get: operations["issue_tracker"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizer": {
         parameters: {
             query?: never;
@@ -3202,6 +3219,15 @@ export interface components {
             required: boolean;
             /** @description This account must set up a second factor before it can do anything else. */
             setup_required: boolean;
+        };
+        /** @description What `GET /issues/{id}/tracker` returns: one issue prepared for an issue tracker. */
+        TrackerReply: {
+            /** @description Markdown description. */
+            body: string;
+            labels: string[];
+            /** @description The JSON body for the tracker's create-issue call. */
+            payload: Record<string, never>;
+            title: string;
         };
         User: {
             /** Format: int64 */
@@ -6763,6 +6789,69 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such issue */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    issue_tracker: {
+        parameters: {
+            query?: {
+                /** @description github (default), jira or linear */
+                tracker?: string;
+                /** @description 0 keeps secrets */
+                redact?: string;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackerReply"];
+                };
             };
             /** @description Bad request */
             400: {

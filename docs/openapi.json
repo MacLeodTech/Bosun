@@ -4418,6 +4418,96 @@
         }
       }
     },
+    "/issues/{id}/tracker": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "description": "One issue prepared for GitHub, Jira or Linear: title, Markdown body, labels and the JSON body of the tracker's create-issue call, to copy or post by hand. Bosun makes no request to the tracker. Secrets are redacted unless redact=0. Needs the tester role; every export is audited.",
+        "operationId": "issue_tracker",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "tracker",
+            "in": "query",
+            "description": "github (default), jira or linear",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redact",
+            "in": "query",
+            "description": "0 keeps secrets",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such issue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/organizer": {
       "get": {
         "tags": [
@@ -13240,6 +13330,35 @@
           "setup_required": {
             "type": "boolean",
             "description": "This account must set up a second factor before it can do anything else."
+          }
+        }
+      },
+      "TrackerReply": {
+        "type": "object",
+        "description": "What `GET /issues/{id}/tracker` returns: one issue prepared for an issue tracker.",
+        "required": [
+          "title",
+          "body",
+          "labels",
+          "payload"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Markdown description."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "payload": {
+            "type": "object",
+            "description": "The JSON body for the tracker's create-issue call."
+          },
+          "title": {
+            "type": "string"
           }
         }
       },

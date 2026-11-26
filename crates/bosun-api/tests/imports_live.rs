@@ -30,7 +30,9 @@ async fn graphql_origin() -> (u16, Arc<Mutex<Vec<String>>>) {
                     }
                     got.extend_from_slice(&buf[..n]);
                 }
-                log.lock().unwrap().push(String::from_utf8_lossy(&got).to_string());
+                log.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&got).to_string());
                 let body = r#"{"data":{"__schema":{"queryType":{"name":"Query"},"mutationType":null,"types":[{"kind":"OBJECT","name":"Query","fields":[{"name":"hello","args":[],"type":{"kind":"SCALAR","name":"String"}}]}]}}}"#;
                 let (a, b) = body.split_at(40);
                 let _ = s
@@ -56,9 +58,17 @@ async fn graphql_introspection_is_fetched_live_through_the_gate() {
     let (port, seen) = graphql_origin().await;
     let post = |b: Value| {
         let (c, csrf, url) = (c.clone(), csrf.clone(), s.url("/import"));
-        async move { c.post(url).header("x-csrf-token", csrf).json(&b).send().await.unwrap() }
+        async move {
+            c.post(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+        }
     };
-    let body = json!({ "format": "graphql", "introspection_url": format!("http://127.0.0.1:{port}/graphql") });
+    let body =
+        json!({ "format": "graphql", "introspection_url": format!("http://127.0.0.1:{port}/graphql") });
 
     // Out of scope: refused by the gate, nothing sent.
     let r = post(body.clone()).await;
@@ -78,12 +88,23 @@ async fn graphql_introspection_is_fetched_live_through_the_gate() {
     let r = post(body.clone()).await;
     assert_eq!(r.status(), StatusCode::OK);
     let r: Value = r.json().await.unwrap();
-    assert_eq!((r["parsed"].as_u64(), r["added"].as_u64()), (Some(1), Some(1)), "{r}");
+    assert_eq!(
+        (r["parsed"].as_u64(), r["added"].as_u64()),
+        (Some(1), Some(1)),
+        "{r}"
+    );
     assert_eq!(r["hosts"], json!([format!("127.0.0.1:{port}")]));
     let sent = seen.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
     assert!(sent[0].starts_with("POST /graphql HTTP/1.1"), "{}", sent[0]);
-    let tabs: Value = c.get(s.url("/repeater/tabs")).send().await.unwrap().json().await.unwrap();
+    let tabs: Value = c
+        .get(s.url("/repeater/tabs"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert!(tabs["tabs"][0]["request"].as_str().unwrap().contains("hello"));
     let audit: Value = c.get(s.url("/audit")).send().await.unwrap().json().await.unwrap();
     assert!(audit.to_string().contains("fetched=http://127.0.0.1"), "{audit}");

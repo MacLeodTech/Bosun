@@ -55,7 +55,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
 - **In flight (2026-11-25), merge in this order:** #28 (Repeater tabs saved in the project, `/repeater/ws`), #29 (WP-44
   message editor), #30 (Repeater page WebSocket mode), #31 (`bosun login`, `status`, `repeater send`; the start of WP-26).
   #30 and #31 are stacked on the earlier ones. Then #32 (recorder under bursts), #33 (WP-75, stacked on #32), and the
-  `wp-43` branch (WP-32, WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
+  `wp-43` branch (WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
   merge `main` into the next branch and regenerate `docs/openapi.json` and `web/src/lib/api-types.ts` if they conflict.
 - **Next, in order** (see the phase plan below):
   1. **Phase 3, track A (M2):** WP-38 is the M1 follow-up. Intruder is in; its leftovers are under WP-47.
@@ -188,7 +188,7 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |

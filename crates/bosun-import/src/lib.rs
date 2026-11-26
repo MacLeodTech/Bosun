@@ -108,7 +108,12 @@ pub struct Item {
     /// `Transfer-Encoding`, `Connection`) are dropped: `raw` writes its own.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// The recorded response as HTTP/1.1 bytes (HAR and Burp files carry them).
+    pub response: Option<Vec<u8>>,
 }
+
+/// The standard GraphQL introspection query (what a client POSTs as `{"query": ...}` to the endpoint).
+pub const INTROSPECTION_QUERY: &str = "query IntrospectionQuery { __schema { queryType { name } mutationType { name } subscriptionType { name } types { ...FullType } } } fragment FullType on __Type { kind name description fields(includeDeprecated: true) { name description args { ...InputValue } type { ...TypeRef } isDeprecated deprecationReason } inputFields { ...InputValue } interfaces { ...TypeRef } enumValues(includeDeprecated: true) { name description isDeprecated deprecationReason } possibleTypes { ...TypeRef } } fragment InputValue on __InputValue { name description type { ...TypeRef } defaultValue } fragment TypeRef on __Type { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } } }";
 
 /// Where an item goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,7 +272,28 @@ impl Out {
             url: u.to_string(),
             headers,
             body,
+            response: None,
         });
+    }
+
+    /// Like `push`, and keeps `response` with the item if it was accepted. Over-long responses are dropped.
+    pub fn push_with_response(
+        &mut self,
+        name: &str,
+        method: &str,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        response: Option<Vec<u8>>,
+    ) {
+        let before = self.items.len();
+        self.push(name, method, url, headers, body);
+        if self.items.len() > before
+            && let Some(r) = response.filter(|r| !r.is_empty() && r.len() <= 2 * MAX_BODY + 65536)
+            && let Some(i) = self.items.last_mut()
+        {
+            i.response = Some(r);
+        }
     }
 }
 

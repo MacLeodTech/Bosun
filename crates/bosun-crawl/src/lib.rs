@@ -296,7 +296,8 @@ fn form_encode(fields: &[(&str, &str)]) -> String {
     out
 }
 
-fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
+/// The body of a chunked message (a cut-off one yields what there is).
+pub fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     loop {
         let eol = b.windows(2).position(|w| w == b"\r\n")?;

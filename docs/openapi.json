@@ -1581,7 +1581,7 @@
         "tags": [
           "crawl"
         ],
-        "description": "The crawls of this run of the server, newest first, with live counts.",
+        "description": "The crawls of this run of the server, newest first, with live counts. Progress is also sent on the event stream (crawl_started, crawl_progress, crawl_done).",
         "operationId": "crawl_list",
         "responses": {
           "200": {
@@ -2922,7 +2922,7 @@
         "tags": [
           "repeater"
         ],
-        "description": "Import request definitions from an OpenAPI or Swagger file, a GraphQL introspection result, a Postman collection, a HAR file, a list of URLs or a Burp XML export, and save them as Repeater tabs. The file is only parsed: nothing is sent, and a tab is sent later through the Repeater, which passes the scope gate. Files over 32 MiB, YAML aliases, XML entities and deeply nested input are refused. The reply lists the hosts the requests go to. The import is audited. Needs the tester role or above.",
+        "description": "Import request definitions from an OpenAPI or Swagger file, a GraphQL introspection result, a Postman collection, a HAR file, a list of URLs or a Burp XML export, and save them as Repeater tabs. The file is only parsed: nothing is sent, and a tab is sent later through the Repeater, which passes the scope gate. The one exception is a GraphQL import with introspection_url, which POSTs the introspection query to that endpoint through the same gate (an out-of-scope endpoint is refused with 403) and records the fetch as a Repeater flow. HAR and Burp responses are stored as flows (source import, nothing sent) only when store_responses is set. Files over 32 MiB, YAML aliases, XML entities and deeply nested input are refused. The reply lists the hosts the requests go to. The import is audited. Needs the tester role or above.",
         "operationId": "import_requests",
         "requestBody": {
           "content": {
@@ -9708,7 +9708,8 @@
           "intruder",
           "scanner",
           "crawler",
-          "plugin"
+          "plugin",
+          "import"
         ]
       },
       "FlowSummary": {
@@ -9936,8 +9937,7 @@
       "ImportBody": {
         "type": "object",
         "required": [
-          "format",
-          "content"
+          "format"
         ],
         "properties": {
           "base_url": {
@@ -9949,7 +9949,7 @@
           },
           "content": {
             "type": "string",
-            "description": "The file's text (at most 32 MiB)."
+            "description": "The file's text (at most 32 MiB). Not needed with `introspection_url`."
           },
           "dry_run": {
             "type": "boolean",
@@ -9957,6 +9957,17 @@
           },
           "format": {
             "$ref": "#/components/schemas/Format"
+          },
+          "introspection_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "GraphQL only: fetch the introspection result live by POSTing the introspection query to this endpoint\nURL (it is also the base URL). The request goes through the scope gate like any Repeater request; an\nout-of-scope endpoint is refused. `content` is ignored."
+          },
+          "store_responses": {
+            "type": "boolean",
+            "description": "HAR and Burp: also store the recorded responses as flows (source `import`). Nothing is sent."
           }
         }
       },
@@ -9968,6 +9979,7 @@
           "added",
           "not_added",
           "dropped",
+          "responses_stored",
           "notes",
           "hosts",
           "requests"
@@ -10020,6 +10032,12 @@
               "type": "string"
             },
             "description": "One line per request: method and URL."
+          },
+          "responses_stored": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Recorded responses stored as flows (0 unless `store_responses`).",
+            "minimum": 0
           }
         }
       },
@@ -11679,6 +11697,110 @@
                 "type": "string",
                 "enum": [
                   "intruder_state"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A crawl was accepted and is running.",
+            "required": [
+              "id",
+              "start",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "start": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "crawl_started"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A running crawl has more pages (sent at most a few times a second). Fetch `/crawl/crawls/{id}?from=N`.",
+            "required": [
+              "id",
+              "pages",
+              "requests",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "pages": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "requests": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "crawl_progress"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A crawl ended: `state` is `done`, `stopped` or `failed`.",
+            "required": [
+              "id",
+              "state",
+              "pages",
+              "requests",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "pages": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "requests": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "crawl_done"
                 ]
               }
             }

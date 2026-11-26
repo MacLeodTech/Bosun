@@ -14,6 +14,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bosun_crawl::{Options, Page, Report, Sink, Stop};
 use bosun_http::Exchange;
+use bosun_proxy::ProxyEvent;
 use bosun_model::{FlowSource, now_ms};
 use bosun_store::Role;
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,8 @@ struct Inner {
     requests: u64,
     error: Option<String>,
     report: Option<Report>,
+    /// When the last progress event went out.
+    last_event: Option<std::time::Instant>,
 }
 
 struct Job {
@@ -277,15 +280,36 @@ struct ApiSink {
     job: Arc<Job>,
 }
 
+impl ApiSink {
+    /// Tell the event stream how far the crawl is, at most four times a second.
+    fn progress(&self, force: bool) {
+        let (pages, requests) = {
+            let mut g = lock(&self.job.inner);
+            if !force && g.last_event.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250)) {
+                return;
+            }
+            g.last_event = Some(std::time::Instant::now());
+            (g.pages.len() as u64, g.requests)
+        };
+        self.st.inner.events.send(ProxyEvent::CrawlProgress {
+            id: self.job.id,
+            pages,
+            requests,
+        });
+    }
+}
+
 impl Sink for ApiSink {
     fn exchange(&self, ex: &Exchange) {
         let id = self.st.project().next_flow_id();
         self.st.inner.proxy.record(ex.to_new_flow(id, FlowSource::Crawler));
         lock(&self.job.inner).requests += 1;
+        self.progress(false);
     }
 
     fn page(&self, page: &Page) {
         lock(&self.job.inner).pages.push(page.clone());
+        self.progress(false);
     }
 }
 
@@ -311,6 +335,20 @@ async fn run(st: AppState, job: Arc<Job>, opts: Options) {
             g.state = Some(CrawlState::Failed);
         }
     }
+    let state = match g.state {
+        Some(CrawlState::Stopped) => "stopped",
+        Some(CrawlState::Failed) => "failed",
+        _ => "done",
+    };
+    let ev = ProxyEvent::CrawlDone {
+        id: job.id,
+        state: state.into(),
+        pages: g.pages.len() as u64,
+        requests: g.requests,
+        error: g.error.clone(),
+    };
+    drop(g);
+    st.inner.events.send(ev);
 }
 
 pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<CrawlStartBody>) -> R {
@@ -362,6 +400,10 @@ pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<Cra
         )
         .await;
     let out = info(&job);
+    st.inner.events.send(ProxyEvent::CrawlStarted {
+        id: job.id,
+        start: job.start.clone(),
+    });
     tokio::spawn(run(st.clone(), job, opts));
     Ok(Json(out).into_response())
 }

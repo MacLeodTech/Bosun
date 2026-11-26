@@ -58,6 +58,25 @@ pub enum ProxyEvent {
         errors: u64,
         error: Option<String>,
     },
+    /// A crawl was accepted and is running.
+    CrawlStarted {
+        id: u64,
+        start: Vec<String>,
+    },
+    /// A running crawl has more pages (sent at most a few times a second). Fetch `/crawl/crawls/{id}?from=N`.
+    CrawlProgress {
+        id: u64,
+        pages: u64,
+        requests: u64,
+    },
+    /// A crawl ended: `state` is `done`, `stopped` or `failed`.
+    CrawlDone {
+        id: u64,
+        state: String,
+        pages: u64,
+        requests: u64,
+        error: Option<String>,
+    },
     /// One request of an Intruder attack finished. (The same fields as a stored result.)
     IntruderResult {
         attack_id: i64,

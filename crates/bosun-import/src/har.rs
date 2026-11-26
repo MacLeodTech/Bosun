@@ -1,8 +1,47 @@
-//! HAR: the requests of `log.entries`. Responses are not imported.
+//! HAR: the requests of `log.entries`, with their recorded responses.
 
 use serde_json::Value;
 
-use crate::{ImportError, Out, form_body, has_header, text};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
+
+use crate::{ImportError, MAX_BODY, Out, form_body, has_header, text};
+
+/// The recorded response as HTTP/1.1 bytes. The body is stored decoded, so the framing and encoding headers go.
+fn response_bytes(r: &Value) -> Option<Vec<u8>> {
+    let status = r.get("status")?.as_u64().filter(|s| (100..1000).contains(s))?;
+    let content = r.get("content");
+    let t = content.and_then(|c| text(c, "text")).unwrap_or("");
+    let mut body = if content.and_then(|c| text(c, "encoding")) == Some("base64") {
+        B64.decode(t).ok()?
+    } else {
+        t.as_bytes().to_vec()
+    };
+    body.truncate(MAX_BODY);
+    let reason = text(r, "statusText").unwrap_or("").replace(['\r', '\n'], " ");
+    let mut out = format!("HTTP/1.1 {status} {reason}\r\n").into_bytes();
+    for h in r.get("headers").and_then(Value::as_array).into_iter().flatten() {
+        let (Some(k), Some(v)) = (text(h, "name"), text(h, "value")) else {
+            continue;
+        };
+        let k = k.trim();
+        if k.is_empty()
+            || k.starts_with(':')
+            || !k.bytes().all(|b| b.is_ascii_graphic() && b != b':')
+            || v.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0))
+            || matches!(
+                k.to_ascii_lowercase().as_str(),
+                "content-length" | "transfer-encoding" | "content-encoding" | "connection" | "keep-alive"
+            )
+        {
+            continue;
+        }
+        out.extend_from_slice(format!("{k}: {v}\r\n").as_bytes());
+    }
+    out.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+    out.extend_from_slice(&body);
+    Some(out)
+}
 
 pub fn parse(input: &[u8], out: &mut Out) -> Result<(), ImportError> {
     let doc: Value =
@@ -43,7 +82,8 @@ pub fn parse(input: &[u8], out: &mut Out) -> Result<(), ImportError> {
                 headers.push(("Content-Type".into(), ct.to_string()));
             }
         }
-        out.push(&format!("{method} {url}"), method, url, headers, body);
+        let response = e.get("response").and_then(response_bytes);
+        out.push_with_response(&format!("{method} {url}"), method, url, headers, body, response);
     }
     Ok(())
 }

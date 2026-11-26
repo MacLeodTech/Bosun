@@ -157,6 +157,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
   `child::clean_command`.
 - *Secrets in responses.* API responses are `Cache-Control: no-store`; tokens are stored only as SHA-256 hashes
   and shown once; password hashes never leave the account database.
+- *Reports (`bosun-report`).* A report carries target content (URLs, evidence excerpts), so each format escapes it
+  for its own syntax, and secrets (URL credentials, `Authorization`, cookies, bearer tokens, JWTs, `password=`-style
+  pairs) are redacted unless the caller opts out. The HTML report has no script, no links and no external loads,
+  and a CSP of `default-src 'none'` plus the hash of its own stylesheet, in a `<meta>` and as the header to serve it
+  under (`html_csp`); it is never rendered in the UI's origin. Redaction is pattern-based and best effort: a secret
+  with an unusual name can survive, so treat a report as sensitive. The CLI renders from a file offline; when an
+  endpoint serves reports it must require a role, serve HTML as a download or from a sandboxed origin, and write an
+  audit entry for `redact=false`.
 - *An open proxy.* The proxy refuses to start on a non-loopback address without proxy authentication or a
   client allowlist.
 

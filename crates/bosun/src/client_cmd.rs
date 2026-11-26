@@ -321,6 +321,38 @@ fn summary(r: &Value) -> String {
     format!("#{} {status}{ms}{flow}", r["index"].as_u64().unwrap_or(0))
 }
 
+/// `bosun report`: issues in as JSON (an array, or an object with an `issues` array), a report out.
+pub fn report(
+    input: &str,
+    format: &str,
+    output: Option<&std::path::Path>,
+    no_redact: bool,
+) -> Result<ExitCode> {
+    let format = bosun_report::Format::parse(format)?;
+    let mut text = String::new();
+    if input == "-" {
+        std::io::stdin().read_to_string(&mut text)?;
+    } else {
+        text = std::fs::read_to_string(input).with_context(|| format!("could not read {input}"))?;
+    }
+    let value: Value = serde_json::from_str(&text).context("the input is not valid JSON")?;
+    let list = match value {
+        Value::Array(_) => value,
+        Value::Object(mut o) => o
+            .remove("issues")
+            .context("expected an array of issues or an object with `issues`")?,
+        _ => bail!("expected an array of issues"),
+    };
+    let issues: Vec<bosun_report::Issue> =
+        serde_json::from_value(list).context("the issues are not in the expected shape")?;
+    let out = bosun_report::render(&issues, format, bosun_report::Options { redact: !no_redact });
+    match output {
+        Some(p) => std::fs::write(p, out).with_context(|| format!("could not write {}", p.display()))?,
+        None => std::io::stdout().write_all(out.as_bytes())?,
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

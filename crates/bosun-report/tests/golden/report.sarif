@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "results": [
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "https://app.example/"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "No Content-Security-Policy"
+          },
+          "properties": {
+            "confidence": "firm",
+            "evidence": [],
+            "id": 1,
+            "method": "GET",
+            "severity": "medium",
+            "status": "new"
+          },
+          "ruleId": "missing-csp",
+          "ruleIndex": 1
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "https://app.example/login?next=/home&token=[redacted]"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Session cookie without HttpOnly: The session cookie can be read by script."
+          },
+          "properties": {
+            "confidence": "certain",
+            "evidence": [
+              {
+                "excerpt": "HTTP/1.1 200 OK\nSet-Cookie: [redacted]\nContent-Type: text/html",
+                "part": "response"
+              }
+            ],
+            "id": 2,
+            "method": "GET",
+            "severity": "low",
+            "status": "confirmed"
+          },
+          "ruleId": "cookie-no-httponly",
+          "ruleIndex": 0
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "https://app.example/status"
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Server version disclosed"
+          },
+          "properties": {
+            "confidence": "tentative",
+            "evidence": [],
+            "id": 3,
+            "method": "GET",
+            "severity": "info",
+            "status": "false_positive"
+          },
+          "ruleId": "server-banner",
+          "ruleIndex": 2,
+          "suppressions": [
+            {
+              "justification": "marked a false positive in Bosun",
+              "kind": "external",
+              "status": "accepted"
+            }
+          ]
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/MacLeodTech/bosun",
+          "name": "Bosun",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "help": {
+                "text": "Set the HttpOnly attribute."
+              },
+              "id": "cookie-no-httponly",
+              "name": "cookie-no-httponly",
+              "properties": {
+                "tags": [
+                  "external/cwe/cwe-1004",
+                  "owasp/A05:2021"
+                ]
+              },
+              "shortDescription": {
+                "text": "Session cookie without HttpOnly"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "help": {
+                "text": "Send a Content-Security-Policy header."
+              },
+              "id": "missing-csp",
+              "name": "missing-csp",
+              "properties": {
+                "tags": [
+                  "external/cwe/cwe-693"
+                ]
+              },
+              "shortDescription": {
+                "text": "No Content-Security-Policy"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "id": "server-banner",
+              "name": "server-banner",
+              "properties": {
+                "tags": [
+                  "external/cwe/cwe-200"
+                ]
+              },
+              "shortDescription": {
+                "text": "Server version disclosed"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

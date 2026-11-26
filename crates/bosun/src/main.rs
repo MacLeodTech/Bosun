@@ -80,6 +80,21 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Render issues (a JSON array, such as the output of `GET /issues`) as a report: html, json, sarif, junit or
+    /// markdown. Offline: it reads a file and writes a file. Secrets are redacted unless --no-redact.
+    Report {
+        /// JSON file of issues, or `-` for stdin.
+        #[arg(long, short, default_value = "-")]
+        input: String,
+        #[arg(long, short, default_value = "html")]
+        format: String,
+        /// Write the report here (else stdout).
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+        /// Keep secrets (cookies, tokens, passwords) in the report.
+        #[arg(long)]
+        no_redact: bool,
+    },
     /// The Repeater: send a request again.
     Repeater {
         #[command(subcommand)]
@@ -308,6 +323,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             username,
         } => {
             return tokio::runtime::Runtime::new()?.block_on(client_cmd::login(&server, &profile, username));
+        }
+        Cmd::Report {
+            input,
+            format,
+            output,
+            no_redact,
+        } => {
+            return client_cmd::report(&input, &format, output.as_deref(), no_redact);
         }
         Cmd::Status { conn, json } => {
             return tokio::runtime::Runtime::new()?.block_on(client_cmd::status(

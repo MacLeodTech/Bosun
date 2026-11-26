@@ -10,6 +10,7 @@ fn bosun(data: &std::path::Path, client_dir: &std::path::Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_bosun"));
     c.args(["--data-dir", data.to_str().unwrap()])
         .env("BOSUN_CLIENT_DIR", client_dir)
+        .env("BOSUN_KEYCHAIN", "off")
         .env_remove("BOSUN_SERVER")
         .env_remove("BOSUN_TOKEN");
     c
@@ -169,6 +170,33 @@ fn login_status_and_repeater_send_work_against_a_running_engine() {
     assert!(err.contains("200"), "{err}");
     let got = srv.join().unwrap();
     assert!(got.starts_with("GET /x HTTP/1.1\r\nHost:"), "{got:?}");
+
+    // `intruder run`: a one-request attack from a plan file, results as CSV.
+    let (iport, isrv) = target();
+    std::fs::write(
+        cdir.path().join("ireq.txt"),
+        format!("GET /\u{a7}a\u{a7} HTTP/1.1\nHost: 127.0.0.1:{iport}\nConnection: close\n\n"),
+    )
+    .unwrap();
+    let plan = cdir.path().join("plan.json");
+    std::fs::write(
+        &plan,
+        format!(
+            r#"{{"scheme":"http","host":"127.0.0.1","port":{iport},"request_file":"ireq.txt",
+            "attack_type":"sniper","payload_sets":[{{"source":{{"type":"list","items":["one"]}}}}]}}"#
+        ),
+    )
+    .unwrap();
+    let run = bosun(data.path(), cdir.path())
+        .args(["intruder", "run", plan.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let ierr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(run.status.code(), Some(0), "{ierr}");
+    let csv = String::from_utf8_lossy(&run.stdout);
+    assert!(csv.starts_with("index,payloads,status"), "{csv}");
+    assert!(csv.lines().nth(1).unwrap().starts_with("0,one,200,"), "{csv}");
+    assert!(isrv.join().unwrap().starts_with("GET /one HTTP/1.1"));
 
     drop(engine.stdin.take());
     let _ = engine.wait();

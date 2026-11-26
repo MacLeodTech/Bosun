@@ -44,6 +44,109 @@ pub enum PayloadSource {
     Null { count: u64 },
     /// Each item as it is, in lower case, in upper case, capitalised and with its case swapped.
     CaseChanges { items: Vec<String> },
+    /// Calendar dates from `from` to `to` (inclusive, `YYYY-MM-DD`), every `step_days` days (negative counts down).
+    /// `format` uses `%Y`, `%m` and `%d` (default `%Y-%m-%d`).
+    Dates {
+        from: String,
+        to: String,
+        #[serde(default = "one")]
+        step_days: i64,
+        #[serde(default)]
+        format: Option<String>,
+    },
+    /// Each item with every combination of the substitutions applied (`a` to `@`, `o` to `0`, ...). Each rule
+    /// replaces all of its character in the item; at most 8 rules apply to one item.
+    CharSubstitution {
+        items: Vec<String>,
+        rules: Vec<Substitution>,
+    },
+    /// A small wordlist that ships with Bosun: `passwords`, `usernames`, `paths` or `numbers-0-99`.
+    Builtin { name: String },
+}
+
+/// One character-substitution rule.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
+pub struct Substitution {
+    pub from: char,
+    pub to: String,
+}
+
+const PASSWORDS: &str = include_str!("../wordlists/passwords.txt");
+const USERNAMES: &str = include_str!("../wordlists/usernames.txt");
+const PATHS: &str = include_str!("../wordlists/paths.txt");
+
+/// Days since 1970-01-01 for a proleptic Gregorian date.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+fn parse_date(s: &str) -> Result<i64, PlanError> {
+    let bad = || PlanError::Invalid(format!("`{s}` is not a date (use YYYY-MM-DD)"));
+    let mut it = s.split('-');
+    let (Some(y), Some(m), Some(d), None) = (it.next(), it.next(), it.next(), it.next()) else {
+        return Err(bad());
+    };
+    let (y, m, d): (i64, i64, i64) = (
+        y.parse().map_err(|_| bad())?,
+        m.parse().map_err(|_| bad())?,
+        d.parse().map_err(|_| bad())?,
+    );
+    if !(0..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return Err(bad());
+    }
+    let days = days_from_civil(y, m, d);
+    if civil_from_days(days) != (y, m, d) {
+        return Err(bad());
+    }
+    Ok(days)
+}
+
+fn format_date(days: i64, format: &str) -> String {
+    let (y, m, d) = civil_from_days(days);
+    format
+        .replace("%Y", &format!("{y:04}"))
+        .replace("%m", &format!("{m:02}"))
+        .replace("%d", &format!("{d:02}"))
+}
+
+fn substitutions(item: &str, rules: &[Substitution]) -> Vec<String> {
+    let mut applicable: Vec<&Substitution> = Vec::new();
+    for r in rules {
+        if item.contains(r.from) && !applicable.iter().any(|a| a.from == r.from) {
+            applicable.push(r);
+        }
+    }
+    applicable.truncate(8);
+    (0u32..1 << applicable.len())
+        .map(|mask| {
+            item.chars()
+                .map(|c| {
+                    applicable
+                        .iter()
+                        .enumerate()
+                        .find(|(i, r)| r.from == c && mask & (1 << i) != 0)
+                        .map_or_else(|| c.to_string(), |(_, r)| r.to.clone())
+                })
+                .collect()
+        })
+        .collect()
 }
 
 fn one() -> i64 {
@@ -187,6 +290,65 @@ impl PayloadSet {
                         .map(String::into_bytes)
                         .collect(),
                 )
+            }
+            PayloadSource::Dates {
+                from,
+                to,
+                step_days,
+                format,
+            } => {
+                if *step_days == 0 {
+                    return invalid("the step of a date range cannot be 0");
+                }
+                let (a, b) = (parse_date(from)?, parse_date(to)?);
+                let span = b - a;
+                if span != 0 && (span > 0) != (*step_days > 0) {
+                    return Ok(CompiledSet {
+                        source: Source::Items(Vec::new()),
+                        steps: Vec::new(),
+                    });
+                }
+                let count = span.unsigned_abs() / step_days.unsigned_abs() + 1;
+                if count > MAX_REQUESTS {
+                    return invalid("that date range is over a million payloads");
+                }
+                let format = format.as_deref().unwrap_or("%Y-%m-%d");
+                Source::Items(
+                    (0..count as i64)
+                        .map(|i| format_date(a + i * step_days, format).into_bytes())
+                        .collect(),
+                )
+            }
+            PayloadSource::CharSubstitution { items, rules } => {
+                if items.len() > MAX_ITEMS / 8 || rules.len() > 64 {
+                    return invalid("too many items or substitution rules");
+                }
+                Source::Items(
+                    items
+                        .iter()
+                        .flat_map(|s| substitutions(s, rules))
+                        .map(String::into_bytes)
+                        .collect(),
+                )
+            }
+            PayloadSource::Builtin { name } => {
+                let text = match name.as_str() {
+                    "passwords" => PASSWORDS,
+                    "usernames" => USERNAMES,
+                    "paths" => PATHS,
+                    "numbers-0-99" => "",
+                    _ => return invalid("unknown built-in wordlist"),
+                };
+                if name == "numbers-0-99" {
+                    Source::Items((0..100).map(|n| n.to_string().into_bytes()).collect())
+                } else {
+                    Source::Items(
+                        text.lines()
+                            .filter(|l| !l.is_empty())
+                            .map(|l| l.as_bytes().to_vec())
+                            .collect(),
+                    )
+                }
             }
             PayloadSource::Numbers {
                 from,
@@ -377,6 +539,75 @@ mod tests {
             .filter_map(|i| s.get(i))
             .map(|p| String::from_utf8(p).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn dates_and_substitutions_and_builtin() {
+        let d = |from: &str, to: &str, step, format: Option<&str>| {
+            PayloadSet {
+                source: PayloadSource::Dates {
+                    from: from.into(),
+                    to: to.into(),
+                    step_days: step,
+                    format: format.map(Into::into),
+                },
+                processing: vec![],
+            }
+            .compile()
+        };
+        assert_eq!(
+            all(&d("2024-02-28", "2024-03-01", 1, None).unwrap()),
+            ["2024-02-28", "2024-02-29", "2024-03-01"]
+        );
+        assert_eq!(
+            all(&d("2023-03-01", "2023-02-27", -1, Some("%d/%m/%Y")).unwrap()),
+            ["01/03/2023", "28/02/2023", "27/02/2023"]
+        );
+        assert!(d("2023-02-30", "2023-03-01", 1, None).is_err());
+        assert!(d("2023-01-01", "2023-01-02", 0, None).is_err());
+        assert!(all(&d("2023-01-02", "2023-01-01", 1, None).unwrap()).is_empty());
+        let sub = set(
+            PayloadSource::CharSubstitution {
+                items: vec!["foo".into(), "xyz".into()],
+                rules: vec![
+                    Substitution {
+                        from: 'o',
+                        to: "0".into(),
+                    },
+                    Substitution {
+                        from: 'f',
+                        to: "ph".into(),
+                    },
+                ],
+            },
+            vec![],
+        );
+        assert_eq!(all(&sub), ["foo", "f00", "phoo", "ph00", "xyz"]);
+        let b = set(
+            PayloadSource::Builtin {
+                name: "passwords".into(),
+            },
+            vec![],
+        );
+        assert!(b.len() >= 20);
+        assert!(
+            PayloadSet {
+                source: PayloadSource::Builtin { name: "nope".into() },
+                processing: vec![]
+            }
+            .compile()
+            .is_err()
+        );
+        assert_eq!(
+            set(
+                PayloadSource::Builtin {
+                    name: "numbers-0-99".into()
+                },
+                vec![]
+            )
+            .len(),
+            100
+        );
     }
 
     fn numbers(from: i64, to: i64, step: i64, base: NumberBase, min_digits: u8) -> Vec<String> {

@@ -8476,6 +8476,87 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "Calendar dates from `from` to `to` (inclusive, `YYYY-MM-DD`), every `step_days` days (negative counts down).\n`format` uses `%Y`, `%m` and `%d` (default `%Y-%m-%d`).",
+            "required": [
+              "from",
+              "to",
+              "type"
+            ],
+            "properties": {
+              "format": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "from": {
+                "type": "string"
+              },
+              "step_days": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "to": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "dates"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Each item with every combination of the substitutions applied (`a` to `@`, `o` to `0`, ...). Each rule\nreplaces all of its character in the item; at most 8 rules apply to one item.",
+            "required": [
+              "items",
+              "rules",
+              "type"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Substitution"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "char_substitution"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A small wordlist that ships with Bosun: `passwords`, `usernames`, `paths` or `numbers-0-99`.",
+            "required": [
+              "name",
+              "type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "builtin"
+                ]
+              }
+            }
           }
         ],
         "description": "A source of payloads."
@@ -10036,6 +10117,22 @@
         "properties": {
           "stopped": {
             "type": "boolean"
+          }
+        }
+      },
+      "Substitution": {
+        "type": "object",
+        "description": "One character-substitution rule.",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
           }
         }
       },

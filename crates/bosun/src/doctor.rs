@@ -71,6 +71,26 @@ pub fn run(cfg: &Config) -> Vec<Finding> {
                     Level::Ok,
                     format!("CA fingerprint (SHA-256): {}", ca.fingerprint()),
                 );
+                if ca.days_left() < 0 {
+                    push(
+                        &mut out,
+                        Level::Fail,
+                        format!(
+                            "the CA expired on {}; run `bosun ca rotate`",
+                            ca.not_after().date()
+                        ),
+                    );
+                } else if ca.days_left() <= bosun_ca::EXPIRY_WARN_DAYS {
+                    push(
+                        &mut out,
+                        Level::Warn,
+                        format!(
+                            "the CA expires in {} days ({}); run `bosun ca rotate` and replace it wherever it is installed",
+                            ca.days_left(),
+                            ca.not_after().date()
+                        ),
+                    );
+                }
                 if in_system_store(ca.cert_pem()) {
                     push(
                         &mut out,

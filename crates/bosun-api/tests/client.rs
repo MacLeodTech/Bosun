@@ -650,6 +650,7 @@ async fn scope_rules_proxy_and_ca() {
             && !ca.fingerprint_sha256.is_empty()
             && !ca.spki_sha256.is_empty()
     );
+    assert!(ca.days_left > 365 && !ca.expiring && ca.not_after > 0 && ca.permitted_domains.is_empty());
     // The test engine has no browser launcher.
     assert!(c.launch_browser().await.unwrap_err().is_forbidden());
 

@@ -185,8 +185,16 @@ enum CaCmd {
         #[arg(long)]
         der: bool,
     },
-    /// Show the fingerprint and SPKI hash.
+    /// Show the fingerprint, SPKI hash, expiry and name constraint.
     Info,
+    /// Replace the CA with a new one. The old certificate is kept under `ca/previous/`, its key is deleted.
+    /// Restart Bosun afterwards; the launched browser is pinned to the new key the next time it starts.
+    Rotate {
+        /// Make the new CA name-constrained: usable only for this domain and its subdomains (repeatable),
+        /// never for IP addresses. For installing on test devices.
+        #[arg(long = "permit-domain", value_name = "DOMAIN")]
+        permit_domain: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -295,6 +303,27 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Ca { cmd } => {
             bosun::private_dir(&paths.data)?;
             let ca = bosun::load_ca(&cfg, &paths)?;
+            if let CaCmd::Rotate { permit_domain } = &cmd {
+                let opts = bosun_ca::CaOptions {
+                    permitted_domains: permit_domain.clone(),
+                };
+                let (new, r) = bosun::rotate_ca(&cfg, &paths, &opts)?;
+                println!(
+                    "old CA:       {} (certificate kept in {})",
+                    r.old_fingerprint,
+                    r.archived_cert.display()
+                );
+                println!("new CA:       {}", new.fingerprint());
+                println!("SPKI SHA-256: {}", new.spki_hash());
+                if !new.permitted_domains().is_empty() {
+                    println!("limited to:   {}", new.permitted_domains().join(", "));
+                }
+                println!(
+                    "Restart Bosun to use it. Browsers launched from Bosun pick up the new pin; a CA you installed \
+                     anywhere else (system store, test devices) must be replaced with `bosun ca export`."
+                );
+                return Ok(ExitCode::SUCCESS);
+            }
             match cmd {
                 CaCmd::Export { out, der } => {
                     let bytes: Vec<u8> = if der {
@@ -313,7 +342,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     println!("certificate:  {}", ca.cert_path().display());
                     println!("SHA-256:      {}", ca.fingerprint());
                     println!("SPKI SHA-256: {}", ca.spki_hash());
+                    println!(
+                        "expires:      {} ({} days left)",
+                        ca.not_after().date(),
+                        ca.days_left()
+                    );
+                    if ca.permitted_domains().is_empty() {
+                        println!("constraint:   none (valid for any name)");
+                    } else {
+                        println!("constraint:   {}", ca.permitted_domains().join(", "));
+                    }
                 }
+                CaCmd::Rotate { .. } => {}
             }
         }
         Cmd::User { cmd } => {

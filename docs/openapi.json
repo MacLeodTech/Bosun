@@ -6807,14 +6807,39 @@
         "required": [
           "fingerprint_sha256",
           "spki_sha256",
-          "pem"
+          "pem",
+          "not_after",
+          "days_left",
+          "expiring",
+          "permitted_domains"
         ],
         "properties": {
+          "days_left": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Whole days until expiry (negative once expired)."
+          },
+          "expiring": {
+            "type": "boolean",
+            "description": "True when the CA expires within 30 days or already has."
+          },
           "fingerprint_sha256": {
             "type": "string"
           },
+          "not_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Expiry, seconds since the Unix epoch."
+          },
           "pem": {
             "type": "string"
+          },
+          "permitted_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Domains a name-constrained CA is limited to; empty when unconstrained."
           },
           "spki_sha256": {
             "type": "string"

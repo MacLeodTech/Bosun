@@ -10,7 +10,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
 - **Recorder under bursts** (PR #32). The proxy now counts refused connections, and a test pins how the recorder
-  behaves under a burst (the loss seen at about 7,000 requests a second was connections refused, not flows dropped).
+  behaves under a burst (see the PR for what the 7,000 requests a second burst showed).
 - **WP-75 History query language and saved filters** (PR #33, UI in the `wp-43` branch). The grammar is parsed in Rust
   (`GET /flows/query` for chips and errors, `GET /flows?q=`), compiled to SQL with bound parameters only, a 5 second
   deadline, a `history_query` fuzz target, the query bar with completion and recent queries, and saved filters.

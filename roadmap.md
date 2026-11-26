@@ -188,7 +188,7 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-42, WP-45, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-42, WP-45, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
@@ -199,7 +199,6 @@ valid in the "Depends on" column.
 | [ ] | WP-39 | TOTP second factor | 3 | M | WP-07 |
 | [ ] | WP-23 | Server mode in the engine | 3 | M | WP-03 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
-| [ ] | WP-25 | CLI: local admin commands | 3 | M | WP-07, WP-16 |
 | [ ] | WP-26 | CLI: client commands | 3 | L | WP-14 |
 | [ ] | WP-20 | Data key in the OS keychain | 3 | M | |
 | [ ] | WP-21 | Browser provisioning | 3 | M | WP-01 |

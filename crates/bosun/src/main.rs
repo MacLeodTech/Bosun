@@ -7,8 +7,9 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use bosun::{Config, Engine, Paths, doctor};
 use bosun_store::{AppDb, Role};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
+mod admin_cmd;
 mod banner;
 mod client_cmd;
 
@@ -47,6 +48,9 @@ enum Cmd {
         /// log to stderr only, and exit when stdin closes.
         #[arg(long)]
         embedded: bool,
+        /// Record only: run the proxy without the web UI/API (no accounts, no listener for them).
+        #[arg(long, conflicts_with = "embedded")]
+        no_ui: bool,
     },
     /// Check the install for common problems.
     Doctor,
@@ -59,6 +63,25 @@ enum Cmd {
     User {
         #[command(subcommand)]
         cmd: UserCmd,
+    },
+    /// Manage projects in the data directory (no engine needed; refuses when a running Bosun has the project).
+    Project {
+        #[command(subcommand)]
+        cmd: admin_cmd::ProjectCmd,
+    },
+    /// Manage API tokens.
+    Token {
+        #[command(subcommand)]
+        cmd: admin_cmd::TokenCmd,
+    },
+    /// Show the audit log.
+    Audit(admin_cmd::AuditArgs),
+    /// Print a shell completion script.
+    Completions { shell: clap_complete::Shell },
+    /// Write man pages (bosun.1 and one per subcommand) to a directory.
+    Man {
+        #[arg(short, long, default_value = ".")]
+        out: PathBuf,
     },
     /// Print an example configuration file.
     ExampleConfig,
@@ -175,10 +198,14 @@ enum UserCmd {
         role: String,
     },
     /// Set a password (read from stdin); signs the user out everywhere.
-    Passwd {
-        username: String,
+    Passwd { username: String },
+    /// List the accounts.
+    List {
+        #[arg(long)]
+        json: bool,
     },
-    List,
+    #[command(flatten)]
+    Admin(admin_cmd::UserAdminCmd),
 }
 
 fn main() -> ExitCode {
@@ -194,7 +221,7 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e:#}");
-            ExitCode::FAILURE
+            admin_cmd::exit_code(&e)
         }
     }
 }
@@ -211,6 +238,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             proxy,
             listen,
             embedded,
+            no_ui,
         } => {
             if let Some(p) = project {
                 cfg.project = p;
@@ -232,7 +260,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
             cfg.proxy.validate().map_err(anyhow::Error::msg)?;
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-            let r = if embedded {
+            let r = if no_ui {
+                rt.block_on(serve_no_ui(cfg))
+            } else if embedded {
                 rt.block_on(serve_embedded(cfg))
             } else {
                 rt.block_on(serve(cfg))
@@ -315,7 +345,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         u.username
                     );
                 }
-                UserCmd::List => {
+                UserCmd::List { json: true } => return admin_cmd::user_list_json(&paths),
+                UserCmd::Admin(a) => return admin_cmd::user(&paths, a),
+                UserCmd::List { json: false } => {
                     for u in app.list_users()? {
                         println!("{:>4}  {:<24} {}", u.id, u.username, u.role.as_str());
                     }
@@ -379,6 +411,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
             list,
             limit,
         } => return decode_cmd(&steps, file.as_deref(), smart, list, limit),
+        Cmd::Project { cmd } => return admin_cmd::project(&paths, cmd),
+        Cmd::Token { cmd } => return admin_cmd::token(&paths, cmd),
+        Cmd::Audit(a) => return admin_cmd::audit_log(&paths, a),
+        Cmd::Completions { shell } => return admin_cmd::completions(shell, Cli::command()),
+        Cmd::Man { out } => return admin_cmd::man_pages(Cli::command(), &out),
         Cmd::ExampleConfig => print!("{}", include_str!("../../../bosun.toml.example")),
     }
     Ok(ExitCode::SUCCESS)
@@ -440,10 +477,16 @@ fn decode_cmd(
 }
 
 fn read_password() -> Result<String> {
-    eprint!("password (min 12 characters, read from stdin): ");
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
-    let pw = line.trim_end_matches(['\r', '\n']).to_string();
+    use std::io::IsTerminal;
+    let pw = if std::io::stdin().is_terminal() {
+        // Typed at a terminal: not echoed.
+        rpassword::prompt_password("password (min 12 characters): ")?
+    } else {
+        eprint!("password (min 12 characters, read from stdin): ");
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        line.trim_end_matches(['\r', '\n']).to_string()
+    };
     bosun_api::auth::check_password_policy(&pw).map_err(anyhow::Error::msg)?;
     Ok(pw)
 }
@@ -465,6 +508,22 @@ async fn serve(cfg: Config) -> Result<()> {
         eprintln!("  First run: open the link above, or enter this one-time setup code: {code}");
     }
     eprintln!();
+    shutdown_signal().await;
+    eprintln!("shutting down");
+    engine.shutdown().await;
+    Ok(())
+}
+
+/// `bosun serve --no-ui`: the proxy and the recorder only.
+async fn serve_no_ui(cfg: Config) -> Result<()> {
+    let engine = Engine::start_opts(&cfg, false, true).await?;
+    eprintln!(
+        "  Bosun {} (recording only, no web UI)",
+        env!("CARGO_PKG_VERSION")
+    );
+    eprintln!("  proxy     http://{}", engine.proxy_addr);
+    eprintln!("  project   {}", engine.project_path.display());
+    eprintln!("  CA        {}", engine.ca_fingerprint);
     shutdown_signal().await;
     eprintln!("shutting down");
     engine.shutdown().await;

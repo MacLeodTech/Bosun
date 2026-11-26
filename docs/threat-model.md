@@ -263,6 +263,16 @@ This document says what is protected, from whom, and how. Code comments refer ba
   the password from stdin, makes a 90-day API token and signs the session out again; the token is kept in
   `profiles.json` in the client directory, created readable by its owner only (0600 on Unix; Windows relies on the
   profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. An OS keychain is not used yet.
+- *The local admin commands (`bosun project`, `token`, `user role|delete|sessions`, `audit`).* They work on the data
+  directory directly, so they are as trusted as the account that can read it: whoever can run them can already read the
+  data key, the account database and every project. They add no remote surface. They write the same audit entries as
+  the API (account, role, session, token and project changes; imports that were refused), with no user name and
+  "via CLI" in the detail, and a project that a running engine holds is refused (exit 3) instead of being opened a
+  second time, by the same lock the engine uses. Deleting a project or an account asks for the name to be typed, or
+  `--yes` when there is no terminal; the last admin can neither be demoted nor deleted. `token create` prints the
+  token once on stdout (only its hash is stored), so keep it out of shared logs. Imports use the same rebuild as the
+  API (`import_foreign`), never opening the file in place. `serve --no-ui` runs the proxy and recorder without the
+  UI/API listener or accounts. A password typed at a terminal is not echoed.
 - *The Repeater API (`/repeater/send`, `/repeater/ws`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
   the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
   unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a

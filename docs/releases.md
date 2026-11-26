@@ -9,6 +9,13 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-25 CLI local admin commands** (`wp-43`, 2026-11-26). `bosun project list|create|rename|delete|export|import|backup`,
+  `token create|list|revoke`, `user role|delete|sessions`, `audit` (with filters and paging), `serve --no-ui`,
+  `completions` and `man`. They work on the data directory with no engine running; project commands exit 3 while
+  a running Bosun holds the project. Every change writes an audit entry ("via CLI"). Exit codes: 0 ok, 1 failure,
+  2 usage, 3 project in use, 4 not found, 5 delete not confirmed. New dependencies: `rpassword`, `clap_complete`,
+  `clap_mangen`. Not done: revoking a single session from the CLI.
+
 - **WP-45 Engagement helpers, rest** (`wp-43`, 2026-11-26). `GET /analysis?host=&port=&limit=`: the distinct endpoints and
   parameters of one host across the history, with counts, status codes and example values. Paths fold ids into
   `{n}`, `{uuid}` and `{hex}`, so `/users/1` and `/users/2` are one endpoint. It reads the newest 5,000 requests

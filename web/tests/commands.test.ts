@@ -39,7 +39,8 @@ test('status forms', () => {
 });
 
 test('bad terms are reported, not thrown, and unknown keys are plain text', () => {
-  assert.equal(parseQuery('scope:out').errors.length, 1);
+  assert.equal(parseQuery('scope:out').errors.length, 0);
+  assert.equal(parseQuery('scope:out').filter.serverOnly, true);
   assert.equal(parseQuery('ext:png').errors.length, 1);
   assert.equal(parseQuery('-host:x').errors.length, 1);
   assert.equal(parseQuery('method:').errors.length, 1);
@@ -47,6 +48,16 @@ test('bad terms are reported, not thrown, and unknown keys are plain text', () =
   const p = parseQuery('foo:bar');
   assert.equal(p.filter.text, 'foo:bar');
   assert.deepEqual(p.errors, []);
+});
+
+test('terms only the server knows keep the live tail from matching on this side', () => {
+  for (const q of ['tag:x', 'a or b', 'not a', '(a b)', '-(a)', 'header:x=y', 'size:>1k', 'since:1h']) {
+    const p = parseQuery(q);
+    assert.equal(p.filter.serverOnly, true, q);
+  }
+  for (const q of ['host:a.com', 'login', 'order status', DEFAULT_QUERY]) assert.equal(parseQuery(q).filter.serverOnly, false, q);
+  // Such a term is never taken for free text, so replacing the text leaves it alone.
+  assert.equal(withText('tag:x login', 'other'), 'tag:x other');
 });
 
 test('the default query hides the usual static extensions', () => {
@@ -206,4 +217,59 @@ test('only well-formed messages get through, and they carry ids only', () => {
     { type: 'select', from: 'abcd1234', selected: new Array(6000).fill(1), selectedId: null, openId: null }, { type: 'alive', id: 'no' }, { type: 'other', id: 'abcd1234' }]) {
     assert.equal(parseMsg(bad), null, JSON.stringify(bad)?.slice(0, 60));
   }
+});
+
+// ---- the query bar
+
+import { applyCompletion, byteToIndex, complete, MAX_PAST, remember } from '../src/lib/querybar.ts';
+
+test('keys complete from a prefix, and values after the colon', () => {
+  const c = complete('host:a he', 9);
+  assert.deepEqual(c.items.map((i) => i.insert), ['header:']);
+  assert.equal(applyCompletion('host:a he', c, c.items[0]!).line, 'host:a header:');
+  const m = complete('method:GET,PO', 13);
+  assert.deepEqual(m.items.map((i) => i.insert), ['POST']);
+  assert.equal(applyCompletion('method:GET,PO', m, m.items[0]!).line, 'method:GET,POST');
+  assert.deepEqual(complete('-sta', 4).items.map((i) => i.insert), ['status:']);
+  assert.deepEqual(complete('(sco', 4).items.map((i) => i.insert), ['scope:']);
+});
+
+test('nothing is offered inside quotes, after a full word or for free-form keys', () => {
+  assert.deepEqual(complete('"host', 5).items, []);
+  assert.deepEqual(complete('host', 4).items, []);
+  assert.deepEqual(complete('tag:x', 5).items, []);
+  assert.deepEqual(complete('', 0).items, []);
+  assert.deepEqual(complete('login ', 6).items, []);
+});
+
+test('completion never throws and stays inside the line', () => {
+  const r = rng(7);
+  const chars = ' abcdefmhst:,-("é\u{1f600}';
+  for (let n = 0; n < 2000; n++) {
+    const line = Array.from({ length: Math.floor(r() * 20) }, () => chars[Math.floor(r() * chars.length)]!).join('');
+    const caret = Math.floor(r() * (line.length + 3)) - 1;
+    const c = complete(line, caret);
+    assert.ok(c.from >= 0 && c.from <= c.to && c.to <= line.length, `${JSON.stringify(line)} ${caret}`);
+    for (const s of c.items) applyCompletion(line, c, s);
+  }
+});
+
+test('past queries: newest first, no repeats, capped, blanks dropped', () => {
+  let p: string[] = [];
+  for (let i = 0; i < 40; i++) p = remember(p, `q${i}`);
+  assert.equal(p.length, MAX_PAST);
+  assert.equal(p[0], 'q39');
+  p = remember(p, 'q30');
+  assert.equal(p[0], 'q30');
+  assert.equal(p.filter((x) => x === 'q30').length, 1);
+  assert.equal(remember(p, '   '), p);
+});
+
+test('server byte offsets map to string positions', () => {
+  const s = 'aé\u{1f600}b';
+  assert.equal(byteToIndex(s, 0), 0);
+  assert.equal(byteToIndex(s, 1), 1);
+  assert.equal(byteToIndex(s, 3), 2);
+  assert.equal(byteToIndex(s, 7), 4);
+  assert.equal(byteToIndex(s, 99), s.length);
 });

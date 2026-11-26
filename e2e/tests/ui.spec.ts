@@ -519,6 +519,67 @@ test('filter bar: terms become chips, a bad term is explained, and filters can b
   await applyFilter('');
 });
 
+test('query bar: or, not and groups run on the server, keys complete, a mistake is refused, saved filters outlive a reload', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/q-alpha`);
+  await viaProxy(PROXY_PORT, `${TARGET}/q-beta`);
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  const alpha = page.locator('.row', { hasText: '/q-alpha' });
+  const beta = page.locator('.row', { hasText: '/q-beta' });
+  await applyFilter('');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toBeVisible();
+
+  // Operators, groups and a newer key (path:) are the server's.
+  await applyFilter('(path:q-alpha or path:nothing-like-it) -ext:css');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toHaveCount(0);
+  await applyFilter('host:127.0.0.1 not path:q-alpha path:q-');
+  await expect(beta).toBeVisible();
+  await expect(alpha).toHaveCount(0);
+  await expect(page.locator('.chip', { hasText: 'path:q-' }).first()).toBeVisible();
+
+  // Completion: a key from a prefix, then a value; Tab takes the first suggestion.
+  await filterBox().fill('meth');
+  await expect(page.getByRole('option', { name: /method:/ })).toBeVisible();
+  await filterBox().press('Tab');
+  await expect(filterBox()).toHaveValue('method:');
+  await expect(page.getByRole('option', { name: 'GET' })).toBeVisible();
+  await filterBox().press('ArrowDown');
+  await filterBox().press('Enter');
+  await expect(filterBox()).toHaveValue('method:GET');
+  await filterBox().press('Enter');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toBeVisible();
+
+  // A mistake is explained and nothing is applied: the list and the applied line stay as they were.
+  await filterBox().fill('status:banana path:q-alpha');
+  await filterBox().press('Enter');
+  await expect(page.getByRole('alert')).toContainText('status: expects');
+  await expect(beta).toBeVisible();
+  await expect(page.locator('.chip', { hasText: 'method:GET' })).toBeVisible();
+
+  // Saved on the server, so a reload (which drops everything the page held) still has it, and it re-runs.
+  await applyFilter('path:q-alpha or path:q-beta');
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'Save the applied filter as…' }).click();
+  await page.getByLabel('Name for this filter').fill('both q');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:q-alpha');
+  await expect(beta).toHaveCount(0);
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'both q', exact: true }).click();
+  await expect(filterBox()).toHaveValue('path:q-alpha or path:q-beta');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toBeVisible();
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'Delete “both q”' }).click();
+  await applyFilter('');
+});
+
 test('history: shift-click and Ctrl+A select several, delete can be undone, and an undone delete changes nothing', async () => {
   await page.mouse.move(2, 2);
   for (const p of ['ms-a', 'ms-b', 'ms-c']) await viaProxy(PROXY_PORT, `${TARGET}/${p}`);

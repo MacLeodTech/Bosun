@@ -18,6 +18,8 @@ use sha2::{Digest, Sha256};
 pub enum ReportError {
     #[error("unknown report format {0:?} (use html, json, sarif, junit or markdown)")]
     UnknownFormat(String),
+    #[error("unknown tracker {0:?} (use github, jira or linear)")]
+    UnknownTracker(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
@@ -496,6 +498,121 @@ fn markdown_report(v: &[Issue]) -> String {
         }
     }
     o
+}
+
+// ---- Issue tracker export ----
+
+/// An issue tracker whose "new issue" request body Bosun can prepare. Bosun sends nothing to it: the user pastes
+/// the title and body, or posts the payload themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tracker {
+    Github,
+    Jira,
+    Linear,
+}
+
+impl Tracker {
+    pub fn parse(s: &str) -> Result<Self, ReportError> {
+        match s.to_ascii_lowercase().as_str() {
+            "github" => Ok(Self::Github),
+            "jira" => Ok(Self::Jira),
+            "linear" => Ok(Self::Linear),
+            _ => Err(ReportError::UnknownTracker(s.to_string())),
+        }
+    }
+}
+
+/// One issue prepared for a tracker.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackerExport {
+    pub title: String,
+    /// The description as Markdown (what GitHub and Linear take; readable anywhere).
+    pub body: String,
+    pub labels: Vec<String>,
+    /// The JSON body for the tracker's create-issue call (GitHub REST; Jira REST v3 with an Atlassian document, which
+    /// still needs the project key and issue type; Linear: the input fields, which still need the team id).
+    pub payload: serde_json::Value,
+}
+
+/// Prepare one issue for `tracker`. Secrets are redacted unless `opts.redact` is off.
+pub fn tracker_export(issue: &Issue, tracker: Tracker, opts: Options) -> TrackerExport {
+    let v = prepared(std::slice::from_ref(issue), opts);
+    let i = &v[0];
+    let title = format!("[{}] {}", sev_str(i.severity), i.title);
+    let mut body = String::new();
+    let _ = writeln!(body, "- Severity: {}", sev_str(i.severity));
+    let _ = writeln!(body, "- Confidence: {}", conf_str(i.confidence));
+    let _ = writeln!(body, "- Request: {} {}", md_escape(&i.method), md_escape(&i.url));
+    if !i.cwe.is_empty() {
+        let c: Vec<String> = i.cwe.iter().map(|c| format!("CWE-{c}")).collect();
+        let _ = writeln!(body, "- CWE: {}", c.join(", "));
+    }
+    if !i.owasp.is_empty() {
+        let _ = writeln!(body, "- OWASP: {}", md_escape(&i.owasp.join(", ")));
+    }
+    if !i.description.is_empty() {
+        let _ = write!(body, "\n{}\n", md_escape(&i.description));
+    }
+    if !i.remediation.is_empty() {
+        let _ = write!(body, "\n**Remediation:** {}\n", md_escape(&i.remediation));
+    }
+    for e in &i.evidence {
+        let _ = write!(
+            body,
+            "\nEvidence ({}):\n\n{}",
+            md_escape(&e.part),
+            md_fence(&e.excerpt)
+        );
+    }
+    let labels = vec![
+        "security".to_string(),
+        format!("severity:{}", sev_str(i.severity)),
+    ];
+    let payload = match tracker {
+        Tracker::Github => serde_json::json!({ "title": title, "body": body, "labels": labels }),
+        Tracker::Linear => serde_json::json!({ "title": title, "description": body }),
+        Tracker::Jira => {
+            let mut content = vec![adf_para(&format!(
+                "Severity {}, confidence {}. {} {}",
+                sev_str(i.severity),
+                conf_str(i.confidence),
+                i.method,
+                i.url
+            ))];
+            if !i.description.is_empty() {
+                content.push(adf_para(&i.description));
+            }
+            if !i.remediation.is_empty() {
+                content.push(adf_para(&format!("Remediation: {}", i.remediation)));
+            }
+            for e in &i.evidence {
+                let t = if e.excerpt.is_empty() {
+                    " "
+                } else {
+                    e.excerpt.as_str()
+                };
+                content.push(
+                    serde_json::json!({ "type": "codeBlock", "content": [{ "type": "text", "text": t }] }),
+                );
+            }
+            serde_json::json!({ "fields": {
+                "summary": title,
+                "labels": ["security", format!("severity-{}", sev_str(i.severity))],
+                "description": { "type": "doc", "version": 1, "content": content },
+            }})
+        }
+    };
+    TrackerExport {
+        title,
+        body,
+        labels,
+        payload,
+    }
+}
+
+fn adf_para(text: &str) -> serde_json::Value {
+    let t = if text.is_empty() { " " } else { text };
+    serde_json::json!({ "type": "paragraph", "content": [{ "type": "text", "text": t }] })
 }
 
 // ---- HTML ----

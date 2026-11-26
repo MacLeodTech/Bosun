@@ -931,6 +931,7 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/issues", "issues"),
         ("post", "/issues/rescan", "rescan_issues"),
         ("get", "/issues/report", "issues_report"),
+        ("get", "/issues/{id}/tracker", "issue_tracker"),
         ("get", "/issues/{id}", "issue"),
         ("patch", "/issues/{id}", "change_issue"),
         ("post", "/intruder/plan", "intruder_plan"),
@@ -1240,7 +1241,11 @@ async fn proxy_listeners_and_live_settings_change_without_a_restart() {
         .unwrap();
     let shown = c.list_listeners().await.unwrap();
     assert!(shown.iter().any(|l| l["max_connections"] == 5), "{shown:?}");
-    assert!(c.update_listener(id, &json!({"addr": addr, "max_connections": 0})).await.is_err());
+    assert!(
+        c.update_listener(id, &json!({"addr": addr, "max_connections": 0}))
+            .await
+            .is_err()
+    );
 
     // Remove: the port stops answering.
     c.remove_listener(id).await.unwrap();

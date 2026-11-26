@@ -33,7 +33,11 @@ async fn site(delay_ms: u64, many: bool) -> (u16, Seen) {
                     }
                     got.extend_from_slice(&buf[..n]);
                 }
-                let path = String::from_utf8_lossy(&got).split(' ').nth(1).unwrap_or("").to_string();
+                let path = String::from_utf8_lossy(&got)
+                    .split(' ')
+                    .nth(1)
+                    .unwrap_or("")
+                    .to_string();
                 log.lock().unwrap().push(path.clone());
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 let (status, ctype, body) = match path.as_str() {
@@ -80,7 +84,9 @@ async fn in_scope(s: &Stack, c: &reqwest::Client, csrf: &str) {
 
 async fn start(s: &Stack, c: &reqwest::Client, csrf: &str, port: u16, extra: Value) -> (StatusCode, Value) {
     let mut b = json!({ "start": [format!("http://127.0.0.1:{port}/")], "max_depth": 3, "delay_ms": 0 });
-    b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+    b.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
     let r = c
         .post(s.url("/crawl/crawls"))
         .header("x-csrf-token", csrf)
@@ -116,12 +122,24 @@ async fn a_crawl_stays_in_scope_and_announces_itself_on_the_event_stream() {
     in_scope(&s, &c, &csrf).await;
     let (port, seen) = site(0, false).await;
     let mut rx = s.events.subscribe();
-    let (st, v) = start(&s, &c, &csrf, port, json!({ "respect_robots": false, "use_sitemap": false })).await;
+    let (st, v) = start(
+        &s,
+        &c,
+        &csrf,
+        port,
+        json!({ "respect_robots": false, "use_sitemap": false }),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK, "{v}");
     let id = v["id"].as_u64().unwrap();
     let d = ended(&s, &c, id).await;
     assert_eq!(d["state"], "done", "{d}");
-    let urls: Vec<&str> = d["results"].as_array().unwrap().iter().map(|p| p["url"].as_str().unwrap()).collect();
+    let urls: Vec<&str> = d["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["url"].as_str().unwrap())
+        .collect();
     for p in ["/", "/a", "/b"] {
         assert!(urls.iter().any(|u| u.ends_with(p)), "{p} missing in {urls:?}");
     }
@@ -147,7 +165,11 @@ async fn a_crawl_stays_in_scope_and_announces_itself_on_the_event_stream() {
             }
         }
     }
-    assert_eq!(kinds.first().map(|k| k.0.as_str()), Some("crawl_started"), "{kinds:?}");
+    assert_eq!(
+        kinds.first().map(|k| k.0.as_str()),
+        Some("crawl_started"),
+        "{kinds:?}"
+    );
     assert!(kinds.iter().any(|k| k.0 == "crawl_progress"), "{kinds:?}");
     let done = kinds.last().unwrap();
     assert_eq!(done.0, "crawl_done");
@@ -181,7 +203,14 @@ async fn a_running_crawl_can_be_stopped_once() {
     in_scope(&s, &c, &csrf).await;
     let (port, seen) = site(150, true).await;
     let mut rx = s.events.subscribe();
-    let (_, v) = start(&s, &c, &csrf, port, json!({ "concurrency": 1, "respect_robots": false, "use_sitemap": false })).await;
+    let (_, v) = start(
+        &s,
+        &c,
+        &csrf,
+        port,
+        json!({ "concurrency": 1, "respect_robots": false, "use_sitemap": false }),
+    )
+    .await;
     let id = v["id"].as_u64().unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
     let stop = |c: reqwest::Client, csrf: String| {
@@ -193,7 +222,10 @@ async fn a_running_crawl_can_be_stopped_once() {
     assert_eq!(r.json::<Value>().await.unwrap()["stopped"], true);
     let d = ended(&s, &c, id).await;
     assert_eq!(d["state"], "stopped", "{d}");
-    assert!(seen.lock().unwrap().len() < 40, "it should not have finished the site");
+    assert!(
+        seen.lock().unwrap().len() < 40,
+        "it should not have finished the site"
+    );
     // Stopping an ended crawl says so, and an unknown one is not found.
     let r: Value = stop(c.clone(), csrf.clone()).await.json().await.unwrap();
     assert_eq!(r["stopped"], false);
@@ -223,7 +255,10 @@ async fn the_crawl_routes_need_a_session_and_a_role() {
     let (c, csrf) = s.admin().await;
     // Not signed in.
     let anon = client();
-    assert_eq!(anon.get(s.url("/crawl/crawls")).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        anon.get(s.url("/crawl/crawls")).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
     // A viewer may look, not start or stop.
     let r = c
         .post(s.url("/users"))

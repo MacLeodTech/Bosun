@@ -286,3 +286,73 @@ pub async fn report(State(st): State<AppState>, caller: Caller, Query(q): Query<
     );
     Ok(r)
 }
+
+#[derive(Debug, Deserialize)]
+pub struct TrackerQuery {
+    /// github, jira or linear.
+    tracker: Option<String>,
+    /// `0` keeps secrets (audited). Anything else redacts them.
+    redact: Option<String>,
+}
+
+/// What `GET /issues/{id}/tracker` returns: one issue prepared for an issue tracker.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TrackerReply {
+    pub title: String,
+    /// Markdown description.
+    pub body: String,
+    pub labels: Vec<String>,
+    /// The JSON body for the tracker's create-issue call.
+    #[schema(value_type = Object)]
+    pub payload: serde_json::Value,
+}
+
+/// `GET /issues/{id}/tracker`: one issue prepared for GitHub, Jira or Linear, to copy or post by hand. Bosun makes no
+/// request to the tracker. Tester role (the text leaves Bosun), secrets redacted unless `redact=0`, every export audited.
+pub async fn tracker(
+    State(st): State<AppState>,
+    caller: Caller,
+    Path(id): Path<i64>,
+    Query(q): Query<TrackerQuery>,
+) -> R {
+    caller.require(Role::Tester)?;
+    let tracker = bosun_report::Tracker::parse(q.tracker.as_deref().unwrap_or("github"))
+        .map_err(|e| reject(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    let redact = q.redact.as_deref() != Some("0");
+    let p = st.project();
+    let found = blocking(move || {
+        let Some(i) = p.issue(id)? else { return Ok(None) };
+        let flow = match i.flow_id {
+            Some(f) => p.get_flow(f)?,
+            None => None,
+        };
+        let method = flow
+            .as_ref()
+            .map(|f| f.summary.method.clone())
+            .unwrap_or_default();
+        Ok::<_, bosun_store::StoreError>(Some(report_issue(&i, method, flow.as_ref())))
+    })
+    .await?
+    .map_err(internal)?;
+    let Some(issue) = found else {
+        return Err(reject(StatusCode::NOT_FOUND, "no such issue"));
+    };
+    let x = bosun_report::tracker_export(&issue, tracker, bosun_report::Options { redact });
+    caller
+        .audit(
+            &st,
+            "issues.tracker_export",
+            &format!(
+                "issue {id} prepared for {tracker:?}{}",
+                if redact { "" } else { " with secrets kept" }
+            ),
+        )
+        .await;
+    Ok(Json(TrackerReply {
+        title: x.title,
+        body: x.body,
+        labels: x.labels,
+        payload: x.payload,
+    })
+    .into_response())
+}

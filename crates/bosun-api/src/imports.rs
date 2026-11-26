@@ -68,7 +68,11 @@ async fn fetch_introspection(st: &AppState, endpoint: &url::Url) -> Result<Strin
     use bosun_model::{FlowSource, RawResponse, Scheme, Target};
     let host = endpoint.host_str().unwrap_or_default();
     let port = endpoint.port_or_known_default().unwrap_or(80);
-    let scheme = if endpoint.scheme() == "https" { Scheme::Https } else { Scheme::Http };
+    let scheme = if endpoint.scheme() == "https" {
+        Scheme::Https
+    } else {
+        Scheme::Http
+    };
     let mut path = endpoint.path().to_string();
     if let Some(q) = endpoint.query() {
         path.push('?');
@@ -93,21 +97,27 @@ async fn fetch_introspection(st: &AppState, endpoint: &url::Url) -> Result<Strin
         .send(&Target::new(scheme, host, port), raw.as_bytes(), &opts)
         .await
         .map_err(|e| match e {
-            SendError::Refused(e) => reject(StatusCode::FORBIDDEN, &format!("refused by the scope gate: {e}")),
+            SendError::Refused(e) => {
+                reject(StatusCode::FORBIDDEN, &format!("refused by the scope gate: {e}"))
+            }
             e => reject(StatusCode::BAD_GATEWAY, &e.to_string()),
         })?;
     let id = st.project().next_flow_id();
     st.inner.proxy.record(ex.to_new_flow(id, FlowSource::Repeater));
     let bad = |m: String| reject(StatusCode::BAD_GATEWAY, &m);
-    let r = RawResponse::parse(&ex.response).map_err(|_| bad("the endpoint sent no usable response".into()))?;
+    let r =
+        RawResponse::parse(&ex.response).map_err(|_| bad("the endpoint sent no usable response".into()))?;
     if !(200..300).contains(&r.status) {
         return Err(bad(format!("the endpoint answered {}", r.status)));
     }
-    let chunked = r
-        .headers
-        .iter()
-        .any(|(k, v)| k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().ends_with(b"chunked"));
-    let body = if chunked { bosun_crawl::dechunk(&r.body).unwrap_or_default() } else { r.body };
+    let chunked = r.headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("transfer-encoding") && v.to_ascii_lowercase().ends_with(b"chunked")
+    });
+    let body = if chunked {
+        bosun_crawl::dechunk(&r.body).unwrap_or_default()
+    } else {
+        r.body
+    };
     String::from_utf8(body).map_err(|_| bad("the response is not text".into()))
 }
 
@@ -121,7 +131,9 @@ fn store_responses(st: &AppState, items: &[bosun_import::Item]) -> usize {
         let (Some(t), Some(request), Some(response)) = (it.target(), it.raw(), it.response.clone()) else {
             continue;
         };
-        let Ok(parsed) = RawResponse::parse(&response) else { continue };
+        let Ok(parsed) = RawResponse::parse(&response) else {
+            continue;
+        };
         let scheme = if t.https { Scheme::Https } else { Scheme::Http };
         let path = url::Url::parse(&it.url)
             .map(|u| u.path().to_string() + &u.query().map(|q| format!("?{q}")).unwrap_or_default())
@@ -159,14 +171,27 @@ fn store_responses(st: &AppState, items: &[bosun_import::Item]) -> usize {
 pub async fn import_requests(State(st): State<AppState>, caller: Caller, Json(mut b): Json<ImportBody>) -> R {
     caller.require(Role::Tester)?;
     let mut fetched: Option<String> = None;
-    if let Some(u) = b.introspection_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+    if let Some(u) = b
+        .introspection_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
         if b.format != Format::Graphql {
-            return Err(reject(StatusCode::BAD_REQUEST, "introspection_url is for the graphql format"));
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                "introspection_url is for the graphql format",
+            ));
         }
         let url = url::Url::parse(u)
             .ok()
             .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
-            .ok_or_else(|| reject(StatusCode::BAD_REQUEST, "the introspection URL must be an http or https URL"))?;
+            .ok_or_else(|| {
+                reject(
+                    StatusCode::BAD_REQUEST,
+                    "the introspection URL must be an http or https URL",
+                )
+            })?;
         b.content = fetch_introspection(&st, &url).await?;
         if b.base_url.as_deref().is_none_or(|u| u.trim().is_empty()) {
             b.base_url = Some(url.to_string());
@@ -177,9 +202,13 @@ pub async fn import_requests(State(st): State<AppState>, caller: Caller, Json(mu
         return Err(reject(StatusCode::PAYLOAD_TOO_LARGE, "the file is too large"));
     }
     if let Some(u) = b.base_url.as_deref().filter(|u| !u.trim().is_empty())
-        && !url::Url::parse(u.trim()).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+        && !url::Url::parse(u.trim())
+            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
     {
-        return Err(reject(StatusCode::BAD_REQUEST, "the base URL must be an http or https URL"));
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "the base URL must be an http or https URL",
+        ));
     }
     let format = b.format;
     let opts = Options { base_url: b.base_url };
@@ -218,16 +247,30 @@ pub async fn import_requests(State(st): State<AppState>, caller: Caller, Json(mu
     }
     let n = tabs.len();
     let mut added = 0usize;
-    let stored = if b.store_responses && !b.dry_run { store_responses(&st, &parsed.items) } else { 0 };
+    let stored = if b.store_responses && !b.dry_run {
+        store_responses(&st, &parsed.items)
+    } else {
+        0
+    };
     if !b.dry_run && n > 0 {
         let _settings = st.inner.projects.settings_guard().await;
         let p = st.project();
         let tabs_in: Vec<Value> = tabs.iter().map(|(_, v)| v.clone()).collect();
         added = tokio::task::spawn_blocking(move || -> Result<usize, bosun_store::StoreError> {
-            let mut doc = p.setting::<TabsDoc>(crate::SETTING_REPEATER_TABS).unwrap_or(None).unwrap_or_default();
+            let mut doc = p
+                .setting::<TabsDoc>(crate::SETTING_REPEATER_TABS)
+                .unwrap_or(None)
+                .unwrap_or_default();
             let mut next = doc
                 .next
-                .max(doc.tabs.iter().filter_map(|t| t["id"].as_i64()).max().unwrap_or(0) + 1)
+                .max(
+                    doc.tabs
+                        .iter()
+                        .filter_map(|t| t["id"].as_i64())
+                        .max()
+                        .unwrap_or(0)
+                        + 1,
+                )
                 .max(1);
             let room = MAX_TABS.saturating_sub(doc.tabs.len());
             let take = room.min(tabs_in.len());

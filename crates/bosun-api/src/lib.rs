@@ -11,10 +11,10 @@ pub mod browser;
 pub mod checks;
 pub mod child;
 pub mod codec;
+pub mod crawl;
 pub mod engage;
 pub mod events;
 pub mod handlers;
-pub mod crawl;
 pub mod imports;
 pub mod intruder;
 pub mod issues;
@@ -505,6 +505,7 @@ pub fn router(st: AppState) -> Router {
         .route("/issues", get(issues::list))
         .route("/issues/report", get(issues::report))
         .route("/issues/rescan", post(issues::rescan))
+        .route("/issues/{id}/tracker", get(issues::tracker))
         .route("/issues/{id}", get(issues::get).patch(issues::change))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));

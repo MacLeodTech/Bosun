@@ -15,6 +15,13 @@ pub struct Config {
     /// File holding the base64 data key (for containers with mounted secrets); also `BOSUN_DATA_KEY_FILE`.
     /// `BOSUN_DATA_KEY` (the key itself) wins over both.
     pub data_key_file: Option<PathBuf>,
+    /// Where the data key lives when neither `BOSUN_DATA_KEY` nor a key file is given: `file` (the default for
+    /// servers) or `keychain` (the OS keychain; the desktop apps' default for new installs). Also
+    /// `BOSUN_DATA_KEY_STORE`. Move an existing key with `bosun key migrate`.
+    pub data_key_store: Option<crate::keychain::KeySource>,
+    /// Set by the desktop shell: use the keychain for a new install. Not a file setting.
+    #[serde(skip)]
+    pub keychain_default: bool,
     /// Project name (under `<data_dir>/projects/`) or a path to a `.bosun` file.
     pub project: String,
     /// Serve Prometheus `/metrics` on this address, on its own listener without authentication (off by default;
@@ -50,6 +57,15 @@ impl Config {
         }
         if cfg.data_key_file.is_none() {
             cfg.data_key_file = std::env::var_os("BOSUN_DATA_KEY_FILE").map(PathBuf::from);
+        }
+        if cfg.data_key_store.is_none() {
+            cfg.data_key_store = match std::env::var("BOSUN_DATA_KEY_STORE") {
+                Ok(v) => Some(
+                    crate::keychain::KeySource::parse(&v)
+                        .with_context(|| format!("BOSUN_DATA_KEY_STORE must be file or keychain, not {v:?}"))?,
+                ),
+                Err(_) => None,
+            };
         }
         cfg.proxy.resolve_secrets().map_err(anyhow::Error::msg)?;
         Ok(cfg)

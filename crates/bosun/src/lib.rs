@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod doctor;
+pub mod keychain;
 pub mod server_mode;
 
 use std::net::SocketAddr;
@@ -72,7 +73,8 @@ pub fn private_dir(p: &Path) -> Result<()> {
 }
 
 pub fn load_key(cfg: &Config, paths: &Paths) -> Result<DataKey> {
-    DataKey::resolve(cfg.data_key_file.as_deref(), &paths.key()).context("cannot load the data key")
+    let store = keychain::OsKeychain::for_paths(paths);
+    keychain::load_key_with(cfg, paths, &store).context("cannot load the data key")
 }
 
 pub fn load_ca(cfg: &Config, paths: &Paths) -> Result<CertificateAuthority> {

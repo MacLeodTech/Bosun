@@ -175,6 +175,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *The CA key at rest.* Sealed with ChaCha20-Poly1305 under a 32-byte data key that lives apart from it:
   `BOSUN_DATA_KEY`, a mounted secret file, or `data.key` (0600). Files and directories are created 0600/0700, and
   the key file's permissions are checked on load.
+  The desktop apps keep the data key in the OS keychain for new installs (`data_key_store = "keychain"`;
+  Credential Manager, macOS Keychain, Secret Service), so copying the data directory alone no longer yields it.
+  An existing `data.key` stays until `bosun key migrate --to keychain` moves it (the CA key is opened with the
+  moved key before the file is overwritten and removed). A missing keychain entry is an error, never a silently
+  generated new key, so the sealed CA is not orphaned. Anything running as the same OS user can still ask the
+  keychain for the key; `doctor` reports where it lives. The real keychain is not exercised in CI (tests use an
+  in-memory store).
 - *The UI's certificate.* The interception CA never issues the UI's certificate, so nobody is pushed to trust it in
   an everyday browser. With `api.tls` the UI serves `api.tls_cert`/`api.tls_key` (re-read on change or SIGHUP) or a
   self-signed certificate of its own: not a CA, key sealed like the CA's. A reverse proxy is the recommended setup

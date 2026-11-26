@@ -17,6 +17,8 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let mut cfg = Config::load(None)?;
+    // New desktop installs keep the data key in the OS keychain; an existing data.key stays until migrated.
+    cfg.keychain_default = true;
     // The desktop app always keeps both listeners on loopback, whatever the config says.
     if !cfg.api.listen.ip().is_loopback() {
         cfg.api.listen.set_ip([127, 0, 0, 1].into());

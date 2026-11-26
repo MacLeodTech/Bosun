@@ -62,6 +62,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: CaCmd,
     },
+    /// Where the data key lives.
+    Key {
+        #[command(subcommand)]
+        cmd: KeyCmd,
+    },
     /// Manage UI accounts.
     User {
         #[command(subcommand)]
@@ -497,6 +502,16 @@ enum CaCmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum KeyCmd {
+    /// Move the data key between the data directory (`file`) and the OS keychain. The key itself does not
+    /// change; the CA key is opened with it at the new location before the old copy is removed.
+    Migrate {
+        #[arg(long, value_parser = ["file", "keychain"])]
+        to: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum UserCmd {
     /// Add an account (the password is read from stdin).
     Add {
@@ -678,6 +693,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 CaCmd::Rotate { .. } => {}
             }
+        }
+        Cmd::Key {
+            cmd: KeyCmd::Migrate { to },
+        } => {
+            bosun::private_dir(&paths.data)?;
+            let to = bosun::keychain::KeySource::parse(&to).context("--to must be file or keychain")?;
+            let store = bosun::keychain::OsKeychain::for_paths(&paths);
+            println!("{}", bosun::keychain::migrate(&cfg, &paths, to, &store)?);
+            println!(
+                "Set data_key_store = \"{}\" (or BOSUN_DATA_KEY_STORE) if this install should stay there.",
+                to.as_str()
+            );
         }
         Cmd::User { cmd } => {
             bosun::private_dir(&paths.data)?;

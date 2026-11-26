@@ -67,6 +67,20 @@ impl DataKey {
         Ok(Self { key })
     }
 
+    /// The raw key bytes, for moving the key between stores. Handle with care; never log.
+    pub fn export(&self) -> [u8; 32] {
+        self.key
+    }
+
+    /// Write the key to `path` (mode 0600), base64, the same format `load_or_create` reads.
+    pub fn write_file(path: &Path, key: &DataKey) -> Result<(), SealError> {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(key.key);
+        write_private(path, encoded.as_bytes()).map_err(|source| SealError::Io {
+            path: path.display().to_string(),
+            source,
+        })
+    }
+
     /// Generate a fresh random key.
     pub fn generate() -> Self {
         let mut key = [0u8; 32];

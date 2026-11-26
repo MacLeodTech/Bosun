@@ -52,13 +52,7 @@ pub fn run(cfg: &Config) -> Vec<Finding> {
             format!("data directory is accessible by other users (mode {m:o}); run chmod 700"),
         );
     }
-    let key_source = if std::env::var_os("BOSUN_DATA_KEY").is_some() {
-        "BOSUN_DATA_KEY".to_string()
-    } else if let Some(f) = &cfg.data_key_file {
-        f.display().to_string()
-    } else {
-        paths.key().display().to_string()
-    };
+    let key_source = crate::keychain::describe(cfg, &paths);
     match crate::load_key(cfg, &paths) {
         Ok(_) => push(&mut out, Level::Ok, format!("data key loaded from {key_source}")),
         Err(e) => push(&mut out, Level::Fail, format!("data key: {e:#}")),

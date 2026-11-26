@@ -96,6 +96,7 @@ pub struct Engine {
     pub ca_spki: String,
     /// For an embedded engine: the single-use ticket its parent exchanges for a session (`POST /auth/ticket`).
     pub login_ticket: Option<String>,
+    has_ui: bool,
     proxy: Proxy,
     stop: watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -109,11 +110,23 @@ impl Engine {
     /// Start the engine. `embedded` is for a desktop app that runs the engine as a child process: it gets a login
     /// ticket (see [`Engine::login_ticket`]) so the user is not asked for a password on every launch.
     pub async fn start_with(cfg: &Config, embedded: bool) -> Result<Self> {
+        Self::start_opts(cfg, embedded, false).await
+    }
+
+    /// Like [`Engine::start_with`]; with `no_ui` only the proxy and the recorder run: no UI/API listener, no
+    /// accounts, no setup code. `api_addr` is then unspecified port 0 and must not be used (see [`Engine::has_ui`]).
+    pub async fn start_opts(cfg: &Config, embedded: bool, no_ui: bool) -> Result<Self> {
         let paths = Paths::new(cfg.data_dir());
         private_dir(&paths.data)?;
         private_dir(&paths.projects())?;
         let ca = Arc::new(load_ca(cfg, &paths)?);
-        let app = Arc::new(AppDb::open(&paths.app_db()).context("cannot open the account database")?);
+        let app = if no_ui {
+            None
+        } else {
+            Some(Arc::new(
+                AppDb::open(&paths.app_db()).context("cannot open the account database")?,
+            ))
+        };
         let project_path = paths.project(&cfg.project);
         if let Some(parent) = project_path.parent() {
             std::fs::create_dir_all(parent).ok();
@@ -128,10 +141,19 @@ impl Engine {
         let events = bosun_proxy::EventBus::new(4096);
 
         // Bind first, so port 0 in the config (tests) resolves before the proxy learns the API address.
-        let api_listener = tokio::net::TcpListener::bind(cfg.api.listen)
-            .await
-            .with_context(|| format!("cannot listen on {} for the UI/API", cfg.api.listen))?;
-        let api_addr = api_listener.local_addr()?;
+        let api_listener = if no_ui {
+            None
+        } else {
+            Some(
+                tokio::net::TcpListener::bind(cfg.api.listen)
+                    .await
+                    .with_context(|| format!("cannot listen on {} for the UI/API", cfg.api.listen))?,
+            )
+        };
+        let api_addr = match &api_listener {
+            Some(l) => l.local_addr()?,
+            None => ([0, 0, 0, 0], 0).into(),
+        };
         let proxy_listener = tokio::net::TcpListener::bind(cfg.proxy.listen)
             .await
             .with_context(|| format!("cannot listen on {} for the proxy", cfg.proxy.listen))?;
@@ -139,7 +161,7 @@ impl Engine {
 
         let pcfg = ProxyConfig {
             listen: proxy_addr,
-            self_addrs: vec![api_addr],
+            self_addrs: if no_ui { Vec::new() } else { vec![api_addr] },
             ..cfg.proxy.clone()
         };
         let proxy = Proxy::new(pcfg, ca.clone(), gate.clone(), project.clone(), events.clone())?;
@@ -157,49 +179,6 @@ impl Engine {
             });
         }
 
-        let browser = BrowserLauncher {
-            explicit: cfg.browser.path.clone(),
-            bundled_dir: std::env::current_exe()
-                .ok()
-                .and_then(|e| e.parent().map(|p| p.join("browser"))),
-            profile_dir: paths.browser_profile(),
-        };
-        let api_cfg = bosun_api::ApiConfig {
-            listen: api_addr,
-            ..cfg.api.clone()
-        };
-        let ui_tls = if cfg.api.tls {
-            Some(Arc::new(match (&cfg.api.tls_cert, &cfg.api.tls_key) {
-                (Some(cert), Some(key)) => bosun_ca::UiTls::from_files(cert, key)
-                    .context("cannot load the UI certificate (api.tls_cert and api.tls_key)")?,
-                (None, None) => bosun_ca::UiTls::self_signed(
-                    &paths.ui_tls(),
-                    &load_key(cfg, &paths)?,
-                    &bosun_api::ui_hosts(&api_cfg),
-                )
-                .context("cannot make the UI certificate")?,
-                _ => bail!("api.tls_cert and api.tls_key must be set together"),
-            }))
-        } else {
-            None
-        };
-        let ui_fingerprint = ui_tls.as_ref().map(|u| u.fingerprint());
-        let (state, setup_code) = AppState::new(
-            &api_cfg,
-            Deps {
-                app,
-                projects_dir: paths.projects(),
-                project_path: Some(project_path.clone()),
-                proxy: proxy.clone(),
-                gate,
-                ca: ca.clone(),
-                events,
-                browser: Some(browser),
-                ui_tls,
-            },
-        )?;
-
-        let login_ticket = embedded.then(|| state.issue_login_ticket());
         let (stop, rx) = watch::channel(false);
         let wait = |mut rx: watch::Receiver<bool>| async move {
             let _ = rx.wait_for(|v| *v).await;
@@ -207,7 +186,54 @@ impl Engine {
         let p = proxy.clone();
         let r1 = rx.clone();
         let t1 = tokio::spawn(async move { p.serve(proxy_listener, wait(r1)).await });
-        let t2 = tokio::spawn(bosun_api::serve(state, api_listener, wait(rx)));
+        let mut tasks = vec![t1];
+        let (mut ui_fingerprint, mut setup_code, mut login_ticket) = (None, None, None);
+        if let (Some(app), Some(api_listener)) = (app, api_listener) {
+            let browser = BrowserLauncher {
+                explicit: cfg.browser.path.clone(),
+                bundled_dir: std::env::current_exe()
+                    .ok()
+                    .and_then(|e| e.parent().map(|p| p.join("browser"))),
+                profile_dir: paths.browser_profile(),
+            };
+            let api_cfg = bosun_api::ApiConfig {
+                listen: api_addr,
+                ..cfg.api.clone()
+            };
+            let ui_tls = if cfg.api.tls {
+                Some(Arc::new(match (&cfg.api.tls_cert, &cfg.api.tls_key) {
+                    (Some(cert), Some(key)) => bosun_ca::UiTls::from_files(cert, key)
+                        .context("cannot load the UI certificate (api.tls_cert and api.tls_key)")?,
+                    (None, None) => bosun_ca::UiTls::self_signed(
+                        &paths.ui_tls(),
+                        &load_key(cfg, &paths)?,
+                        &bosun_api::ui_hosts(&api_cfg),
+                    )
+                    .context("cannot make the UI certificate")?,
+                    _ => bail!("api.tls_cert and api.tls_key must be set together"),
+                }))
+            } else {
+                None
+            };
+            ui_fingerprint = ui_tls.as_ref().map(|u| u.fingerprint());
+            let (state, code) = AppState::new(
+                &api_cfg,
+                Deps {
+                    app,
+                    projects_dir: paths.projects(),
+                    project_path: Some(project_path.clone()),
+                    proxy: proxy.clone(),
+                    gate,
+                    ca: ca.clone(),
+                    events,
+                    browser: Some(browser),
+                    ui_tls,
+                },
+            )?;
+            setup_code = code;
+            login_ticket = embedded.then(|| state.issue_login_ticket());
+            tasks.push(tokio::spawn(bosun_api::serve(state, api_listener, wait(rx))));
+        }
         Ok(Self {
             proxy_addr,
             api_addr,
@@ -220,8 +246,14 @@ impl Engine {
             login_ticket,
             proxy,
             stop,
-            tasks: vec![t1, t2],
+            tasks,
+            has_ui: !no_ui,
         })
+    }
+
+    /// False when started with `no_ui`: there is no UI/API listener and no accounts.
+    pub fn has_ui(&self) -> bool {
+        self.has_ui
     }
 
     /// The address of the API, without the first-run setup code that [`Engine::ui_url`] carries.

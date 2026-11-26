@@ -150,6 +150,11 @@ See [docs/testing.md](docs/testing.md) for the details.
 | `bosun doctor` | Check the install (permissions, keys, CA trust, exposure) |
 | `bosun ca export [--der] [--out FILE]`, `ca info` | The CA certificate and its fingerprints |
 | `bosun user add NAME [--role viewer\|tester\|admin]`, `user passwd NAME`, `user list` | Accounts (password on stdin) |
+| `bosun user role NAME ROLE`, `user delete NAME [--yes]`, `user sessions NAME [--revoke]`, `user list --json` | More account administration |
+| `bosun token create USER --name N [--scope read\|full] [--expires-days D]`, `token list [USER]`, `token revoke ID` | API tokens (`--json` on create and list) |
+| `bosun project list\|create\|rename\|delete\|export\|import\|backup` | Projects in the data directory; refuses (exit 3) while a running Bosun has the project |
+| `bosun audit [-n N] [--action P] [--user U] [--json]` | The audit log |
+| `bosun serve --no-ui`, `bosun completions SHELL`, `bosun man --out DIR` | Record without the UI; shell completions; man pages |
 | `bosun example-config` | An annotated configuration file |
 | `bosun login --server URL [--profile NAME] [-u USER]` | Sign in to an engine and keep an API token in a profile (password on stdin) |
 | `bosun status [--server URL] [--profile NAME] [--json]` | Show the engine you are signed in to |

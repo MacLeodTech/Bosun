@@ -102,7 +102,7 @@ pub fn resolve(server: Option<&str>, profile: Option<&str>) -> Result<(String, O
     ))
 }
 
-fn client(server: &str, token: Option<String>) -> Result<Client> {
+pub fn client(server: &str, token: Option<String>) -> Result<Client> {
     let mut b = Client::builder(server.trim_end_matches('/'));
     if let Some(t) = token {
         b = b.token(t);

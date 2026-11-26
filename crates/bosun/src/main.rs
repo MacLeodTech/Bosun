@@ -12,6 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 mod admin_cmd;
 mod banner;
 mod client_cmd;
+mod client_data;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -123,6 +124,55 @@ enum Cmd {
         #[arg(long, default_value_t = 16 << 20)]
         limit: usize,
     },
+    /// Browse and export the recorded traffic of an engine.
+    History {
+        #[command(flatten)]
+        conn: Conn,
+        #[command(flatten)]
+        out: client_data::Out,
+        #[command(subcommand)]
+        cmd: HistoryCmd,
+    },
+    /// Show or change the scope of an engine.
+    Scope {
+        #[command(flatten)]
+        conn: Conn,
+        #[command(flatten)]
+        out: client_data::Out,
+        #[command(subcommand)]
+        cmd: ScopeCmd,
+    },
+    /// Show or change the match-and-replace rules of an engine.
+    Rules {
+        #[command(flatten)]
+        conn: Conn,
+        #[command(flatten)]
+        out: client_data::Out,
+        #[command(subcommand)]
+        cmd: RulesCmd,
+    },
+    /// Control interception on an engine.
+    Intercept {
+        #[command(flatten)]
+        conn: Conn,
+        #[command(flatten)]
+        out: client_data::Out,
+        #[command(subcommand)]
+        cmd: InterceptCmd,
+    },
+    /// Print the engine's events as JSON lines.
+    Events {
+        #[command(flatten)]
+        conn: Conn,
+        #[command(flatten)]
+        out: client_data::Out,
+        /// Keep going (reconnecting) instead of stopping after the engine's hello.
+        #[arg(short, long)]
+        follow: bool,
+        /// Stop after this many messages.
+        #[arg(long)]
+        count: Option<u64>,
+    },
     /// The Repeater: send a request again.
     Repeater {
         #[command(subcommand)]
@@ -137,6 +187,149 @@ struct Conn {
     server: Option<String>,
     #[arg(long, global = true)]
     profile: Option<String>,
+}
+
+/// Which flows `history` commands look at.
+#[derive(clap::Args, Debug, Clone)]
+struct FlowFilter {
+    /// A history query, such as `host:example.com status:4xx -ext:png login`.
+    #[arg(long)]
+    query: Option<String>,
+    #[arg(long)]
+    host: Option<String>,
+    /// Comma-separated, such as GET,POST.
+    #[arg(long)]
+    method: Option<String>,
+    #[arg(long)]
+    status_min: Option<u16>,
+    #[arg(long)]
+    status_max: Option<u16>,
+    /// Only flows in scope.
+    #[arg(long)]
+    in_scope: bool,
+    /// proxy, repeater, intruder, ...
+    #[arg(long)]
+    source: Option<String>,
+    /// How many flows at most.
+    #[arg(long, default_value_t = 50)]
+    limit: u32,
+    /// id (default), time, method, host, path, status, size, duration or mime.
+    #[arg(long)]
+    sort: Option<String>,
+    /// Oldest or smallest first.
+    #[arg(long)]
+    asc: bool,
+}
+
+impl FlowFilter {
+    fn into_filter(self, query: Option<String>) -> client_data::Filter {
+        client_data::Filter {
+            query: query.or(self.query),
+            host: self.host,
+            method: self.method,
+            status_min: self.status_min,
+            status_max: self.status_max,
+            in_scope: self.in_scope,
+            source: self.source,
+            limit: self.limit,
+            sort: self.sort,
+            asc: self.asc,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum HistoryCmd {
+    /// List recent flows.
+    List {
+        #[command(flatten)]
+        f: FlowFilter,
+    },
+    /// Search with a history query. Exit code 4 when nothing matches.
+    Search {
+        #[arg(value_name = "QUERY")]
+        terms: String,
+        #[command(flatten)]
+        f: FlowFilter,
+    },
+    /// Show one flow: the summary and the message heads, or a message with `--part`.
+    Show {
+        id: i64,
+        /// request, response, original-request or original-response: print that message.
+        #[arg(long)]
+        part: Option<String>,
+        /// With --part: the body only, without the head.
+        #[arg(long)]
+        body_only: bool,
+        /// With --part: undo the Content-Encoding.
+        #[arg(long)]
+        decoded: bool,
+    },
+    /// Write flows as HAR 1.2 or ndjson (oldest first).
+    Export {
+        #[arg(long, default_value = "har", value_parser = ["har", "ndjson"])]
+        format: String,
+        /// Output file; omitted or `-` is stdout.
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        #[command(flatten)]
+        f: FlowFilter,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ScopeCmd {
+    /// Show the include and exclude rules.
+    Get,
+    /// Replace the scope with JSON (`{"include": [...], "exclude": [...]}`) from FILE or stdin (`-`).
+    Set { file: PathBuf },
+    /// Add a host to the include list (or the exclude list with --exclude).
+    Add {
+        host: String,
+        #[arg(long)]
+        exclude: bool,
+        #[arg(long, value_parser = ["http", "https"])]
+        scheme: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        path: Option<String>,
+        /// Let the rule match loopback and private addresses.
+        #[arg(long)]
+        allow_private: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum RulesCmd {
+    /// Show the rules.
+    Get,
+    /// Replace the rules with a JSON array from FILE or stdin (`-`).
+    Set { file: PathBuf },
+    /// Add the rules in a JSON array (FILE or `-`) after the existing ones.
+    Import { file: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
+enum InterceptCmd {
+    /// Hold requests (and responses with --responses).
+    On {
+        #[arg(long)]
+        responses: bool,
+        /// Only hold flows in scope.
+        #[arg(long)]
+        in_scope_only: Option<bool>,
+    },
+    /// Hold nothing.
+    Off,
+    /// Show whether interception is on.
+    Status,
+    /// List the held messages.
+    Queue,
+    /// Forward a held message by id, or everything held when no id is given.
+    Forward { id: Option<u64> },
+    /// Drop a held message.
+    Drop { id: u64 },
 }
 
 #[derive(Subcommand, Debug)]
@@ -184,6 +377,9 @@ enum CaCmd {
         /// DER instead of PEM.
         #[arg(long)]
         der: bool,
+        /// With --server, --profile or $BOSUN_SERVER: fetch the CA (PEM) from that engine instead of the local data directory.
+        #[command(flatten)]
+        conn: Conn,
     },
     /// Show the fingerprint and SPKI hash.
     Info,
@@ -292,11 +488,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 return Ok(ExitCode::FAILURE);
             }
         }
+        Cmd::Ca {
+            cmd: CaCmd::Export { out, conn, .. },
+        } if conn.server.is_some()
+            || conn.profile.is_some()
+            || std::env::var_os("BOSUN_SERVER").is_some() =>
+        {
+            return tokio::runtime::Runtime::new()?.block_on(client_data::ca_export(
+                conn.server.as_deref(),
+                conn.profile.as_deref(),
+                out,
+            ));
+        }
         Cmd::Ca { cmd } => {
             bosun::private_dir(&paths.data)?;
             let ca = bosun::load_ca(&cfg, &paths)?;
             match cmd {
-                CaCmd::Export { out, der } => {
+                CaCmd::Export { out, der, .. } => {
                     let bytes: Vec<u8> = if der {
                         ca.cert_der().to_vec()
                     } else {
@@ -382,6 +590,111 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 conn.server.as_deref(),
                 conn.profile.as_deref(),
                 json,
+            ));
+        }
+        Cmd::History { conn, out, cmd } => {
+            let (sv, pf) = (conn.server.as_deref(), conn.profile.as_deref());
+            return tokio::runtime::Runtime::new()?.block_on(async {
+                match cmd {
+                    HistoryCmd::List { f } => {
+                        client_data::history_list(sv, pf, out, f.into_filter(None), false).await
+                    }
+                    HistoryCmd::Search { terms, f } => {
+                        client_data::history_list(sv, pf, out, f.into_filter(Some(terms)), true).await
+                    }
+                    HistoryCmd::Show {
+                        id,
+                        part,
+                        body_only,
+                        decoded,
+                    } => client_data::history_show(sv, pf, out, id, part, body_only, decoded).await,
+                    HistoryCmd::Export { format, file, f } => {
+                        client_data::history_export(sv, pf, out, f.into_filter(None), &format, file).await
+                    }
+                }
+            });
+        }
+        Cmd::Scope { conn, out, cmd } => {
+            let (sv, pf) = (conn.server.as_deref(), conn.profile.as_deref());
+            return tokio::runtime::Runtime::new()?.block_on(async {
+                match cmd {
+                    ScopeCmd::Get => client_data::scope_get(sv, pf, out).await,
+                    ScopeCmd::Set { file } => client_data::scope_set(sv, pf, out, &file).await,
+                    ScopeCmd::Add {
+                        host,
+                        exclude,
+                        scheme,
+                        port,
+                        path,
+                        allow_private,
+                    } => {
+                        client_data::scope_add(
+                            sv,
+                            pf,
+                            out,
+                            client_data::ScopeAdd {
+                                host,
+                                exclude,
+                                scheme,
+                                port,
+                                path,
+                                allow_private,
+                            },
+                        )
+                        .await
+                    }
+                }
+            });
+        }
+        Cmd::Rules { conn, out, cmd } => {
+            let (sv, pf) = (conn.server.as_deref(), conn.profile.as_deref());
+            return tokio::runtime::Runtime::new()?.block_on(async {
+                match cmd {
+                    RulesCmd::Get => client_data::rules_get(sv, pf, out).await,
+                    RulesCmd::Set { file } => client_data::rules_write(sv, pf, out, &file, false).await,
+                    RulesCmd::Import { file } => client_data::rules_write(sv, pf, out, &file, true).await,
+                }
+            });
+        }
+        Cmd::Intercept { conn, out, cmd } => {
+            let (sv, pf) = (conn.server.as_deref(), conn.profile.as_deref());
+            return tokio::runtime::Runtime::new()?.block_on(async {
+                match cmd {
+                    InterceptCmd::On {
+                        responses,
+                        in_scope_only,
+                    } => {
+                        client_data::intercept_set(
+                            sv,
+                            pf,
+                            out,
+                            Some(client_data::InterceptOn {
+                                responses,
+                                in_scope_only,
+                            }),
+                        )
+                        .await
+                    }
+                    InterceptCmd::Off => client_data::intercept_set(sv, pf, out, None).await,
+                    InterceptCmd::Status => client_data::intercept_status(sv, pf, out).await,
+                    InterceptCmd::Queue => client_data::intercept_queue(sv, pf, out).await,
+                    InterceptCmd::Forward { id } => client_data::intercept_forward(sv, pf, out, id).await,
+                    InterceptCmd::Drop { id } => client_data::intercept_drop(sv, pf, out, id).await,
+                }
+            });
+        }
+        Cmd::Events {
+            conn,
+            out,
+            follow,
+            count,
+        } => {
+            return tokio::runtime::Runtime::new()?.block_on(client_data::events(
+                conn.server.as_deref(),
+                conn.profile.as_deref(),
+                out,
+                follow,
+                count,
             ));
         }
         Cmd::Repeater {

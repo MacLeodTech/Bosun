@@ -7,6 +7,29 @@ There is no tagged release yet. The first public preview is v0.2, at the end of 
 
 Newest first. Each entry keeps the work package's original brief (why, do, done when) and its "Done" note.
 
+## Phase 3, track A (branch `wp-43`, 2026-11-25)
+
+- **Recorder under bursts** (PR #32). The proxy now counts refused connections, and a test pins how the recorder
+  behaves under a burst (the loss seen at about 7,000 requests a second was connections refused, not flows dropped).
+- **WP-75 History query language and saved filters** (PR #33, UI in the `wp-43` branch). The grammar is parsed in Rust
+  (`GET /flows/query` for chips and errors, `GET /flows?q=`), compiled to SQL with bound parameters only, a 5 second
+  deadline, a `history_query` fuzz target, the query bar with completion and recent queries, and saved filters.
+  Saved filters live in the project setting `saved_filters`, not in a table (a deviation from the brief's "a
+  migration"). Documented in `docs/query-language.md`. Reuse of the bar for Intruder results is in WP-47.
+- **WP-43 History, Organizer and "send to"** (`wp-43`). Server-side sorting and paging by any column, a column chooser,
+  colour highlights (reserved tags `hl:<colour>`), bulk tag changes (`POST /flows/tags`), "send to" Decoder and
+  Comparer from the History menu, and the Organizer (migration v3, `/organizer`, a status and a note per saved
+  request). No separate Logger panel: History lists every source (Source column, `source:`), and a second History
+  instance needs multi-instance panels. Left: Send to Intruder (with WP-47).
+- **WP-77 Export** (`wp-43`). Copy as cURL for POSIX shells and PowerShell, snippets in Python, JavaScript and Go, and a
+  HAR 1.2 export of the selection. Cookie and authorization values become `REDACTED` unless "Keep cookies and
+  authorization values" is ticked (a per-browser preference, off by default). Golden tests, including hostile values run
+  through a real shell. Left: the round trip through HAR import, with WP-60.
+- **WP-45 Engagement helpers, first part** (`wp-43`). `bosun_codec::engage` (comments, scripts, links, forms,
+  resources, URLs, quoted paths, request parameters, the CSRF page builder; an `engage` fuzz target),
+  `GET /flows/{id}/engage`, `GET /flows/{id}/csrf-poc` (an attachment with a sandboxing CSP), the Findings panel and
+  History menu items. Left: analysing a target across the whole history.
+
 ## Phase 3 so far (on `main`)
 
 - **Web UI upgrade** (PR #25). The `web/` restructure from `docs/ui-ux-upgrade-plan.md`, phases 0 to 5: a dockable

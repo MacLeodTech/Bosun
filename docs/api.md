@@ -28,6 +28,9 @@ Every event has a `seq`. The first message is `{"type":"hello","epoch":"…","se
 connect with `?since=<last seq>&epoch=<epoch>`: missed events are replayed, or `{"type":"reload"}` says to fetch
 the data again.
 
+Active scans send `scan_started`, `scan_progress` (at most four a second) and `scan_done` (`done`, `stopped` or
+`failed`); fetch `/scan/scans/{id}` for the findings. `bosun scan` (see `docs/ci.md`) polls instead.
+
 A new epoch starts when the engine does and whenever the open project changes. A `project_switched` event
 (`{name, temporary}`) means everything held from before is from another project: clients drop it and fetch it
 again (the web UI reloads its pages). A position from an earlier epoch is answered with `reload`.

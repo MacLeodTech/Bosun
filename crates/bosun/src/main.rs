@@ -13,6 +13,7 @@ mod admin_cmd;
 mod banner;
 mod client_cmd;
 mod client_data;
+mod scan_cmd;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -222,6 +223,12 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RepeaterCmd,
     },
+    /// Scan a site (or an API definition) headlessly, for CI: crawl, run the active checks inside the scope of the
+    /// target's host, print the findings, write SARIF, and exit 2 when one is at or above --fail-on.
+    ///
+    /// Runs an engine inside this process unless --server (or $BOSUN_SERVER) names one. Exit codes: 0 clean,
+    /// 1 error, 2 findings at or above the threshold, 4 the scan did not finish.
+    Scan(scan_cmd::ScanArgs),
     /// Spider: crawl a site from start URLs, inside the scope.
     Crawl {
         #[command(subcommand)]
@@ -556,6 +563,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     let mut cfg = Config::load(cli.config.as_deref())?;
+    let explicit_data_dir = cli.data_dir.clone();
     if let Some(d) = cli.data_dir {
         cfg.data_dir = Some(d);
     }
@@ -598,6 +606,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             // A read of stdin may still be waiting on its thread; do not wait for it.
             rt.shutdown_timeout(std::time::Duration::from_secs(2));
             r?;
+        }
+        Cmd::Scan(a) => {
+            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            let r = rt.block_on(scan_cmd::run(a, cfg, explicit_data_dir));
+            rt.shutdown_timeout(std::time::Duration::from_secs(2));
+            return r;
         }
         Cmd::Healthcheck => {
             return Ok(if bosun::server_mode::healthcheck(cfg.api.listen, cfg.api.tls) {

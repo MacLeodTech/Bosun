@@ -2920,6 +2920,37 @@ export interface components {
             type: "crawl_done";
         } | {
             /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            targets: number;
+            /** @enum {string} */
+            type: "scan_started";
+        } | {
+            /** Format: int64 */
+            findings: number;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            requests: number;
+            /** @enum {string} */
+            type: "scan_progress";
+            /** Format: int64 */
+            units_done: number;
+            /** Format: int64 */
+            units_total: number;
+        } | {
+            error?: string | null;
+            /** Format: int64 */
+            findings: number;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            requests: number;
+            state: string;
+            /** @enum {string} */
+            type: "scan_done";
+        } | {
+            /** Format: int64 */
             attack_id: number;
             /** Format: int32 */
             attempts: number;

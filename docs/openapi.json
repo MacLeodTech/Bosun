@@ -12562,6 +12562,121 @@
           },
           {
             "type": "object",
+            "description": "An active scan was accepted and is running.",
+            "required": [
+              "id",
+              "targets",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "targets": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "scan_started"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A running active scan moved on (sent at most four times a second). Fetch `/scan/scans/{id}`.",
+            "required": [
+              "id",
+              "units_done",
+              "units_total",
+              "requests",
+              "findings",
+              "type"
+            ],
+            "properties": {
+              "findings": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "requests": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "scan_progress"
+                ]
+              },
+              "units_done": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "units_total": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An active scan ended: `state` is `done`, `stopped` or `failed`.",
+            "required": [
+              "id",
+              "state",
+              "requests",
+              "findings",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "findings": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "requests": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "scan_done"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "One request of an Intruder attack finished. (The same fields as a stored result.)",
             "required": [
               "attack_id",

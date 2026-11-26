@@ -33,8 +33,116 @@ pub fn client_dir() -> Result<PathBuf> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub server: String,
-    /// An API token. Kept in the profiles file, readable by its owner only (an OS keychain comes later).
+    /// An API token, kept in the profiles file (readable by its owner only) when there is no OS keychain.
+    /// Empty when `keychain` is set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub token: String,
+    /// The token is in the OS keychain, under `keychain_key(name, server)`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keychain: bool,
+}
+
+/// A place for secrets other than the profiles file. The OS keychain in practice; a map in tests.
+pub trait TokenStore {
+    fn set(&self, key: &str, token: &str) -> Result<()>;
+    fn get(&self, key: &str) -> Result<Option<String>>;
+    fn delete(&self, key: &str) -> Result<()>;
+}
+
+const KEYCHAIN_SERVICE: &str = "bosun";
+
+pub fn keychain_key(profile: &str, server: &str) -> String {
+    format!("{profile}@{}", server.trim_end_matches('/'))
+}
+
+/// The OS keychain (Windows Credential Manager, macOS Keychain, the Secret Service on Linux).
+pub struct OsKeychain;
+
+impl TokenStore for OsKeychain {
+    fn set(&self, key: &str, token: &str) -> Result<()> {
+        Ok(keyring::Entry::new(KEYCHAIN_SERVICE, key)?.set_password(token)?)
+    }
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        match keyring::Entry::new(KEYCHAIN_SERVICE, key)?.get_password() {
+            Ok(t) => Ok(Some(t)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+    fn delete(&self, key: &str) -> Result<()> {
+        match keyring::Entry::new(KEYCHAIN_SERVICE, key)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+}
+
+/// The keychain to use, unless `BOSUN_KEYCHAIN=off` (or `file`) asks for the profiles file only.
+fn default_store() -> Option<OsKeychain> {
+    match std::env::var("BOSUN_KEYCHAIN").as_deref() {
+        Ok("off" | "file" | "0") => None,
+        _ => Some(OsKeychain),
+    }
+}
+
+impl Profile {
+    /// A profile for `token`: in `store` when there is one and it takes the token, else in the file.
+    pub fn new(
+        name: &str,
+        server: &str,
+        token: String,
+        store: Option<&dyn TokenStore>,
+    ) -> (Self, Option<String>) {
+        let server = server.trim_end_matches('/').to_string();
+        if let Some(st) = store {
+            match st.set(&keychain_key(name, &server), &token) {
+                Ok(()) => {
+                    return (
+                        Self {
+                            server,
+                            token: String::new(),
+                            keychain: true,
+                        },
+                        None,
+                    );
+                }
+                Err(e) => {
+                    let note = format!(
+                        "no OS keychain ({e:#}): the token is kept in the profiles file, readable by you only"
+                    );
+                    return (
+                        Self {
+                            server,
+                            token,
+                            keychain: false,
+                        },
+                        Some(note),
+                    );
+                }
+            }
+        }
+        (
+            Self {
+                server,
+                token,
+                keychain: false,
+            },
+            None,
+        )
+    }
+
+    pub fn token_from(&self, name: &str, store: Option<&dyn TokenStore>) -> Result<String> {
+        if !self.keychain {
+            return Ok(self.token.clone());
+        }
+        let st = store
+            .context("this profile's token is in the OS keychain, which BOSUN_KEYCHAIN=off turns off")?;
+        st.get(&keychain_key(name, &self.server))
+            .context("could not read the OS keychain")?
+            .with_context(|| {
+                format!("the keychain has no token for profile `{name}`: run `bosun login` again")
+            })
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -82,6 +190,18 @@ impl Profiles {
 
 /// Who to talk to: `--server`/`BOSUN_SERVER` and `BOSUN_TOKEN` win, then the named (or default) profile.
 pub fn resolve(server: Option<&str>, profile: Option<&str>) -> Result<(String, Option<String>)> {
+    resolve_with(
+        server,
+        profile,
+        default_store().as_ref().map(|s| s as &dyn TokenStore),
+    )
+}
+
+fn resolve_with(
+    server: Option<&str>,
+    profile: Option<&str>,
+    store: Option<&dyn TokenStore>,
+) -> Result<(String, Option<String>)> {
     let env_server = std::env::var("BOSUN_SERVER").ok();
     let env_token = std::env::var("BOSUN_TOKEN").ok();
     if let Some(s) = server.map(str::to_string).or(env_server) {
@@ -96,13 +216,14 @@ pub fn resolve(server: Option<&str>, profile: Option<&str>) -> Result<(String, O
         .profiles
         .get(&name)
         .with_context(|| format!("no profile named `{name}`"))?;
-    Ok((
-        prof.server.clone(),
-        env_token.or_else(|| Some(prof.token.clone())),
-    ))
+    let token = match env_token {
+        Some(t) => t,
+        None => prof.token_from(&name, store)?,
+    };
+    Ok((prof.server.clone(), Some(token)))
 }
 
-fn client(server: &str, token: Option<String>) -> Result<Client> {
+pub fn client(server: &str, token: Option<String>) -> Result<Client> {
     let mut b = Client::builder(server.trim_end_matches('/'));
     if let Some(t) = token {
         b = b.token(t);
@@ -126,7 +247,16 @@ pub async fn login(server: &str, profile: &str, username: Option<String>) -> Res
     };
     let password = read_line("password (read from stdin): ")?;
     let c = Client::new(server.trim_end_matches('/'))?;
-    c.login(&user, &password).await.context("sign-in failed")?;
+    match c.login(&user, &password).await {
+        Ok(_) => {}
+        Err(bosun_client::Error::SecondFactor { pending }) => {
+            let code = read_line("second-factor code (or a recovery code): ")?;
+            c.login_totp(&pending, code.trim())
+                .await
+                .context("sign-in failed")?;
+        }
+        Err(e) => return Err(anyhow::Error::new(e).context("sign-in failed")),
+    }
     let name = format!("cli on {}", hostname());
     let made = c
         .create_token(&name, Some(90), None)
@@ -134,13 +264,24 @@ pub async fn login(server: &str, profile: &str, username: Option<String>) -> Res
         .context("signed in, but could not create an API token")?;
     let _ = c.logout().await;
     let mut p = Profiles::load()?;
-    p.profiles.insert(
-        profile.to_string(),
-        Profile {
-            server: server.trim_end_matches('/').to_string(),
-            token: made.token,
-        },
+    let store = default_store();
+    let (entry, note) = Profile::new(
+        profile,
+        server,
+        made.token,
+        store.as_ref().map(|s| s as &dyn TokenStore),
     );
+    if let Some(n) = note {
+        eprintln!("{n}");
+    }
+    // A token from an earlier login with the same name must not outlive its replacement.
+    if let (Some(old), Some(st)) = (p.profiles.get(profile), &store)
+        && old.keychain
+        && !entry.keychain
+    {
+        let _ = st.delete(&keychain_key(profile, &old.server));
+    }
+    p.profiles.insert(profile.to_string(), entry);
     if p.default.is_none() || p.profiles.len() == 1 {
         p.default = Some(profile.to_string());
     }
@@ -297,6 +438,120 @@ pub async fn repeater_send(server: Option<&str>, profile: Option<&str>, a: SendA
     })
 }
 
+/// Read an Intruder plan file: the body of `POST /intruder/attacks`. `request_file` (a path, relative to the plan)
+/// may stand in for `request` (base64), and is read with the same LF to CRLF rule as `repeater send`.
+pub fn load_plan(path: &std::path::Path, exact: bool) -> Result<Value> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?;
+    let mut plan: Value = serde_json::from_str(&text).context("the plan is not valid JSON")?;
+    let obj = plan.as_object_mut().context("the plan must be a JSON object")?;
+    if let Some(f) = obj.remove("request_file") {
+        let f = f.as_str().context("request_file must be a path")?;
+        let full = path.parent().unwrap_or(std::path::Path::new(".")).join(f);
+        let raw = std::fs::read(&full).with_context(|| format!("could not read {}", full.display()))?;
+        obj.insert("request".into(), Value::String(B64.encode(wire(raw, exact))));
+    }
+    if !obj.contains_key("request") {
+        bail!("the plan needs `request` (base64) or `request_file`");
+    }
+    Ok(plan)
+}
+
+fn csv_field(s: &str) -> String {
+    // Quote when needed, and defuse spreadsheet formulas.
+    let s = if s.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{s}")
+    } else {
+        s.to_string()
+    };
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
+    }
+}
+
+/// Rows as CSV: index, payloads (joined by `|`), status, length, time, flow, error, matches, extracts.
+pub fn rows_csv(rows: &[Value]) -> String {
+    let mut out = String::from("index,payloads,status,length,time_ms,flow_id,error,matches,extracts\n");
+    for r in rows {
+        let payloads: Vec<&str> = r["payloads"]
+            .as_array()
+            .map_or(vec![], |a| a.iter().filter_map(Value::as_str).collect());
+        let matches: Vec<String> = r["matches"]
+            .as_array()
+            .map_or(vec![], |a| a.iter().map(|m| m.to_string()).collect());
+        let extracts: Vec<&str> = r["extracts"]
+            .as_array()
+            .map_or(vec![], |a| a.iter().map(|e| e.as_str().unwrap_or("")).collect());
+        let cols = [
+            r["index"].to_string(),
+            payloads.join("|"),
+            r["status"].as_u64().map_or(String::new(), |v| v.to_string()),
+            r["length"].to_string(),
+            r["time_ms"].to_string(),
+            r["flow_id"].as_i64().map_or(String::new(), |v| v.to_string()),
+            r["error"].as_str().unwrap_or("").to_string(),
+            matches.join("|"),
+            extracts.join("|"),
+        ];
+        out.push_str(&cols.iter().map(|c| csv_field(c)).collect::<Vec<_>>().join(","));
+        out.push('\n');
+    }
+    out
+}
+
+/// Run an Intruder attack from a plan file, wait for it, and write the results (CSV or JSON) to `out` or stdout.
+/// Exit code 0 when it completed, 4 when it failed or was stopped.
+pub async fn intruder_run(
+    server: Option<&str>,
+    profile: Option<&str>,
+    plan: &std::path::Path,
+    exact: bool,
+    format: &str,
+    out: Option<&std::path::Path>,
+) -> Result<ExitCode> {
+    let body = load_plan(plan, exact)?;
+    let (url, token) = resolve(server, profile)?;
+    let c = client(&url, token)?;
+    let info = c.intruder_start(&body).await?;
+    let id = info["id"]
+        .as_i64()
+        .context("the engine did not return an attack id")?;
+    eprintln!("attack {id} started ({} requests)", info["total"]);
+    let last = loop {
+        let a = c.intruder_attack(id).await?;
+        if a["state"].as_str() != Some("running") {
+            break a;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    };
+    let mut rows: Vec<Value> = Vec::new();
+    loop {
+        let page = c.intruder_results(id, rows.len() as u64, 1000).await?;
+        let got = page["rows"].as_array().cloned().unwrap_or_default();
+        if got.is_empty() {
+            break;
+        }
+        rows.extend(got);
+    }
+    let text = if format == "json" {
+        serde_json::to_string_pretty(&rows)? + "\n"
+    } else {
+        rows_csv(&rows)
+    };
+    match out {
+        Some(p) => std::fs::write(p, text).with_context(|| format!("could not write {}", p.display()))?,
+        None => std::io::stdout().lock().write_all(text.as_bytes())?,
+    }
+    let state = last["state"].as_str().unwrap_or("?");
+    eprintln!("attack {id} {state}: {} results", rows.len());
+    Ok(if state == "completed" {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(4)
+    })
+}
+
 /// What follows the blank line that ends the headers (all of it when there is none).
 pub fn body_of(raw: &[u8]) -> &[u8] {
     raw.windows(4)
@@ -321,7 +576,24 @@ fn summary(r: &Value) -> String {
     format!("#{} {status}{ms}{flow}", r["index"].as_u64().unwrap_or(0))
 }
 
-/// `bosun report`: issues in as JSON (an array, or an object with an `issues` array), a report out.
+/// `bosun report` against an engine: the report is rendered (and redacted) by the engine.
+pub async fn report_remote(
+    server: Option<&str>,
+    profile: Option<&str>,
+    format: &str,
+    output: Option<&std::path::Path>,
+    no_redact: bool,
+) -> Result<ExitCode> {
+    bosun_report::Format::parse(format)?;
+    let (url, token) = resolve(server, profile)?;
+    let c = client(&url, token)?;
+    let bytes = c
+        .issues_report(&bosun_client::IssueQuery::default(), format, !no_redact)
+        .await?;
+    write_report(&bytes, output)
+}
+
+/// `bosun report --input`: issues in as JSON (an array, or an object with an `issues` array), a report out.
 pub fn report(
     input: &str,
     format: &str,
@@ -346,9 +618,13 @@ pub fn report(
     let issues: Vec<bosun_report::Issue> =
         serde_json::from_value(list).context("the issues are not in the expected shape")?;
     let out = bosun_report::render(&issues, format, bosun_report::Options { redact: !no_redact });
+    write_report(out.as_bytes(), output)
+}
+
+fn write_report(out: &[u8], output: Option<&std::path::Path>) -> Result<ExitCode> {
     match output {
         Some(p) => std::fs::write(p, out).with_context(|| format!("could not write {}", p.display()))?,
-        None => std::io::stdout().write_all(out.as_bytes())?,
+        None => std::io::stdout().write_all(out)?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -391,6 +667,81 @@ mod tests {
             b"hi\r\n\r\n"
         );
         assert_eq!(body_of(b"no headers"), b"no headers");
+    }
+
+    #[test]
+    fn plan_files_and_csv() {
+        let dir = std::env::temp_dir().join(format!("bosun-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("req.txt"), "GET /x HTTP/1.1\nHost: x\n\n").unwrap();
+        std::fs::write(dir.join("p.json"), r#"{"request_file":"req.txt","host":"x"}"#).unwrap();
+        let plan = load_plan(&dir.join("p.json"), false).unwrap();
+        let raw = B64.decode(plan["request"].as_str().unwrap()).unwrap();
+        assert!(raw.starts_with(b"GET /x HTTP/1.1\r\nHost"));
+        std::fs::write(dir.join("bad.json"), "{}").unwrap();
+        assert!(load_plan(&dir.join("bad.json"), false).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+        let rows = vec![
+            json!({"index":0,"payloads":["=a,b","x"],"status":200,"length":5,"time_ms":3,
+            "flow_id":null,"matches":[true],"extracts":[null]}),
+        ];
+        let csv = rows_csv(&rows);
+        assert_eq!(csv.lines().nth(1).unwrap(), "0,\"'=a,b|x\",200,5,3,,,true,");
+    }
+
+    #[derive(Default)]
+    struct Mem(std::cell::RefCell<BTreeMap<String, String>>);
+    impl TokenStore for Mem {
+        fn set(&self, k: &str, t: &str) -> Result<()> {
+            self.0.borrow_mut().insert(k.into(), t.into());
+            Ok(())
+        }
+        fn get(&self, k: &str) -> Result<Option<String>> {
+            Ok(self.0.borrow().get(k).cloned())
+        }
+        fn delete(&self, k: &str) -> Result<()> {
+            self.0.borrow_mut().remove(k);
+            Ok(())
+        }
+    }
+    struct Broken;
+    impl TokenStore for Broken {
+        fn set(&self, _: &str, _: &str) -> Result<()> {
+            bail!("no secret service")
+        }
+        fn get(&self, _: &str) -> Result<Option<String>> {
+            bail!("no secret service")
+        }
+        fn delete(&self, _: &str) -> Result<()> {
+            bail!("no secret service")
+        }
+    }
+
+    #[test]
+    fn tokens_go_to_the_keychain_and_fall_back_to_the_file() {
+        let mem = Mem::default();
+        let (p, note) = Profile::new("work", "http://h/", "tok".into(), Some(&mem));
+        assert!(note.is_none() && p.keychain && p.token.is_empty());
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(!json.contains("tok"), "{json}");
+        assert_eq!(p.token_from("work", Some(&mem)).unwrap(), "tok");
+        // A missing entry is a clear error; a keychain switched off is too.
+        assert!(
+            p.token_from("work", Some(&Mem::default()))
+                .unwrap_err()
+                .to_string()
+                .contains("bosun login")
+        );
+        assert!(p.token_from("work", None).is_err());
+
+        let (f, note) = Profile::new("work", "http://h", "tok".into(), Some(&Broken));
+        assert!(note.unwrap().contains("profiles file") && !f.keychain);
+        assert_eq!(f.token_from("work", Some(&Broken)).unwrap(), "tok");
+        let (f, note) = Profile::new("work", "http://h", "tok".into(), None);
+        assert!(note.is_none() && f.token == "tok");
+        // Old profile files (token only) still load.
+        let old: Profile = serde_json::from_str(r#"{"server":"s","token":"t"}"#).unwrap();
+        assert!(!old.keychain && old.token == "t");
     }
 
     #[test]

@@ -73,7 +73,10 @@ pub async fn guard(State(st): State<AppState>, req: Request, next: Next) -> Resp
     let is_api = req.uri().path().starts_with("/api/");
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
-    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+    // A handler that serves a file (a report, a proof of concept) sets its own, stricter policy: keep it.
+    if !h.contains_key(header::CONTENT_SECURITY_POLICY) {
+        h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+    }
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,

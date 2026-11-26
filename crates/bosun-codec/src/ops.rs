@@ -1,6 +1,6 @@
 //! The encodings and decoders, and chains of them.
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
@@ -32,12 +32,67 @@ pub enum Op {
     DeflateDecode,
     BrotliDecode,
     ZstdDecode,
+    /// gzip, default level.
+    GzipEncode,
+    /// zlib, default level.
+    DeflateEncode,
+    BrotliEncode,
+    ZstdEncode,
     /// Header and payload as text. The signature is not checked.
     JwtDecode,
     UnicodeEscape,
     UnicodeUnescape,
+    /// Broken for security uses; here for matching what a target computes.
+    Md5,
+    /// Broken for security uses; here for matching what a target computes.
+    Sha1,
     Sha256,
     Sha512,
+}
+
+impl Op {
+    /// Every operation, in the order the Decoder lists them.
+    pub const ALL: [Op; 26] = [
+        Op::UrlDecode,
+        Op::UrlDecodeForm,
+        Op::HtmlDecode,
+        Op::Base64Decode,
+        Op::Base64urlDecode,
+        Op::HexDecode,
+        Op::UnicodeUnescape,
+        Op::GzipDecode,
+        Op::DeflateDecode,
+        Op::BrotliDecode,
+        Op::ZstdDecode,
+        Op::JwtDecode,
+        Op::UrlEncode,
+        Op::HtmlEncode,
+        Op::Base64Encode,
+        Op::Base64urlEncode,
+        Op::HexEncode,
+        Op::UnicodeEscape,
+        Op::GzipEncode,
+        Op::DeflateEncode,
+        Op::BrotliEncode,
+        Op::ZstdEncode,
+        Op::Md5,
+        Op::Sha1,
+        Op::Sha256,
+        Op::Sha512,
+    ];
+
+    /// The name used in the API (`snake_case`).
+    pub fn name(self) -> String {
+        serde_json::to_value(self)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default()
+    }
+
+    /// The operation with this API name.
+    pub fn from_name(name: &str) -> Option<Op> {
+        serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
+    }
 }
 
 fn bounded(mut r: impl Read, limit: usize, what: &'static str) -> Result<Vec<u8>, CodecError> {
@@ -345,9 +400,31 @@ pub fn apply(op: Op, input: &[u8], limit: usize) -> Result<Vec<u8>, CodecError> 
             let d = zstd::stream::read::Decoder::new(input).map_err(|_| CodecError::Invalid("zstd data"))?;
             bounded(d, limit, "zstd data")?
         }
+        Op::GzipEncode => {
+            let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            e.write_all(input).map_err(|_| CodecError::Invalid("input"))?;
+            e.finish().map_err(|_| CodecError::Invalid("input"))?
+        }
+        Op::DeflateEncode => {
+            let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+            e.write_all(input).map_err(|_| CodecError::Invalid("input"))?;
+            e.finish().map_err(|_| CodecError::Invalid("input"))?
+        }
+        Op::BrotliEncode => {
+            let mut o = Vec::new();
+            {
+                let mut e = brotli::CompressorWriter::new(&mut o, 4096, 5, 22);
+                e.write_all(input).map_err(|_| CodecError::Invalid("input"))?;
+                e.flush().map_err(|_| CodecError::Invalid("input"))?;
+            }
+            o
+        }
+        Op::ZstdEncode => zstd::encode_all(input, 3).map_err(|_| CodecError::Invalid("input"))?,
         Op::JwtDecode => jwt_decode(input)?,
         Op::UnicodeEscape => unicode_escape(input),
         Op::UnicodeUnescape => unicode_unescape(input),
+        Op::Md5 => hex_of(&md5::Md5::digest(input)),
+        Op::Sha1 => hex_of(&sha1::Sha1::digest(input)),
         Op::Sha256 => hex_of(&sha2::Sha256::digest(input)),
         Op::Sha512 => hex_of(&sha2::Sha512::digest(input)),
     };
@@ -571,6 +648,78 @@ mod tests {
     }
 
     #[test]
+    fn all_lists_every_op_once_and_names_round_trip() {
+        // An exhaustive match: adding a variant stops this compiling until `ALL` is updated too.
+        let counted = |op: Op| match op {
+            Op::UrlEncode
+            | Op::UrlDecode
+            | Op::UrlDecodeForm
+            | Op::HtmlEncode
+            | Op::HtmlDecode
+            | Op::Base64Encode
+            | Op::Base64Decode
+            | Op::Base64urlEncode
+            | Op::Base64urlDecode
+            | Op::HexEncode
+            | Op::HexDecode
+            | Op::GzipDecode
+            | Op::DeflateDecode
+            | Op::BrotliDecode
+            | Op::ZstdDecode
+            | Op::GzipEncode
+            | Op::DeflateEncode
+            | Op::BrotliEncode
+            | Op::ZstdEncode
+            | Op::JwtDecode
+            | Op::UnicodeEscape
+            | Op::UnicodeUnescape
+            | Op::Md5
+            | Op::Sha1
+            | Op::Sha256
+            | Op::Sha512 => 1,
+        };
+        assert_eq!(Op::ALL.iter().map(|&o| counted(o)).sum::<usize>(), 26);
+        for (i, a) in Op::ALL.iter().enumerate() {
+            assert_eq!(Op::from_name(&a.name()), Some(*a));
+            assert!(!Op::ALL[..i].contains(a), "{a:?} is listed twice");
+        }
+        assert_eq!(Op::from_name("nope"), None);
+    }
+
+    #[test]
+    fn md5_and_sha1() {
+        assert_eq!(
+            apply(Op::Md5, b"abc", L).unwrap(),
+            b"900150983cd24fb0d6963f7d28e17f72"
+        );
+        assert_eq!(
+            apply(Op::Md5, b"", L).unwrap(),
+            b"d41d8cd98f00b204e9800998ecf8427e"
+        );
+        assert_eq!(
+            apply(Op::Sha1, b"abc", L).unwrap(),
+            b"a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
+    }
+
+    #[test]
+    fn compression_encoders_round_trip_and_respect_the_limit() {
+        let data = b"hello hello hello hello hello hello".repeat(20);
+        for (enc, dec) in [
+            (Op::GzipEncode, Op::GzipDecode),
+            (Op::DeflateEncode, Op::DeflateDecode),
+            (Op::BrotliEncode, Op::BrotliDecode),
+            (Op::ZstdEncode, Op::ZstdDecode),
+        ] {
+            let c = apply(enc, &data, L).unwrap();
+            assert!(c.len() < data.len(), "{enc:?} did not compress");
+            assert_eq!(apply(dec, &c, L).unwrap(), data, "{enc:?}");
+            assert_eq!(apply(enc, &data, 4), Err(CodecError::TooLarge(4)), "{enc:?}");
+            assert!(apply(enc, b"", L).is_ok());
+        }
+    }
+
+    #[test]
     fn output_limit_applies_to_every_op() {
         assert!(matches!(
             apply(Op::HexEncode, &[0u8; 100], 50),
@@ -627,7 +776,7 @@ mod tests {
             for op in [Op::UrlEncode, Op::UrlDecode, Op::UrlDecodeForm, Op::HtmlEncode, Op::HtmlDecode,
                 Op::Base64Encode, Op::Base64Decode, Op::Base64urlEncode, Op::Base64urlDecode, Op::HexEncode,
                 Op::HexDecode, Op::GzipDecode, Op::DeflateDecode, Op::BrotliDecode, Op::ZstdDecode,
-                Op::JwtDecode, Op::UnicodeEscape, Op::UnicodeUnescape, Op::Sha256, Op::Sha512] {
+                Op::JwtDecode, Op::UnicodeEscape, Op::UnicodeUnescape, Op::Sha256, Op::Sha512, Op::Md5, Op::Sha1, Op::GzipEncode, Op::DeflateEncode, Op::BrotliEncode, Op::ZstdEncode] {
                 if let Ok(out) = apply(op, &data, limit) { prop_assert!(out.len() <= limit); }
             }
             let _ = smart_decode(&data, limit, 8);

@@ -15,6 +15,12 @@ services:
     # Optional: keep the data key out of the data volume.
     # environment:
     #   BOSUN_DATA_KEY_FILE: /run/secrets/bosun_data_key
+    #   BOSUN_ADMIN_USER: admin                                    # first-run setup without a terminal
+    #   BOSUN_ADMIN_PASSWORD_FILE: /run/secrets/bosun_admin_password
+    #   BOSUN_LOG_FORMAT: json
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/bosun", "healthcheck"]
+      interval: 30s
     read_only: true
     tmpfs:
       - /tmp:size=64m

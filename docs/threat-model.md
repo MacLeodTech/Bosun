@@ -41,6 +41,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
   which a cross-origin page cannot set without a CORS preflight the API never answers. The Origin header must
   match the UI's own origin exactly (scheme, host and port) or an allowlisted origin, on every request including
   the WebSocket upgrade; `Sec-Fetch-Site: cross-site` is refused. There is no CORS at all.
+- *Non-interactive setup (containers).* `BOSUN_ADMIN_USER` with `BOSUN_ADMIN_PASSWORD_FILE` (and optionally
+  `BOSUN_BOOTSTRAP_TOKEN_FILE`, whose content becomes a full-scope API token) create the first admin at start-up,
+  only while there are no users, and each is audited (`setup`, `token.create`). Secrets come from files, never from
+  environment values, so they stay out of `docker inspect` and process listings; the same holds for
+  `password_file` on `proxy.auth` and the upstream proxy. Whoever can write those files or set that environment
+  controls the first admin, which is the same trust as owning the container. `/healthz` is the only unauthenticated
+  route besides `/status`: it returns `ok` and nothing else. The optional `/metrics` listener
+  (`metrics_listen`, off by default) has no authentication and shows only counters; bind it to an internal interface.
 - *DNS rebinding.* A hostile page rebinds its own name to 127.0.0.1 and becomes "same origin" with the UI. The
   Host header must be a known name (loopback names plus `api.hosts`); anything else gets 421.
 - *Guessing passwords.* argon2id hashes, a 12-character minimum, the same work for unknown users as for wrong
@@ -57,6 +65,24 @@ This document says what is protected, from whom, and how. Code comments refer ba
   `read` scoped: such a token is refused (403) on anything but GET and HEAD. Users can list and end their own
   sessions; admins can list and end anyone's sessions and tokens and change roles (a role change ends the user's
   sessions; the last admin cannot be demoted).
+- *A stolen or guessed password (TOTP second factor).* An account can turn on an RFC 6238 second factor (HMAC-SHA-1,
+  6 digits, 30 s). Enrolment is two steps (a secret, then a first valid code), so a half-finished setup never locks
+  anyone out. With it on, `POST /auth/login` only checks the password and returns a five-minute `pending` token
+  bound to the client address; no session or cookie exists until `POST /auth/login/totp` receives the token and a
+  code. A pending sign-in allows five code tries. Codes are compared in constant time against the previous, current
+  and next step; the newest step used is stored in the account database and an equal or older step is refused, so
+  a code works once (the update is atomic, so two simultaneous requests cannot both win). Wrong codes use the
+  password limiter (three free tries per address and account, then growing delays; per-address caps) and also count
+  towards ten failures per account across all addresses in 15 minutes, which locks the second factor of that
+  account (and only that) for the rest of the window: guessing a six-digit code from many addresses is stopped at
+  about ten tries per window. Ten recovery codes (80 bits each) are shown once, stored as SHA-256 hashes and work once; using one is audited.
+  Turning the factor off, or making new recovery codes, needs a valid code or recovery code (so a stolen session
+  cannot remove it). An admin can reset a user's factor (`DELETE /users/{id}/totp`, or `bosun user totp-reset`; the
+  user's sessions end) for a lost device, and can require a second factor of every password account: until a
+  session's account has one, the API answers 403 for everything except the enrolment pages. Limits worth knowing:
+  single sign-on sessions are not asked for a code (the identity provider is the second factor) and are not subject
+  to the requirement; API tokens made before the requirement keep working (they are not ambient credentials, and
+  making one needs a session); the desktop login ticket skips the code, as it is a local single-use exchange.
 - *Spoofed client addresses.* Behind a reverse proxy every client shares the proxy's address. Set
   `api.trusted_proxies` to the proxy's network; only then are `X-Forwarded-For` (the rightmost entry that is not a
   trusted proxy) and `X-Forwarded-Proto` believed, and used for limits, audit entries and the `Secure` cookie.
@@ -131,8 +157,9 @@ This document says what is protected, from whom, and how. Code comments refer ba
 ### Repudiation
 
 - An append-only audit log (database triggers refuse UPDATE and DELETE) records sign-ins, account, token, scope,
-  rule, kill-switch, role, session-revocation, login-ticket, project (create, open, close, rename, delete, export,
-  backup, import and refused imports) and intercept changes (settings, drop, edited forward, forward-all),
+  rule, kill-switch, role, session-revocation, login-ticket, second-factor (enrolment, enable, disable, recovery
+  codes used or replaced, failed codes, the require-everyone policy, admin and CLI resets), project (create, open, close, rename, delete, export,
+  backup, import and refused imports) and intercept changes (settings, response filter, drop, edited forward, forward-all),
   with the user and remote address. Admins can read it in the UI.
 
 ### Information disclosure
@@ -151,20 +178,33 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *The CA's reach.* One CA per install, never shared. The launched browser trusts it by SPKI pin
   (`--ignore-certificate-errors-spki-list`) in its own profile, so it never needs installing system-wide.
   `doctor` warns if it finds the CA in a system bundle.
+  *Lifetime and rotation.* The CA lasts three years. `doctor` and the Settings page warn 30 days before expiry
+  (`doctor` fails once it has expired). `bosun ca rotate` makes a new CA and keeps only the old certificate (in
+  `ca/previous/`), deleting the old key so a retired key cannot be stolen later; it is a local command on the
+  data directory and needs a restart. Rotate after the data key or the data directory may have leaked, and
+  replace the CA wherever it was installed by hand. `--permit-domain` makes the new CA name-constrained (DNS
+  names under the listed domains only, all IP addresses excluded), which limits what a stolen key can
+  impersonate on test devices to the scope's own domains; it relies on the client enforcing the constraint
+  (current browsers and OSes do, some embedded TLS stacks do not).
 - *Secrets in child processes.* The launched browser (and any later child: crawler browsers, plugins) starts from an
   empty environment plus an allowlist (`PATH`, `HOME`, display and `XDG_*` variables and similar), so
   `BOSUN_DATA_KEY` never reaches a process that loads hostile pages. Every spawn goes through
   `child::clean_command`.
 - *Secrets in responses.* API responses are `Cache-Control: no-store`; tokens are stored only as SHA-256 hashes
-  and shown once; password hashes never leave the account database.
+  and shown once; password hashes never leave the account database. TOTP secrets are sealed with the data key
+  (ChaCha20-Poly1305, bound to the user id) before they reach the account database, and shown once at enrolment;
+  recovery codes are stored only as hashes. Someone who holds both the account database and the data key can read
+  the secrets, as with the CA key.
 - *Reports (`bosun-report`).* A report carries target content (URLs, evidence excerpts), so each format escapes it
   for its own syntax, and secrets (URL credentials, `Authorization`, cookies, bearer tokens, JWTs, `password=`-style
   pairs) are redacted unless the caller opts out. The HTML report has no script, no links and no external loads,
   and a CSP of `default-src 'none'` plus the hash of its own stylesheet, in a `<meta>` and as the header to serve it
   under (`html_csp`); it is never rendered in the UI's origin. Redaction is pattern-based and best effort: a secret
-  with an unusual name can survive, so treat a report as sensitive. The CLI renders from a file offline; when an
-  endpoint serves reports it must require a role, serve HTML as a download or from a sandboxed origin, and write an
-  audit entry for `redact=false`.
+  with an unusual name can survive, so treat a report as sensitive. `GET /issues/report` needs the viewer role; keeping secrets (`redact=0`) needs the tester role and is audited
+  (`issues.report`). The response is always an attachment, `nosniff`, with `sandbox` plus the report's own CSP (the
+  API's CSP layer keeps a handler's stricter policy), and the UI saves it as a file instead of showing it. A
+  Playwright test opens a saved report and checks that no script exists and nothing is requested. `bosun report
+  --input` renders a file offline.
 - *An open proxy.* The proxy refuses to start on a non-loopback address without proxy authentication or a
   client allowlist.
 
@@ -207,6 +247,16 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Organizer and tags.* Notes, tags and the status of kept requests are text a tester wrote; they are shown as text.
   Bulk tag changes and the Organizer need the tester role, are capped (5,000 flows per call, 32 tags of 64 characters),
   and are not audited because they change no scope, rule, account or token.
+- *Passive scanner (`bosun-scan`).* A hostile target controls every byte the scanner reads. The rules only read
+  recorded flows: they send nothing, so they need no scope-gate check. They cap what they read (1 MiB of a body, 256
+  headers, no compressed bodies), copy only short, truncated strings into an issue (the cookie name, a header value of
+  at most 120 characters, the path without its query string, so tokens in URLs are not copied), and run behind
+  `catch_unwind` so a rule bug skips one flow instead of stopping the scanner. Issues are capped at 50,000 per project
+  (past that only the counts of known issues grow), and the queue is a mark on each flow in the project file, so a flood
+  of traffic cannot grow memory: the scanner works through it in batches of 32 on its own thread and pauses between
+  batches so the recorder's writes are not starved. The UI shows an issue's text and the matched excerpt only as text
+  (`<mark>` around the range, never `{@html}`). Reading issues needs the viewer role; changing a status and starting a
+  rescan need the tester role and are audited (`issue.status`, `issues.rescan`).
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
 
 ### Elevation of privilege
@@ -258,11 +308,29 @@ This document says what is protected, from whom, and how. Code comments refer ba
   capped (very different large inputs are reported coarsely) and the work runs off the async threads. The codecs are
   in `bosun-codec` (no I/O), covered by property tests and the `codec` fuzz target. Output is data for display as text;
   the UI never renders it as HTML.
+- *`bosun decode`.* The Decoder's chain on stdin or a file, in the user's own process: no engine, no network, no
+  account. Input and every step's output are capped (`--limit`, 16 MiB by default), so a decompression bomb ends the
+  chain with exit code 2. MD5 and SHA-1 are offered to match what targets compute, not for anything Bosun protects.
+- *The host analysis (`/analysis`).* Read-only on stored requests, so the viewer role is enough; it sends nothing
+  and writes nothing, so it needs no gate check or audit entry. Cost is bounded: at most 20,000 requests are read,
+  a request body only up to 64 KiB, and the result holds at most 5,000 endpoints and 5,000 parameters with a few
+  short example values each. The work runs off the async threads. Every name, path and value in the result is the
+  target's text; the UI shows it as text only, and a link back to the history only fills the filter bar.
 - *The client commands (`bosun login`, `status`, `repeater send`).* They are clients of the API like any other: the
   server checks the role, the scope gate, the audit and the recording, so the CLI adds no way around them. `login` reads
   the password from stdin, makes a 90-day API token and signs the session out again; the token is kept in
   `profiles.json` in the client directory, created readable by its owner only (0600 on Unix; Windows relies on the
-  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. An OS keychain is not used yet.
+  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. Where the OS has a keychain (Windows Credential Manager, macOS Keychain, the Secret Service on Linux) `bosun login` keeps the token there instead and the file holds only the server address; with no keychain it falls back to the file, with a note. `BOSUN_KEYCHAIN=off` forces the file.
+- *The local admin commands (`bosun project`, `token`, `user role|delete|sessions`, `audit`).* They work on the data
+  directory directly, so they are as trusted as the account that can read it: whoever can run them can already read the
+  data key, the account database and every project. They add no remote surface. They write the same audit entries as
+  the API (account, role, session, token and project changes; imports that were refused), with no user name and
+  "via CLI" in the detail, and a project that a running engine holds is refused (exit 3) instead of being opened a
+  second time, by the same lock the engine uses. Deleting a project or an account asks for the name to be typed, or
+  `--yes` when there is no terminal; the last admin can neither be demoted nor deleted. `token create` prints the
+  token once on stdout (only its hash is stored), so keep it out of shared logs. Imports use the same rebuild as the
+  API (`import_foreign`), never opening the file in place. `serve --no-ui` runs the proxy and recorder without the
+  UI/API listener or accounts. A password typed at a terminal is not echoed.
 - *The Repeater API (`/repeater/send`, `/repeater/ws`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
   the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
   unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a
@@ -274,6 +342,47 @@ This document says what is protected, from whom, and how. Code comments refer ba
   stored as the flow's messages. A connection lasts one call and is closed before it returns. Tabs are saved in the project (`/repeater/tabs`, viewer to read, tester to write: at most 100 tabs and 8 MiB,
   each an object; responses are not stored). A request can hold credentials, but so does every flow in the same file,
   and the project file is already the place those live, with its permissions, export and backup rules.
+- *The Sequencer API (`/sequencer/analyze`, `/sequencer/capture`, `/sequencer/capture/{id}`, `.../stop`).* The
+  analysis is pure computation on strings (`bosun-sequencer`, no I/O): viewer role, at most 10,000 tokens of 1,024
+  characters and 4 MiB in all, FIPS blocks capped at eight, run off the async threads, covered by property tests and
+  the `sequencer` fuzz target (which also feeds the token extractor hostile responses and patterns). A live capture
+  needs the tester role and is a series of requests sent by the Repeater's engine, so each one goes through the
+  gate with the Repeater's policy (scope, kill switch, per-host rate limit: a rate-limit refusal is waited out a
+  second at a time, any other refusal ends the capture as failed), is recorded as a flow with source `repeater`,
+  and the capture is audited (target, count) as is its stop. The number of requests is capped (5,000), so is the
+  request (1 MiB) and the pause (10 s); at most two captures run at once and eight are kept in memory (not in the
+  project; they are gone on restart); a stop switch ends one after the request in flight, and ten failures in a row
+  end it. A body pattern is a regular expression run by the `regex` crate (no backtracking; 512 characters, compiled
+  size capped) over the response, and an extracted token is cut at 1,024 characters. Tokens are session secrets: they
+  stay in the server's memory and the page, are not written to the project, and are exported only when the user
+  saves the result (which holds per-position statistics, not the tokens).
+- *The Intruder API (`/intruder/*`).* Planning, starting, stopping and deleting an attack need the tester role;
+  listing attacks and reading results, the viewer role. Every request goes through the gate as source `intruder`
+  (an automated source), with no out-of-scope setting at all: a target outside the scope fails the attack at its first
+  request. The per-host rate limit applies on top of the attack's own concurrency (1 to 64) and delay; a request the
+  limit holds back is retried for up to 60 seconds, never dropped, and the kill switch ends the attack as stopped.
+  Starting, stopping and deleting an attack are audited (target, type, request count), and each request sent is
+  recorded as a flow with source `intruder`. An attack is bounded before it starts: at most 1,000,000 requests, 20
+  positions, 200,000 list items, a 1 MiB request and 64 KiB per payload, and at most 3 running at once; payload and
+  grep patterns are regular expressions run by the `regex` crate (linear time), and brute-force and number
+  sources are generated by index, so a large set costs no memory. Stopping drops the requests in flight; changing
+  or closing the project stops every attack first, and an attack found running when a project is opened is marked
+  interrupted. Results (payloads, status, length, time and grep values from the response) are kept in the project
+  file, a row at a time, so they hold what the target sent back and are shown only as text in the UI; a CSV export
+  puts a quote before any cell that a spreadsheet would run as a formula. Payload lists loaded from a file are read
+  in the browser and sent as text. The request template and payload sets parser has a fuzz target (`intruder_plan`).
+- *The spider (`bosun-crawl`, an engine for now, with no API yet).* Every request, `robots.txt` and sitemaps
+  included, goes through `Engine::send` and so through the gate as source `crawler` (an automated source: out of
+  scope is refused, never prompted). Links are also checked against the scope before they are queued, so an
+  out-of-scope link is listed in the report and not requested; the gate stays the guarantee. Redirects are not
+  followed by the engine: a `Location` is a link like the others, so every hop is checked. The target's pages decide
+  what gets requested, so the crawl is bounded: depth, a page limit (at most 1,000,000), a concurrency of 1 to 32,
+  a response cap per page, only `http` and `https` links, and the per-host rate limit is waited out (up to 60
+  seconds a request) and never bypassed; the kill switch ends the crawl. `POST` forms are listed and not sent unless
+  the tester turns that on, since a form can change data; `GET` forms are sent with the values the page gives
+  them. `robots.txt` is obeyed by default (what it hides is still listed) and its patterns are matched in linear
+  time. The HTML, robots and sitemap readers take untrusted input and have a fuzz target (`crawl_html`). Extra
+  headers (such as a session cookie) are refused if they hold a line break.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

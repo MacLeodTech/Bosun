@@ -510,9 +510,14 @@ table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:.2rem .6rem;t
 /// The policy the HTML report must be served under (an HTTP header; the document repeats it in a `<meta>` too).
 /// Nothing loads or runs except the document's own stylesheet, identified by its hash.
 pub fn html_csp() -> String {
+    format!("{}; frame-ancestors 'none'", meta_csp())
+}
+
+/// The same without `frame-ancestors`, which a `<meta>` policy cannot carry (browsers warn and ignore it).
+fn meta_csp() -> String {
     let h = Sha256::digest(CSS.as_bytes());
     format!(
-        "default-src 'none'; style-src 'sha256-{}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        "default-src 'none'; style-src 'sha256-{}'; base-uri 'none'; form-action 'none'",
         base64::engine::general_purpose::STANDARD.encode(h)
     )
 }
@@ -537,7 +542,7 @@ fn html_report(v: &[Issue]) -> String {
     let _ = writeln!(
         o,
         "<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">",
-        html_escape(&html_csp())
+        html_escape(&meta_csp())
     );
     o.push_str("<meta name=\"referrer\" content=\"no-referrer\">\n<title>Bosun issues report</title>\n");
     let _ = writeln!(o, "<style>{CSS}</style>\n</head>\n<body>");

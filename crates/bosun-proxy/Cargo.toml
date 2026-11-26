@@ -11,6 +11,7 @@ publish.workspace = true
 bosun-model.workspace = true
 bosun-ca.workspace = true
 bosun-store.workspace = true
+bosun-scan.workspace = true
 rand.workspace = true
 bosun-scope.workspace = true
 tokio.workspace = true
@@ -41,6 +42,11 @@ tokio-tungstenite.workspace = true
 futures-util.workspace = true
 rcgen.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "proxy"
+harness = false
 
 [lints]
 workspace = true

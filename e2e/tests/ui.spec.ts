@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test';
 import { PROXY_PORT, TARGET_PORT } from '../ports';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { hits, seen, viaProxy } from '../target';
 
@@ -174,6 +175,30 @@ test('intercept: dropping a request answers the client with an error', async () 
   expect(reply.status).not.toBe(200);
   expect(seen.some((s) => s.path === '/dropped')).toBe(false);
   await setIntercept(false);
+});
+
+test('intercept: a response filter holds only the matching responses', async () => {
+  await page.getByRole('navigation').getByRole('button', { name: 'Intercept' }).click();
+  const box = page.getByLabel('Intercept responses');
+  const saved = page.waitForResponse((r) => r.request().method() === 'PUT' && /\/intercept$/.test(r.url()));
+  await box.setChecked(true);
+  expect((await saved).ok()).toBe(true);
+  const filterSaved = page.waitForResponse((r) => r.request().method() === 'PUT' && /response-filter$/.test(r.url()));
+  await page.getByLabel('MIME filter').fill('json');
+  await page.getByLabel('MIME filter').press('Tab');
+  expect((await filterSaved).ok()).toBe(true);
+
+  // Plain text is not held; JSON is.
+  const plain = await viaProxy(PROXY_PORT, `${TARGET}/not-held`);
+  expect(plain.status).toBe(200);
+  const pending = viaProxy(PROXY_PORT, `${TARGET}/hits`);
+  await expect(page.locator('.list li button', { hasText: '/hits' })).toBeVisible();
+  await page.getByRole('button', { name: 'Forward', exact: true }).click();
+  expect((await pending).status).toBe(200);
+
+  const off = page.waitForResponse((r) => r.request().method() === 'PUT' && /\/intercept$/.test(r.url()));
+  await box.setChecked(false);
+  await off;
 });
 
 test('repeater: send by hand, again with a change, diff the two, and the sends are recorded', async () => {
@@ -878,6 +903,32 @@ test('findings: a response is searched for scripts and resources, shown as text,
   await applyFilter('');
 });
 
+test('host analysis: the endpoints and parameters of a host are counted across the history', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  // Three requests to one endpoint with different ids, so the analysis folds them into one row.
+  for (const n of [11, 12, 13]) {
+    expect(await viaProxy(PROXY_PORT, `${TARGET}/analysis-probe/${n}?page=${n}&sort=asc`)).toMatchObject({ status: 200 });
+  }
+  await applyFilter('path:/analysis-probe');
+  const row = page.locator('.row', { hasText: '/analysis-probe/13' }).first();
+  await expect(row).toBeVisible();
+  await row.click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Analyse this host…' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Host analysis' });
+  const endpoint = panel.getByRole('table', { name: 'Endpoints' }).getByRole('row', { name: /\/analysis-probe\/\{n\}/ });
+  await expect(endpoint).toBeVisible();
+  await expect(endpoint).toContainText('GET');
+  await expect(endpoint.getByRole('cell').nth(2)).toHaveText('3');
+  await expect(endpoint).toContainText('page, sort');
+  const page_ = panel.getByRole('table', { name: 'Parameters' }).getByRole('row', { name: /^query page / });
+  await expect(page_).toContainText('11 · 12 · 13');
+  await panel.getByRole('searchbox', { name: 'Filter the analysis' }).fill('nothing-like-this');
+  await expect(panel.getByRole('table', { name: 'Endpoints' }).getByText('Nothing matches.')).toBeVisible();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+});
+
 test('organizer: a request is saved for follow-up with a status and a note, and both survive a reload', async () => {
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
@@ -907,6 +958,47 @@ test('organizer: a request is saved for follow-up with a status and a note, and 
   await expect(page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByText('Nothing saved yet.')).toBeVisible();
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
   await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
+});
+
+test('intruder: a request sent from the history menu is attacked with a list, grep, sort and filter', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  await page.locator('.row', { hasText: '/hello-history' }).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Intruder', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Intruder' })).toHaveAttribute('aria-selected', 'true');
+  const ip = page.getByRole('tabpanel', { name: 'Intruder', exact: true });
+  await expect(ip.getByLabel('Host', { exact: true })).toHaveValue('127.0.0.1');
+  await expect(ip.getByLabel('Request with positions')).toHaveValue(/^GET \/hello-history/);
+
+  // Mark a position by hand and give three payloads.
+  await ip.getByLabel('Request with positions').fill('GET /intr-§one§ HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await expect(ip.getByTestId('intruder-positions')).toHaveText('1 position');
+  await ip.getByLabel('Payloads 1').fill('alpha\nbeta\ngamma');
+  await ip.getByRole('button', { name: 'Add match rule' }).click();
+  await ip.getByLabel('Match text 1').fill('intr-beta');
+  await ip.getByRole('button', { name: 'Preview' }).click();
+  await expect(ip.getByTestId('intruder-plan')).toContainText('3 requests');
+
+  await ip.getByTestId('intruder-start').click();
+  await expect(ip.getByTestId('intruder-state')).toContainText('completed: 3 of 3');
+  const results = ip.getByTestId('intruder-results');
+  for (const p of ['alpha', 'beta', 'gamma']) await expect(results.getByRole('option', { name: new RegExp(p) })).toContainText('200');
+
+  // The grep rule matched the one answer that has the text, and the filter narrows to it.
+  await ip.getByLabel('Filter results').fill('match');
+  await expect(results.getByRole('option')).toHaveCount(1);
+  await expect(results.getByRole('option').first()).toContainText('beta');
+  await ip.getByLabel('Filter results').fill('');
+
+  // Sorting by payload, descending, puts gamma first.
+  await ip.getByRole('button', { name: /^Payload/ }).click();
+  await ip.getByRole('button', { name: /^Payload/ }).click();
+  await expect(results.getByRole('option').first()).toContainText('gamma');
+
+  // The sends are in the history as the Intruder's.
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/intr-alpha' }).first()).toBeVisible();
 });
 
 test('shortcuts: Ctrl+R sends to the Repeater without reloading, and ? lists every shortcut and any conflict', async () => {
@@ -1079,7 +1171,7 @@ for (const theme of ['dark', 'light'] as const) {
     expect(await a11yIssues(), 'layouts dialog').toEqual([]);
     await page.keyboard.press('Escape');
 
-    for (const panel of ['Intercept', 'Repeater', 'Match & replace', 'Target', 'Projects', 'Settings']) {
+    for (const panel of ['Intercept', 'Repeater', 'Intruder', 'Match & replace', 'Target', 'Projects', 'Settings']) {
       await page.getByRole('navigation').getByRole('button', { name: panel }).click();
       expect(await a11yIssues(), panel).toEqual([]);
     }
@@ -1124,4 +1216,176 @@ test('keyboard only: panes, tabs, the palette and the history list can be driven
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu', { name: 'Layout' })).toBeHidden();
   await expect(layoutBtn).toBeFocused();
+});
+
+/** RFC 6238 (SHA-1, 6 digits, 30 s) for the step that contains `atMs`. */
+function totpCode(secretB32: string, atMs: number): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const c of secretB32.toUpperCase()) bits += alphabet.indexOf(c).toString(2).padStart(5, '0');
+  const key = Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(atMs / 1000 / 30)));
+  const h = crypto.createHmac('sha1', key).update(counter).digest();
+  const off = h[h.length - 1] & 0xf;
+  const n = h.readUInt32BE(off) & 0x7fffffff;
+  return String(n % 1_000_000).padStart(6, '0');
+}
+
+test('second factor: enrol in Settings, sign in with a code, a wrong code is refused, a recovery code turns it off', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Set up second factor' }).click();
+  const secret = (await page.getByTestId('totp-secret').innerText()).trim();
+  expect(secret).toMatch(/^[A-Z2-7]{32}$/);
+  await expect(page.getByTestId('totp-uri')).toContainText(`otpauth://totp/Bosun:${USER}?secret=${secret}`);
+
+  // A wrong code does not turn it on; the right one does and shows the recovery codes once.
+  await page.getByLabel('Authentication code').fill('000000');
+  await page.getByRole('button', { name: 'Confirm and turn on' }).click();
+  await expect(page.locator('.error')).toBeVisible();
+  await page.getByLabel('Authentication code').fill(totpCode(secret, Date.now()));
+  await page.getByRole('button', { name: 'Confirm and turn on' }).click();
+  await expect(page.getByText('Second factor is on.', { exact: true })).toBeVisible();
+  const recovery = page.getByRole('list', { name: 'Recovery codes' }).locator('code');
+  await expect(recovery).toHaveCount(10);
+  const codes = await recovery.allInnerTexts();
+
+  // Sign in again: the password alone gives no session, a wrong code is refused, the right code signs in.
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByLabel('Username').fill(USER);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByLabel('Authentication code')).toBeVisible();
+  await expect(page.getByText(`${USER} (admin)`)).toHaveCount(0);
+  await page.getByLabel('Authentication code').fill('000000');
+  await page.getByRole('button', { name: 'Verify' }).click();
+  await expect(page.locator('.error')).toBeVisible();
+  // The current step was used by the confirmation; the next one is inside the window.
+  await page.getByLabel('Authentication code').fill(totpCode(secret, Date.now() + 30_000));
+  await page.getByRole('button', { name: 'Verify' }).click();
+  await signedIn();
+
+  // Turn it off with a recovery code, so the tests after this one sign in with a password alone.
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByText(/Recovery codes left: \d+/)).toBeVisible();
+  await page.getByLabel('Code to confirm').fill(codes[0]);
+  await page.getByRole('button', { name: 'Turn off second factor' }).click();
+  await expect(page.getByText('Second factor is off.', { exact: true })).toBeVisible();
+  await layoutMenu('Reset layout');
+});
+
+test('sequencer: a live capture of random cookies is rated well, a counter is not random, and manual load works', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Sequencer' }).click();
+  const sp = page.getByRole('tabpanel', { name: 'Sequencer', exact: true });
+  await sp.getByLabel('Scheme').selectOption('http');
+  await sp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await sp.getByLabel('Port').fill(String(TARGET_PORT));
+  await sp.getByLabel('Name or pattern').fill('seqid');
+  await sp.getByLabel('Count', { exact: true }).fill('60');
+
+  await sp.getByLabel('Request').fill('GET /seq-random HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await sp.getByRole('button', { name: 'Start capture' }).click();
+  await expect(sp.getByRole('status')).toContainText('Done: sent 60 of 60, 60 tokens');
+  await expect(sp.locator('[data-verdict]')).toHaveAttribute('data-verdict', 'excellent');
+  await expect(sp.getByRole('table', { name: 'Positions' }).locator('tbody tr')).toHaveCount(32);
+
+  await sp.getByLabel('Request').fill('GET /seq-counter HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await sp.getByRole('button', { name: 'Start capture' }).click();
+  await expect(sp.getByRole('status')).toContainText('Done: sent 60 of 60');
+  await expect(sp.locator('[data-verdict]')).toHaveAttribute('data-verdict', 'not_random');
+  await expect(sp.getByText('they count up')).toBeVisible();
+
+  // The export is the result as JSON.
+  const dl = page.waitForEvent('download');
+  await sp.getByRole('button', { name: 'Export JSON' }).click();
+  expect((await dl).suggestedFilename()).toBe('bosun-sequencer.json');
+
+  // Manual load: a counter typed in; and the stop switch ends a slow capture.
+  await sp.getByRole('button', { name: 'Manual load' }).click();
+  await sp.getByLabel('Tokens').fill(Array.from({ length: 40 }, (_, i) => String(1000 + i)).join('\n'));
+  await sp.getByRole('button', { name: 'Analyse', exact: true }).click();
+  await expect(sp.locator('[data-verdict]')).toHaveAttribute('data-verdict', 'not_random');
+  await sp.getByRole('button', { name: 'Live capture' }).click();
+  await sp.getByLabel('Pause').fill('200');
+  await sp.getByLabel('Count', { exact: true }).fill('500');
+  await sp.getByRole('button', { name: 'Start capture' }).click();
+  await expect(sp.getByRole('status')).toContainText('Capturing');
+  await sp.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(sp.getByRole('status')).toContainText('Stopped');
+
+  // The requests are in the history as the Repeater's.
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/seq-counter' }).first()).toBeVisible();
+});
+
+test('issues: the passive scanner reports what recorded traffic shows, with evidence, and triage survives a reload', async () => {
+  await layoutMenu('Reset layout');
+  const nav = page.getByRole('navigation');
+  expect(await viaProxy(PROXY_PORT, `${TARGET}/leaky`)).toMatchObject({ status: 200 });
+  await nav.getByRole('button', { name: 'Issues' }).click();
+  const panel = () => page.getByRole('tabpanel', { name: 'Issues', exact: true });
+  const key = () => panel().getByRole('row', { name: /Private key in a response/ });
+  await expect(key()).toBeVisible({ timeout: 20_000 });
+  await expect(panel().getByRole('row', { name: /Cookie set without the HttpOnly flag/ }).first()).toBeVisible();
+  await expect(panel().getByRole('row', { name: /Server software and version disclosed/ })).toBeVisible();
+
+  // The details show the matched text, highlighted.
+  await key().getByRole('button', { name: /Show issue/ }).click();
+  const details = panel().getByRole('region', { name: 'Issue details' });
+  await expect(details.locator('mark')).toHaveText('-----BEGIN RSA PRIVATE KEY-----');
+  await expect(details.getByText('CWE-200')).toBeVisible();
+
+  // Filters and grouping.
+  await panel().getByLabel('Severity').selectOption('high');
+  await expect(panel().getByRole('row', { name: /Server software/ })).toHaveCount(0);
+  await panel().getByLabel('Severity').selectOption('all');
+  await panel().getByLabel('Group by').selectOption('rule');
+  await expect(panel().getByRole('row', { name: /Private key in a response \(/ })).toBeVisible();
+  await panel().getByLabel('Group by').selectOption('none');
+
+  // Triage is stored on the server.
+  await details.getByRole('button', { name: 'Mark false positive' }).click();
+  await expect(key()).toContainText('False positive');
+  await page.reload();
+  await nav.getByRole('button', { name: 'Issues' }).click();
+  await expect(key()).toContainText('False positive');
+  await panel().getByLabel('Status').selectOption('new');
+  await expect(key()).toHaveCount(0);
+
+  // The link back to the request.
+  await panel().getByLabel('Status').selectOption('all');
+  await panel().getByRole('button', { name: /Show issue: Private key/ }).click();
+  await panel().getByRole('button', { name: 'Open request' }).click();
+  await expect(page.getByText('BEGIN RSA PRIVATE KEY').first()).toBeVisible();
+});
+
+test('issues: the saved HTML report runs no script and keeps no secrets', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Issues' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Issues', exact: true });
+  await panel.getByLabel('Report format').selectOption('html');
+  const [download] = await Promise.all([page.waitForEvent('download'), panel.getByRole('button', { name: 'Save report' }).click()]);
+  expect(download.suggestedFilename()).toBe('bosun-report.html');
+  const path = await download.path();
+  const html = fs.readFileSync(path, 'utf8');
+  expect(html).toContain('Private key in a response');
+  expect(html).not.toMatch(/<script|<a |href=|\son\w+=/i);
+  expect(html).not.toContain('leaky=1');
+
+  // Open the file as a browser would, in a page of its own, and watch for script and for network calls.
+  const viewer = await page.context().browser()!.newContext();
+  const vp = await viewer.newPage();
+  const calls: string[] = [];
+  const violations: string[] = [];
+  vp.on('request', (r) => calls.push(r.url()));
+  vp.on('console', (m) => m.text().includes('Content Security Policy') && violations.push(m.text()));
+  await vp.route('http://report.invalid/**', (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
+  await vp.goto('http://report.invalid/report.html');
+  await expect(vp.getByRole('heading', { name: 'Bosun issues report' })).toBeVisible();
+  expect(await vp.evaluate(() => document.scripts.length)).toBe(0);
+  expect(calls.filter((u) => !u.startsWith('http://report.invalid/'))).toEqual([]);
+  expect(violations).toEqual([]);
+  await viewer.close();
 });

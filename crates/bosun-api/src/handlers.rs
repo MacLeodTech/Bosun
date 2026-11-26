@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use std::io::Read as _;
 
 use bosun_model::{FlowId, RawResponse};
-use bosun_proxy::{Decision, InterceptSettings, RuleSpec};
+use bosun_proxy::{Decision, InterceptSettings, ResponseFilter, RuleSpec};
 use bosun_scope::{Scope, ScopeSpec};
 use bosun_store::codec;
 use bosun_store::{FlowFilter, Role, TokenScope};
@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{Caller, check_password_policy, check_username, hash_password, random_token};
 use crate::security::{empty, reject};
-use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SAVED_FILTERS, SETTING_SCOPE};
+use crate::{
+    AppState, SETTING_INTERCEPT, SETTING_RESPONSE_FILTER, SETTING_RULES, SETTING_SAVED_FILTERS, SETTING_SCOPE,
+};
 
 type R = Result<Response, Response>;
 
@@ -42,6 +44,11 @@ async fn save_setting<T: Serialize + Send + 'static>(
     blocking(move || p.set_setting(key, &value))
         .await?
         .map_err(internal)
+}
+
+/// Liveness for container health checks: no authentication, no detail.
+pub async fn healthz() -> &'static str {
+    "ok"
 }
 
 pub async fn status(State(st): State<AppState>) -> Response {
@@ -821,6 +828,38 @@ pub async fn put_intercept(
     Ok(Json(s).into_response())
 }
 
+pub async fn get_response_filter(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    Ok(Json(st.inner.proxy.intercept().response_filter()).into_response())
+}
+
+pub async fn put_response_filter(
+    State(st): State<AppState>,
+    caller: Caller,
+    Json(f): Json<ResponseFilter>,
+) -> R {
+    caller.require(Role::Tester)?;
+    f.validate().map_err(|e| reject(StatusCode::BAD_REQUEST, &e))?;
+    let _settings = st.inner.projects.settings_guard().await;
+    st.inner.proxy.intercept().set_response_filter(f.clone());
+    caller
+        .audit(
+            &st,
+            "intercept.response_filter",
+            &format!(
+                "statuses={} mime={} header={} body={} only_if_request_held={}",
+                f.statuses.join(","),
+                f.mime_contains.join(","),
+                f.header_contains.is_some(),
+                f.body_contains.is_some(),
+                f.only_if_request_held
+            ),
+        )
+        .await;
+    save_setting(&st, SETTING_RESPONSE_FILTER, f.clone()).await?;
+    Ok(Json(f).into_response())
+}
+
 pub async fn intercept_queue(State(st): State<AppState>, caller: Caller) -> R {
     caller.require(Role::Viewer)?;
     Ok(Json(st.inner.proxy.intercept().list()).into_response())
@@ -908,6 +947,10 @@ pub async fn ca_info(State(st): State<AppState>, caller: Caller) -> R {
         "fingerprint_sha256": st.inner.ca.fingerprint(),
         "spki_sha256": st.inner.ca.spki_hash(),
         "pem": st.inner.ca.cert_pem(),
+        "not_after": st.inner.ca.not_after().unix_timestamp(),
+        "days_left": st.inner.ca.days_left(),
+        "expiring": st.inner.ca.days_left() <= bosun_ca::EXPIRY_WARN_DAYS,
+        "permitted_domains": st.inner.ca.permitted_domains(),
     }))
     .into_response())
 }

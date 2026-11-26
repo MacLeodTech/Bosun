@@ -1,7 +1,7 @@
 //! The engagement scanners and the CSRF page builder on arbitrary text: no panic, bounded results, offsets inside the
 //! text, and a proof of concept that holds no markup of its own besides the tags the builder writes.
 #![no_main]
-use bosun_codec::engage::{MAX_FINDINGS, PocInput, csrf_poc, find_in_html, find_urls, parameters};
+use bosun_codec::engage::{Analyzer, MAX_ANALYSIS_KEYS, MAX_FINDINGS, Observation, PocInput, csrf_poc, find_in_html, find_urls, parameters};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -13,6 +13,12 @@ fuzz_target!(|data: &[u8]| {
     assert!(find_in_html(&text).len() <= MAX_FINDINGS);
     let ct = ["application/x-www-form-urlencoded", "application/json", "multipart/form-data; boundary=XX", "text/plain"][usize::from(*sel) % 4];
     let _ = parameters(&text, Some(ct), rest);
+    let mut an = Analyzer::new();
+    for _ in 0..2 {
+        an.add(&Observation { method: "POST", path: &text, status: Some(200), content_type: Some(ct), body: rest });
+    }
+    let r = an.finish();
+    assert!(r.endpoints.len() <= MAX_ANALYSIS_KEYS && r.params.len() <= MAX_ANALYSIS_KEYS);
     let method = if sel & 4 == 0 { "POST" } else { "GET" };
     if let Ok(html) = csrf_poc(&PocInput { method, url: "https://t.test/p?a=1", content_type: Some(ct), body: rest, auto_submit: sel & 8 != 0 }) {
         // Nothing from the request may open a tag: every '<' is one of ours.

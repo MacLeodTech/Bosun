@@ -165,6 +165,34 @@ export async function sendToRepeater(ids: number[]) {
   window.dispatchEvent(new Event('bosun:repeater-inbox'));
 }
 
+/** Open the Intruder with one request per flow, each ready for position markers. The Intruder picks them up from session storage. */
+export async function sendToIntruder(ids: number[]) {
+  const take = ids.slice(0, 1);
+  if (ids.length > take.length) say('The Intruder takes one request at a time: sending the first.');
+  let sent = false;
+  for (const id of take) {
+    try {
+      const m = await fetchMeta(id);
+      const t = await messageText(m, 'request');
+      if (!t || !t.complete) {
+        say(`Request ${id} is too large to open in the Intruder here.`);
+        continue;
+      }
+      stashForIntruder({ scheme: m.scheme, host: m.host, port: m.port, request: t.text });
+      sent = true;
+    } catch (e) {
+      fail(e);
+    }
+  }
+  return sent;
+}
+
+/** Leave a request for the Intruder (the panel may not be open yet, or may be mounted in the background). */
+export function stashForIntruder(item: { scheme: string; host: string; port: number; request: string }) {
+  sessionStorage.setItem('bosun.intruder.inbox', JSON.stringify(item));
+  window.dispatchEvent(new Event('bosun:intruder-inbox'));
+}
+
 const cleanRules = (rs: ScopeRule[] | undefined) =>
   (rs ?? []).filter((r) => r.host.trim()).map((r) => ({ host: r.host.trim(), scheme: r.scheme || null, port: r.port || null, path: r.path || null, allow_private: !!r.allow_private }));
 
@@ -284,6 +312,17 @@ export async function saveToOrganizer(ids: number[]): Promise<void> {
 }
 
 /** Save a CSRF proof of concept for the request as an HTML file. It is only a download: it is never shown here. */
+/** Open the target analysis for the host (and port) of a flow. */
+export async function analyseHost(id: number): Promise<void> {
+  try {
+    const m = await fetchMeta(id);
+    inbox.analysis = { host: m.host, port: m.port };
+    workspace.open('analysis');
+  } catch (e) {
+    fail(e);
+  }
+}
+
 export async function downloadCsrfPoc(id: number, auto: boolean): Promise<void> {
   try {
     const r = await fetch(`/api/v1/flows/${id}/csrf-poc${auto ? '?auto=1' : ''}`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });

@@ -233,7 +233,7 @@
       return { label: label ?? cmd.title, hint: cmd.keys ? format(cmd.keys) : undefined, run: () => void commands.run(id, ctx) };
     };
     return tidyMenu([
-      { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'),
+      { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'), c('flow.intruder', 'Intruder'),
       c('flow.organize', 'Organizer'),
       c('flow.decoder.request', 'Decoder: request'), c('flow.decoder.response', 'Decoder: response'),
       c('flow.comparer.request.a', 'Comparer: request as A'), c('flow.comparer.request.b', 'Comparer: request as B'),
@@ -244,7 +244,7 @@
       { label: 'Keep cookies and authorization values', checked: prefs.exportSecrets, run: () => prefs.setExportSecrets(!prefs.exportSecrets) }, c('flow.copy-request', 'Request'), c('flow.copy-response', 'Response'),
       ...(canEdit ? [{ kind: 'sep' } as MenuItem, { kind: 'heading', label: 'Highlight' } as MenuItem, ...HL_COLORS.map((c): MenuItem => ({ label: c[0]!.toUpperCase() + c.slice(1), run: () => void highlight(c) })), { label: 'No highlight', run: () => void highlight(null) } as MenuItem, { label: 'Add a tag…', run: () => { tagging = true; setTimeout(() => tagBox?.focus(), 0); } } as MenuItem] : []),
       { kind: 'sep' }, { kind: 'heading', label: 'Scope' }, c('flow.scope.include', 'Add host to scope'), c('flow.scope.exclude', 'Exclude host from scope'),
-      { kind: 'sep' }, { kind: 'heading', label: 'Engage' }, c('flow.findings', 'Comments, scripts and references'), c('flow.csrf-poc', 'CSRF proof of concept…'), c('flow.csrf-poc-auto', 'CSRF proof of concept, auto-submit…'),
+      { kind: 'sep' }, { kind: 'heading', label: 'Engage' }, c('flow.findings', 'Comments, scripts and references'), c('flow.analyse-host', 'Analyse this host…'), c('flow.csrf-poc', 'CSRF proof of concept…'), c('flow.csrf-poc-auto', 'CSRF proof of concept, auto-submit…'),
       { kind: 'sep' }, c('flow.export-har', 'Export as HAR…'), c('flow.delete', 'Delete'),
     ]);
   }
@@ -443,6 +443,8 @@
               {:else if k === 'length'}<span class="c-length tnum">{fmtSize(f.response_len ?? 0)}</span>
               {:else if k === 'mime'}<span class="c-mime">{f.mime ?? ''}</span>
               {:else if k === 'time'}<span class="c-time tnum">{fmtTime(f.started_ms)}</span>
+              {:else if k === 'ttfb'}<span class="c-ttfb tnum">{f.ttfb_ms == null ? '' : `${f.ttfb_ms} ms`}</span>
+              {:else if k === 'reqlen'}<span class="c-reqlen tnum">{f.request_len}</span>
               {:else if k === 'duration'}<span class="c-duration tnum">{f.duration_ms == null ? '' : `${f.duration_ms} ms`}</span>
               {:else if k === 'source'}<span class="c-source">{f.source}</span>
               {:else if k === 'tags'}<span class="c-tags">{plainTags(f.tags).join(', ')}</span>

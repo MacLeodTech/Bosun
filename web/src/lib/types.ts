@@ -6,7 +6,7 @@ export interface User { id: number; username: string; role: Role; created_ms: nu
 export interface Me { user: User; csrf: string | null }
 
 export interface FlowSummary {
-  id: number; source: string; started_ms: number; duration_ms?: number | null;
+  id: number; source: string; started_ms: number; duration_ms?: number | null; ttfb_ms?: number | null;
   scheme: 'http' | 'https'; host: string; port: number; method: string; path: string; http_version: string;
   status?: number | null; request_len: number; response_len?: number | null; mime?: string | null;
   in_scope: boolean; edited: boolean; error?: string | null; tags: string[]; note?: string | null;

@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { api } from './lib/api';
   import { session } from './lib/session.svelte';
+  import TotpPanel from './components/TotpPanel.svelte';
   import { theme } from './lib/theme.svelte';
   import { historyView } from './lib/historyView.svelte';
   import { shell } from './lib/shell.svelte';
@@ -134,6 +135,13 @@
   <div class="loading">Loading…</div>
 {:else if !session.me}
   <Auth />
+{:else if session.totpSetup}
+  <div class="setup">
+    <h1>Set up a second factor</h1>
+    <p>An administrator requires a second factor for every account. Set one up to continue.</p>
+    <TotpPanel forced onchange={() => { session.totpSetup = false; }} />
+    <p><button onclick={() => session.logout()}>Sign out</button></p>
+  </div>
 {:else}
   <div class="app">
     <header>
@@ -191,5 +199,6 @@
   main { flex: 1; display: flex; min-height: 0; }
   .count { margin-left: .35rem; background: var(--accent); color: var(--on-accent); border-radius: 8px; padding: 0 .4rem; font-size: .75rem; }
   .lost { padding: .3rem .75rem; background: var(--bad); color: var(--on-accent); display: flex; gap: .75rem; align-items: center; }
+  .setup { max-width: 34rem; margin: 3rem auto; padding: 0 1rem; }
   .loading { padding: 2rem; color: var(--muted); }
 </style>

@@ -149,6 +149,7 @@ impl Exchange {
             source,
             started_ms: self.started_ms,
             duration_ms: Some(self.timings.total_ms as i64),
+            ttfb_ms: self.timings.first_byte_ms.map(|m| m as i64),
             scheme: self.target.scheme,
             host: self.target.host.clone(),
             port: self.target.port,

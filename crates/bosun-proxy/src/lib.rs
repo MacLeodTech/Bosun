@@ -17,10 +17,10 @@ pub mod server;
 pub mod upstream;
 pub mod ws;
 
-pub use config::{ProxyAuth, ProxyConfig, UpstreamProxy};
+pub use config::{ProxyAuth, ProxyConfig, UpstreamProxy, read_secret_file};
 pub use events::{EventBus, EventReceiver, EventSender, ProxyEvent, Resume, Sequenced};
 pub use intercept::{
-    Decision, InterceptController, InterceptItem, InterceptSettings, InterceptSummary, Phase,
+    Decision, InterceptController, InterceptItem, InterceptSettings, InterceptSummary, Phase, ResponseFilter,
 };
 pub use limits::ConnLimit;
 pub use rules::{RuleSet, RuleSpec, RuleTarget};

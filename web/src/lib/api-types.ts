@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The distinct endpoints (ids in paths replaced by {n}, {uuid} and {hex}) and parameters of one host across the history, with counts, status codes and example values. Reads the newest 5,000 requests of the host (?limit up to 20,000); `capped` says there were more. Needs the viewer role. */
+        get: operations["host_analysis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -30,8 +47,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Sign in with a username and password. Sets the session cookie. No sign-in needed. */
+        /** @description Sign in with a username and password. Sets the session cookie, unless the account has a second factor: then the answer holds a `pending` token for `POST /auth/login/totp` and no cookie is set. No sign-in needed. */
         post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Finish a sign-in that asked for a second factor: the `pending` token and a TOTP code (or an unused recovery code). Each code works once; wrong codes count against the sign-in limits (429 with Retry-After). No sign-in needed. */
+        post: operations["login_totp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -117,6 +151,108 @@ export interface paths {
         put?: never;
         /** @description Exchange the single-use, 60-second login ticket of an embedded engine (`bosun serve --embedded`) for an admin session. Loopback only; the exchange is audited. No sign-in needed. */
         post: operations["login_ticket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Your own second-factor state. Needs the viewer role or above. */
+        get: operations["totp_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Turn the second factor on with the first valid code, and get ten one-time recovery codes (shown once). Audited. Needs the viewer role or above. */
+        post: operations["totp_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Turn your own second factor off. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above. */
+        post: operations["totp_disable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Make a TOTP secret for your account (base32 and an `otpauth://` URI). Nothing asks for a code until `POST /auth/totp/confirm` receives a valid one; enrolling again before that replaces the secret. 409 when a second factor is already on. Audited. Needs the viewer role or above. */
+        post: operations["totp_enroll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Make a new set of ten recovery codes; the old ones stop working. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above. */
+        post: operations["totp_recovery_codes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/required": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Require a second factor of every password account (single sign-on accounts and the desktop ticket are not asked). Accounts without one can then only reach the pages that set it up. Audited. Needs the admin role. */
+        put: operations["totp_set_required"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -450,6 +586,180 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/intercept/response-filter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Which responses are held when response interception is on. Needs the viewer role or above. */
+        get: operations["get_response_filter"];
+        /** @description Change which responses are held (audited). Needs the tester role or above. */
+        put: operations["put_response_filter"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/attacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The project's attacks, newest first, with live progress for running ones. */
+        get: operations["intruder_attacks"];
+        put?: never;
+        /** @description Start an attack: fill the marked positions of a request with payloads (sniper, battering ram, pitchfork or cluster bomb) and send every request through the scope gate (the target must be in scope; there is no out-of-scope setting), recorded as flows with source intruder. Results are stored in the project and sent on the event stream (intruder_result, intruder_state). Up to three attacks run at once. Needs the tester role or above; audited. */
+        post: operations["intruder_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/attacks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One attack, with its request (position markers included) and the configuration it was started with. */
+        get: operations["intruder_attack"];
+        put?: never;
+        post?: never;
+        /** @description Delete an attack and its results (the flows it recorded stay in history). A running attack is a 409. Needs the tester role or above; audited. */
+        delete: operations["intruder_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/attacks/{id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description An attack's results in request order, up to 5000 per page (?offset and ?limit). */
+        get: operations["intruder_results"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/attacks/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The stop switch: no further request is sent and the ones in flight are dropped, at once. `stopped` is false when the attack was not running. (The kill switch, PUT /tools/stop, ends every attack too.) Needs the tester role or above; audited. */
+        post: operations["intruder_stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first few payloads come back. A problem is a 400 that says what. Needs the tester role or above. */
+        post: operations["intruder_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Issues the passive scanner found in recorded traffic, newest sighting first, with the number of flows it has not read yet. Filter by status, severity, confidence, rule, host, evidence flow or text. Needs the viewer role or above. */
+        get: operations["list_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The issues (same filters as the list) as a report file: format html (default), json, sarif, junit or markdown. Always an attachment with a CSP that lets nothing run. Secrets (cookies, tokens, passwords) are redacted unless redact=0, which needs the tester role and is audited. Needs the viewer role or above. */
+        get: operations["issues_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues/rescan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Queue every recorded flow for the scanner again (after a rule changed). Counts start over; statuses are kept. Needs the tester role or above; audited. */
+        post: operations["rescan_issues"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One issue with its evidence ranges and remediation. Needs the viewer role or above. */
+        get: operations["get_issue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description Set an issue's status (new, confirmed or false_positive). Needs the tester role or above; audited. */
+        patch: operations["change_issue"];
+        trace?: never;
+    };
     "/organizer": {
         parameters: {
             query?: never;
@@ -764,6 +1074,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sequencer/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Analyse how random a set of tokens is (20 to 10000, each up to 1024 characters): per-position character statistics, bit-level bias, FIPS 140-2 (monobit, poker, runs, long run) on blocks of 20000 bits, an entropy estimate, checks for repeats and counters, and a verdict (excellent, good, poor, not_random). The result is the export. Needs the viewer role. */
+        post: operations["sequencer_analyze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sequencer/capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Start collecting tokens: send a request up to 5000 times (one after another, with an optional pause) and take the token from a response header, a Set-Cookie cookie or a regular expression over the body. Every request passes the scope gate (scope, kill switch, per-host rate limit; a rate-limit refusal is waited out) through the Repeater's engine and is recorded as a flow with source repeater. At most two captures run at once. Poll /sequencer/capture/{id}. Needs the tester role or above. */
+        post: operations["sequencer_capture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sequencer/capture/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The progress of a capture and its tokens from index `from` on. Needs the viewer role. */
+        get: operations["sequencer_capture_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sequencer/capture/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The stop switch: the capture ends after the request in flight. Needs the tester role or above. */
+        post: operations["sequencer_capture_stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/setup": {
         parameters: {
             query?: never;
@@ -988,6 +1366,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{id}/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Remove a user's second factor and recovery codes (a lost device) and end their sessions. Audited. Needs the admin role. */
+        delete: operations["reset_user_totp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -995,6 +1390,47 @@ export interface components {
         AddedCount: {
             /** Format: int64 */
             added: number;
+        };
+        Analysis: {
+            /** @description Bit positions off one half beyond chance, and how many bit positions there are. */
+            biased_bits: number;
+            bit_positions: number;
+            /** @description Bits in the bit-level stream (capped at 160 000). */
+            bit_stream_len: number;
+            /**
+             * Format: double
+             * @description What the same positions would carry if every character seen there were equally likely.
+             */
+            capacity_bits: number;
+            /** @description The most common characters over all tokens (up to 64). */
+            charset: components["schemas"]["CharCount"][];
+            /** @description Distinct characters over all tokens. */
+            charset_size: number;
+            /**
+             * Format: double
+             * @description Effective entropy of a token in bits, character level.
+             */
+            entropy_bits: number;
+            fips?: components["schemas"]["FipsReport"] | null;
+            max_length: number;
+            min_length: number;
+            positions: components["schemas"]["PositionStat"][];
+            /** @description Why the verdict is what it is. */
+            reasons: string[];
+            /** @description False under 100 tokens. */
+            reliable: boolean;
+            /**
+             * Format: double
+             * @description Share of consecutive tokens that are numbers 1 to 65 536 above the one before (0 when they are not numbers).
+             */
+            sequential_share: number;
+            tokens: number;
+            unique: number;
+            verdict: components["schemas"]["Verdict"];
+        };
+        AnalyzeBody: {
+            /** @description The tokens, one string each (20 to 10000, each up to 1024 characters). */
+            tokens: string[];
         };
         Annotate: {
             note?: string | null;
@@ -1014,6 +1450,51 @@ export interface components {
             /** Format: int64 */
             user_id: number;
         };
+        AttackDetail: components["schemas"]["AttackInfo"] & {
+            /** @description The payload sets, options and grep rules it was started with. */
+            config: unknown;
+            /** @description The request with its position markers, base64. */
+            request: string;
+        };
+        AttackInfo: {
+            attack_type: string;
+            /** Format: int64 */
+            created_ms: number;
+            /**
+             * Format: int64
+             * @description Requests that finished.
+             */
+            done: number;
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description Requests that got no answer.
+             */
+            errors: number;
+            /** Format: int64 */
+            finished_ms?: number | null;
+            host: string;
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /** Format: int32 */
+            port: number;
+            scheme: string;
+            /**
+             * Format: int64
+             * @description Requests left out because a payload was skipped.
+             */
+            skipped: number;
+            /** @description `running`, `completed`, `stopped`, `failed` or `interrupted` (the engine ended while it ran). */
+            state: string;
+            /** Format: int64 */
+            total: number;
+        };
+        AttackList: {
+            attacks: components["schemas"]["AttackInfo"][];
+        };
+        /** @enum {string} */
+        AttackType: "sniper" | "battering_ram" | "pitchfork" | "cluster_bomb";
         AuditEntry: {
             action: string;
             detail: string;
@@ -1036,9 +1517,84 @@ export interface components {
          */
         Bytes: string;
         CaInfo: {
+            /**
+             * Format: int64
+             * @description Whole days until expiry (negative once expired).
+             */
+            days_left: number;
+            /** @description True when the CA expires within 30 days or already has. */
+            expiring: boolean;
             fingerprint_sha256: string;
+            /**
+             * Format: int64
+             * @description Expiry, seconds since the Unix epoch.
+             */
+            not_after: number;
             pem: string;
+            /** @description Domains a name-constrained CA is limited to; empty when unconstrained. */
+            permitted_domains: string[];
             spki_sha256: string;
+        };
+        CaptureBody: {
+            /**
+             * Format: int32
+             * @description How many requests to send (1 to 5000).
+             */
+            count: number;
+            /**
+             * Format: int64
+             * @description Pause between requests, milliseconds (0 to 10000).
+             */
+            delay_ms?: number;
+            host: string;
+            /** Format: int32 */
+            port: number;
+            /** @description The request to send each time, as written, base64 (up to 1 MiB). */
+            request: string;
+            scheme: components["schemas"]["Scheme"];
+            /** @description Where the token is in each response. */
+            source: components["schemas"]["TokenSource"];
+            update_content_length?: boolean;
+            verify_tls?: boolean;
+        };
+        CaptureStarted: {
+            /** Format: int64 */
+            id: number;
+        };
+        /** @enum {string} */
+        CaptureState: "running" | "done" | "stopped" | "failed";
+        CaptureStatus: {
+            /**
+             * Format: int32
+             * @description Requests asked for.
+             */
+            count: number;
+            /**
+             * Format: int32
+             * @description Requests that failed.
+             */
+            errors: number;
+            /** @description Tokens extracted so far. */
+            extracted: number;
+            from: number;
+            /** Format: int64 */
+            id: number;
+            last_error?: string | null;
+            /**
+             * Format: int32
+             * @description Responses that had no token.
+             */
+            missing: number;
+            /**
+             * Format: int32
+             * @description Requests sent so far.
+             */
+            sent: number;
+            state: components["schemas"]["CaptureState"];
+            /** @description `scheme://host:port` the capture sends to. */
+            target: string;
+            /** @description The tokens from index `from` on. */
+            tokens: string[];
         };
         ChangeTags: {
             add?: string[];
@@ -1049,6 +1605,12 @@ export interface components {
             /** Format: int64 */
             changed: number;
         };
+        CharCount: {
+            ch: string;
+            count: number;
+        };
+        /** @enum {string} */
+        Confidence: "tentative" | "firm" | "certain";
         /** @description The project that is open. */
         CurrentProject: {
             /**
@@ -1117,6 +1679,17 @@ export interface components {
         };
         /** @enum {string} */
         Direction: "client_to_server" | "server_to_client";
+        EndpointStat: {
+            /** Format: int32 */
+            count: number;
+            method: string;
+            /** @description The names of the parameters seen on this endpoint (at most 100). */
+            params: string[];
+            /** @description The path without its query, with ids replaced: `/users/{n}`, `/files/{uuid}`, `/blob/{hex}`. */
+            path: string;
+            /** @description How often each response status came back (requests with no response are not listed). */
+            statuses: components["schemas"]["StatusCount"][];
+        };
         EngageReport: {
             /** @description What the response holds: comments, scripts, links, forms, resources, URLs and quoted paths. */
             findings: components["schemas"]["Finding"][];
@@ -1130,6 +1703,16 @@ export interface components {
         Error: {
             error: string;
         };
+        /** @description A highlighted byte range in the stored request or response (end exclusive). */
+        Evidence: {
+            /** Format: int64 */
+            end: number;
+            part: components["schemas"]["EvidencePart"];
+            /** Format: int64 */
+            start: number;
+        };
+        /** @enum {string} */
+        EvidencePart: "request" | "response";
         Finding: {
             kind: components["schemas"]["FindingKind"];
             /** @description Byte offset into the text that was scanned. */
@@ -1138,6 +1721,30 @@ export interface components {
         };
         /** @enum {string} */
         FindingKind: "comment" | "inline_script" | "script_src" | "link" | "form_action" | "resource" | "url" | "path";
+        FipsBlock: {
+            long_run: components["schemas"]["FipsTest"];
+            monobit: components["schemas"]["FipsTest"];
+            poker: components["schemas"]["FipsTest"];
+            /** @description Run counts for lengths 1 to 6 and over, for zeros and for ones: all must be inside their ranges. */
+            runs: components["schemas"]["FipsTest"];
+        };
+        FipsReport: {
+            /** @description Bits that went into the tests. */
+            bits_tested: number;
+            blocks: components["schemas"]["FipsBlock"][];
+            /** @description Blocks in which every test passed. */
+            blocks_passed: number;
+        };
+        FipsTest: {
+            /** @description The range that passes, as text. */
+            limit: string;
+            pass: boolean;
+            /**
+             * Format: double
+             * @description The statistic (ones, poker X, total runs or the longest run).
+             */
+            value: number;
+        };
         /** @description A flow without its bodies: its summary, and each stored message's head and size. */
         FlowMeta: components["schemas"]["FlowSummary"] & {
             original_request?: components["schemas"]["PartInfo"] | null;
@@ -1193,10 +1800,38 @@ export interface components {
             /** Format: int32 */
             status?: number | null;
             tags: string[];
+            /**
+             * Format: int64
+             * @description Milliseconds from the request being received to the response head arriving.
+             */
+            ttfb_ms?: number | null;
         };
         Forwarded: {
             /** Format: int64 */
             forwarded: number;
+        };
+        /** @description Pull a value out of the response: the first group of the regular expression, or the whole match without one. */
+        GrepExtract: {
+            pattern: string;
+        };
+        /** @description Mark a response as a match when this is found in it. */
+        GrepMatch: {
+            case_insensitive?: boolean;
+            pattern: string;
+            /** @description A regular expression rather than plain text. */
+            regex?: boolean;
+        };
+        /** @description The grep rules of an attack. */
+        Greps: {
+            extracts?: components["schemas"]["GrepExtract"][];
+            matches?: components["schemas"]["GrepMatch"][];
+        };
+        HostAnalysis: components["schemas"]["TargetAnalysis"] & {
+            /** @description The host has more recorded requests than were read; the newest were. */
+            capped: boolean;
+            host: string;
+            /** Format: int32 */
+            port?: number | null;
         };
         InterceptItem: components["schemas"]["InterceptSummary"] & {
             /**
@@ -1228,6 +1863,55 @@ export interface components {
             status?: number | null;
             url: string;
         };
+        Issue: {
+            confidence: components["schemas"]["Confidence"];
+            /**
+             * Format: int64
+             * @description How many flows showed it.
+             */
+            count: number;
+            cwe: number[];
+            detail: string;
+            evidence: components["schemas"]["Evidence"][];
+            /** Format: int64 */
+            first_seen_ms: number;
+            /**
+             * Format: int64
+             * @description The flow that shows the issue (the first one it was seen in); `None` once that flow is deleted.
+             */
+            flow_id?: number | null;
+            host: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            last_seen_ms: number;
+            owasp: string[];
+            path: string;
+            /** Format: int32 */
+            port: number;
+            remediation: string;
+            rule: string;
+            scheme: string;
+            severity: components["schemas"]["Severity"];
+            status: components["schemas"]["IssueStatus"];
+            title: string;
+        };
+        IssueChange: {
+            status: components["schemas"]["IssueStatus"];
+        };
+        IssueList: {
+            /** @description Newest sighting first. */
+            issues: components["schemas"]["Issue"][];
+            /**
+             * Format: int64
+             * @description Flows the scanner has not read yet.
+             */
+            pending: number;
+            /** @description The rule ids the scanner has, for filters. */
+            rules: string[];
+        };
+        /** @enum {string} */
+        IssueStatus: "new" | "confirmed" | "false_positive";
         Launched: {
             launched: string;
         };
@@ -1235,6 +1919,8 @@ export interface components {
             password: string;
             username: string;
         };
+        /** @description The answer to a password sign-in: a session, or a request for the second factor (no session yet). */
+        LoginReply: components["schemas"]["Me"] | components["schemas"]["SecondFactor"];
         MatchRule: {
             comment?: string;
             enabled?: boolean;
@@ -1271,11 +1957,53 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        /** @enum {string} */
+        NumberBase: "decimal" | "hex";
         /**
          * @description One step of a chain.
          * @enum {string}
          */
-        Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "sha256" | "sha512";
+        Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "gzip_encode" | "deflate_encode" | "brotli_encode" | "zstd_encode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "md5" | "sha1" | "sha256" | "sha512";
+        /** @description The resource pool and the sending options. */
+        Options: {
+            /**
+             * Format: int32
+             * @description Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.
+             * @default 5
+             */
+            concurrency: number;
+            /**
+             * Format: int64
+             * @description The least time between the starts of two requests, milliseconds, whatever the concurrency.
+             * @default 0
+             */
+            delay_ms: number;
+            /**
+             * Format: int64
+             * @description Stop after this many requests (at most one million).
+             * @default null
+             */
+            max_requests: number | null;
+            /**
+             * Format: int32
+             * @description How often a request that could not be sent or got no answer is tried again (0 to 10).
+             * @default 0
+             */
+            retries: number;
+            /**
+             * Format: int64
+             * @description The longest one request may take, seconds (1 to 300).
+             * @default 30
+             */
+            timeout_secs: number;
+            /**
+             * @description Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.
+             * @default true
+             */
+            update_content_length: boolean;
+            /** @default false */
+            verify_tls: boolean;
+        };
         OrganizerAdd: {
             flow_ids: components["schemas"]["i64"][];
         };
@@ -1306,6 +2034,24 @@ export interface components {
             value: string;
             where: components["schemas"]["ParamWhere"];
         };
+        ParamStat: {
+            /**
+             * Format: int32
+             * @description Requests that carried it.
+             */
+            count: number;
+            /**
+             * Format: int32
+             * @description Distinct endpoints it appeared on (counted up to 100).
+             */
+            endpoints: number;
+            /** @description More distinct values than `values` holds: likely an identifier, a token or free text, not a flag. */
+            more_values: boolean;
+            name: string;
+            /** @description The first distinct values seen. */
+            values: string[];
+            where: components["schemas"]["ParamWhere"];
+        };
         /** @enum {string} */
         ParamWhere: "query" | "form" | "json";
         /** @description The head of one stored message and how big it is, which is all the flow overview needs. */
@@ -1329,8 +2075,130 @@ export interface components {
             /** @description Also end the user's API tokens (default true). */
             revoke_tokens?: boolean | null;
         };
+        /** @description A source and the processing for what it yields. */
+        PayloadSet: {
+            processing?: components["schemas"]["Processing"][];
+            source: components["schemas"]["PayloadSource"];
+        };
+        /** @description A source of payloads. */
+        PayloadSource: {
+            items: string[];
+            /** @enum {string} */
+            type: "list";
+        } | {
+            base?: components["schemas"]["NumberBase"];
+            /** Format: int64 */
+            from: number;
+            /**
+             * Format: int32
+             * @description Pad with leading zeros to this many digits.
+             */
+            min_digits?: number;
+            /** Format: int64 */
+            step?: number;
+            /** Format: int64 */
+            to: number;
+            /** @enum {string} */
+            type: "numbers";
+        } | {
+            charset: string;
+            /** Format: int32 */
+            max_len: number;
+            /** Format: int32 */
+            min_len: number;
+            /** @enum {string} */
+            type: "brute_force";
+        } | {
+            /** Format: int64 */
+            count: number;
+            /** @enum {string} */
+            type: "null";
+        } | {
+            items: string[];
+            /** @enum {string} */
+            type: "case_changes";
+        } | {
+            format?: string | null;
+            from: string;
+            /** Format: int64 */
+            step_days?: number;
+            to: string;
+            /** @enum {string} */
+            type: "dates";
+        } | {
+            items: string[];
+            rules: components["schemas"]["Substitution"][];
+            /** @enum {string} */
+            type: "char_substitution";
+        } | {
+            name: string;
+            /** @enum {string} */
+            type: "builtin";
+        };
         /** @enum {string} */
         Phase: "request" | "response";
+        PlanPreview: {
+            /**
+             * Format: int64
+             * @description The payloads of one request (one per position, or one for sniper and battering ram).
+             */
+            index: number;
+            payloads: string[];
+        };
+        PlanReply: {
+            /** Format: int32 */
+            positions: number;
+            /** @description The first few requests' payloads. */
+            preview: components["schemas"]["PlanPreview"][];
+            /**
+             * Format: int64
+             * @description Requests the attack would make (after the maximum, before skipped payloads are left out).
+             */
+            total: number;
+        };
+        PositionStat: {
+            /** @description How many of those bits are off one half by more than chance allows (|z| above 3.29). */
+            biased_bits: number;
+            /** @description For each of those bits (most significant first): the share of ones. */
+            bit_ones: number[];
+            /** @description Bits taken from this character for the bit-level analysis. */
+            bits: number;
+            /** @description Tokens that have this position. */
+            count: number;
+            /** @description Distinct characters seen. */
+            distinct: number;
+            /** Format: double */
+            entropy_bits: number;
+            /** @description 0-based character position. */
+            position: number;
+            /** @description The most common character and its share. */
+            top_char: string;
+            /** Format: double */
+            top_share: number;
+        };
+        /** @description A step applied to every payload, in order. */
+        Processing: {
+            /** @enum {string} */
+            type: "prefix";
+            value: string;
+        } | {
+            /** @enum {string} */
+            type: "suffix";
+            value: string;
+        } | {
+            op: components["schemas"]["Op"];
+            /** @enum {string} */
+            type: "encode";
+        } | {
+            pattern: string;
+            replacement: string;
+            /** @enum {string} */
+            type: "replace_regex";
+        } | {
+            pattern: string;
+            /** @enum {string} */
+            type: "skip_if_matches";
+        };
         ProjectInfo: {
             current: boolean;
             /** Format: int64 */
@@ -1389,6 +2257,45 @@ export interface components {
             temporary: boolean;
             /** @enum {string} */
             type: "project_switched";
+        } | {
+            /** Format: int64 */
+            attack_id: number;
+            /** Format: int64 */
+            done: number;
+            error?: string | null;
+            /** Format: int64 */
+            errors: number;
+            /** Format: int64 */
+            skipped: number;
+            /** @description `running`, `completed`, `stopped`, `failed` or `interrupted`. */
+            state: string;
+            /** Format: int64 */
+            total: number;
+            /** @enum {string} */
+            type: "intruder_state";
+        } | {
+            /** Format: int64 */
+            attack_id: number;
+            /** Format: int32 */
+            attempts: number;
+            error?: string | null;
+            extracts: (string | null)[];
+            /** Format: int64 */
+            flow_id?: number | null;
+            /** Format: int64 */
+            index: number;
+            /** Format: int64 */
+            length: number;
+            matches: boolean[];
+            payloads: string[];
+            /** Format: int32 */
+            position?: number | null;
+            /** Format: int32 */
+            status?: number | null;
+            /** Format: int64 */
+            time_ms: number;
+            /** @enum {string} */
+            type: "intruder_result";
         };
         ProxyInfo: {
             auth_required: boolean;
@@ -1438,12 +2345,35 @@ export interface components {
             message: string;
             start: number;
         };
+        RecoveryCodes: {
+            /** @description Shown once; each works once. */
+            recovery_codes: string[];
+        };
         RenameProject: {
             name: string;
         };
         RepeaterSettings: {
             /** @description Let the Repeater send to hosts outside the scope. Starts off, and goes back off when a project is opened. */
             allow_out_of_scope: boolean;
+        };
+        /**
+         * @description Which responses are held when response interception is on. Every condition that is set must match; an empty
+         *     filter holds every response.
+         */
+        ResponseFilter: {
+            /** @description A substring that must appear in the response body (the body is buffered to check it). */
+            body_contains?: string | null;
+            /** @description A substring that must appear in the response's header lines (case-insensitive). */
+            header_contains?: string | null;
+            /** @description Substrings of the `Content-Type` (any one may match, case-insensitive). Empty: any type. */
+            mime_contains?: string[];
+            /** @description Hold only responses whose request was held too. */
+            only_if_request_held?: boolean;
+            /** @description Status codes or classes, such as `404`, `5xx` (any one may match). Empty: any status. */
+            statuses?: string[];
+        };
+        ResultsReply: {
+            rows: components["schemas"]["Row"][];
         };
         Revoked: {
             /** Format: int64 */
@@ -1453,6 +2383,45 @@ export interface components {
         Role: "viewer" | "tester" | "admin";
         RoleBody: {
             role: components["schemas"]["Role"];
+        };
+        /** @description The outcome of one request. */
+        Row: {
+            /**
+             * Format: int32
+             * @description How many tries it took (1 when the first worked).
+             */
+            attempts: number;
+            error?: string | null;
+            /** @description One entry per grep extract rule. */
+            extracts: (string | null)[];
+            /**
+             * Format: int64
+             * @description The recorded flow, when something was sent.
+             */
+            flow_id?: number | null;
+            /**
+             * Format: int64
+             * @description Which request of the attack (0-based).
+             */
+            index: number;
+            /**
+             * Format: int64
+             * @description Response size in bytes.
+             */
+            length: number;
+            /** @description One entry per grep match rule. */
+            matches: boolean[];
+            /** @description The payloads used, as text (bytes that are not UTF-8 are replaced). */
+            payloads: string[];
+            /**
+             * Format: int32
+             * @description The position that was attacked, for a sniper attack.
+             */
+            position?: number | null;
+            /** Format: int32 */
+            status?: number | null;
+            /** Format: int64 */
+            time_ms: number;
         };
         /** @enum {string} */
         RuleTarget: "request_first_line" | "request_header" | "request_body" | "response_first_line" | "response_header" | "response_body";
@@ -1487,6 +2456,12 @@ export interface components {
         ScopeSpec: {
             exclude?: components["schemas"]["ScopeRule"][];
             include?: components["schemas"]["ScopeRule"][];
+        };
+        SecondFactor: {
+            /** @description Send this with the code to `POST /auth/login/totp`. Valid for five minutes, from the same address. */
+            pending: string;
+            /** @description The kind of second factor to present: `totp`. */
+            second_factor: string;
         };
         SendBody: {
             /**
@@ -1567,6 +2542,8 @@ export interface components {
             password: string;
             username: string;
         };
+        /** @enum {string} */
+        Severity: "info" | "low" | "medium" | "high";
         /** @description A host and the paths seen on it, for the site map. */
         SiteMapEntry: {
             /** Format: int64 */
@@ -1593,10 +2570,34 @@ export interface components {
         SsoInfo: {
             sso?: components["schemas"]["SsoButton"] | null;
         };
+        StartBody: {
+            attack_type: components["schemas"]["AttackType"];
+            greps?: components["schemas"]["Greps"];
+            host: string;
+            /** @description A label for the attack (defaults to the host and attack type). */
+            name?: string | null;
+            options?: components["schemas"]["Options"];
+            /** @description One set for sniper and battering ram; one per position for pitchfork and cluster bomb. */
+            payload_sets: components["schemas"]["PayloadSet"][];
+            /** Format: int32 */
+            port: number;
+            /**
+             * @description The request, base64, with `§` around each position (`§value§`: the text between is what is sent when the
+             *     position is not being attacked).
+             */
+            request: string;
+            scheme: components["schemas"]["Scheme"];
+        };
         Status: {
             name: string;
             setup_required: boolean;
             version: string;
+        };
+        StatusCount: {
+            /** Format: int32 */
+            count: number;
+            /** Format: int32 */
+            status: number;
         };
         StepError: {
             message: string;
@@ -1615,8 +2616,17 @@ export interface components {
         StopBody: {
             stopped: boolean;
         };
+        StopReply: {
+            /** @description False when the attack was not running. */
+            stopped: boolean;
+        };
         Stopped: {
             stopped: boolean;
+        };
+        /** @description One character-substitution rule. */
+        Substitution: {
+            from: string;
+            to: string;
         };
         /**
          * @description The Repeater's tabs as the page keeps them. The server stores them as the page wrote them and looks only at their
@@ -1635,6 +2645,18 @@ export interface components {
             next?: number;
             /** @description One object per tab (target, request text, options). Responses are not stored. */
             tabs: unknown[];
+        };
+        TargetAnalysis: {
+            /** @description Most requested first. */
+            endpoints: components["schemas"]["EndpointStat"][];
+            params: components["schemas"]["ParamStat"][];
+            /**
+             * Format: int32
+             * @description Requests analysed.
+             */
+            requests: number;
+            /** @description A limit was hit: there were more endpoints or parameters than are listed. */
+            truncated: boolean;
         };
         /** @description A recognised term, for showing as a chip: where it is in the query and what it says. */
         TermSpan: {
@@ -1672,6 +2694,50 @@ export interface components {
          * @enum {string}
          */
         TokenScope: "read" | "full";
+        /** @description Where a token sits in a response. */
+        TokenSource: {
+            /** @enum {string} */
+            kind: "header";
+            name: string;
+        } | {
+            /** @enum {string} */
+            kind: "cookie";
+            name: string;
+        } | {
+            /** @enum {string} */
+            kind: "regex";
+            pattern: string;
+        };
+        TotpCodeBody: {
+            /** @description A 6-digit code (a recovery code also works where the operation allows it). */
+            code: string;
+        };
+        TotpEnrolment: {
+            /** @description The same secret as an `otpauth://` URI. */
+            otpauth_uri: string;
+            /** @description The shared secret, base32. Shown once. */
+            secret: string;
+        };
+        TotpLoginBody: {
+            /** @description A 6-digit code, or an unused recovery code. */
+            code: string;
+            pending: string;
+        };
+        TotpRequiredBody: {
+            required: boolean;
+        };
+        TotpStatus: {
+            /** @description A confirmed second factor is on for this account. */
+            enabled: boolean;
+            /** @description A secret was made but no code has confirmed it yet. */
+            enrolling: boolean;
+            /** Format: int64 */
+            recovery_codes_left: number;
+            /** @description An admin requires every password account to have a second factor. */
+            required: boolean;
+            /** @description This account must set up a second factor before it can do anything else. */
+            setup_required: boolean;
+        };
         User: {
             /** Format: int64 */
             created_ms: number;
@@ -1680,6 +2746,8 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        /** @enum {string} */
+        Verdict: "not_random" | "poor" | "good" | "excellent";
         WsBody: {
             /** @description Frames to send, in order, once the server has answered `101`. */
             frames?: components["schemas"]["WsFrameIn"][];
@@ -1774,6 +2842,60 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    host_analysis: {
+        parameters: {
+            query: {
+                /** @description Exact host name */
+                host: string;
+                /** @description Only this port */
+                port?: number;
+                /** @description How many of the newest requests to read */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostAnalysis"];
+                };
+            };
+            /** @description No host given */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     audit_log: {
         parameters: {
             query?: {
@@ -1846,6 +2968,57 @@ export interface operations {
             };
         };
         responses: {
+            /** @description A session (cookie set), or `second_factor` and `pending` when the account has a second factor: no session exists until `POST /auth/login/totp` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    login_totp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpLoginBody"];
+            };
+        };
+        responses: {
             /** @description OK */
             200: {
                 headers: {
@@ -1857,6 +3030,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Wrong code, or the pending sign-in expired */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2150,6 +3332,302 @@ export interface operations {
             };
             /** @description Too many attempts */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_confirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Wrong code, or no enrolment in progress */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already set up */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeBody"];
+            };
+        };
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Wrong code, or not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_enroll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpEnrolment"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already set up */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_recovery_codes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Wrong code, or not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_set_required: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpRequiredBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3506,6 +4984,765 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_response_filter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResponseFilter"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_response_filter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResponseFilter"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResponseFilter"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_attacks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttackList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartBody"];
+            };
+        };
+        responses: {
+            /** @description The attack, running */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttackInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attacks running or stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_attack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttackDetail"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The attack is running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_results: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultsReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_issues: {
+        parameters: {
+            query?: {
+                /** @description new, confirmed or false_positive */
+                status?: string;
+                /** @description info, low, medium or high */
+                severity?: string;
+                /** @description tentative, firm or certain */
+                confidence?: string;
+                rule?: string;
+                host?: string;
+                flow_id?: number;
+                /** @description Text in the title, detail or path */
+                q?: string;
+                /** @description Up to 5000; default 1000 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueList"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    issues_report: {
+        parameters: {
+            query?: {
+                /** @description html, json, sarif, junit or markdown */
+                format?: string;
+                /** @description 0 keeps secrets */
+                redact?: string;
+                status?: string;
+                severity?: string;
+                confidence?: string;
+                rule?: string;
+                host?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A report file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rescan_issues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such issue */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    change_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Issue id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueChange"];
+            };
+        };
+        responses: {
+            /** @description Changed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such issue */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5081,6 +7318,220 @@ export interface operations {
             };
         };
     };
+    sequencer_analyze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalyzeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Analysis"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sequencer_capture: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaptureBody"];
+            };
+        };
+        responses: {
+            /** @description Started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureStarted"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sequencer_capture_status: {
+        parameters: {
+            query?: {
+                /** @description Return tokens from this index on */
+                from?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Capture id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such capture */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sequencer_capture_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Capture id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such capture */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     setup: {
         parameters: {
             query?: never;
@@ -5979,6 +8430,54 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    reset_user_totp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description That user has no second factor */
             404: {
                 headers: {
                     [name: string]: unknown;

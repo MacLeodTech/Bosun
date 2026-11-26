@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine;
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer,
-    KeyPair, KeyUsagePurpose, SanType, SerialNumber,
+    BasicConstraints, CertificateParams, CidrSubnet, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
+    GeneralSubtree, IsCa, Issuer, KeyPair, KeyUsagePurpose, NameConstraints, SanType, SerialNumber,
 };
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -49,6 +49,8 @@ pub enum CaError {
     Io { path: String, source: std::io::Error },
     #[error("invalid host name for a certificate: {0:?}")]
     BadHost(String),
+    #[error("invalid domain for a name constraint: {0:?}")]
+    BadDomain(String),
     #[error("the CA files are incomplete: {0} exists but {1} does not")]
     Incomplete(String, String),
 }
@@ -62,6 +64,28 @@ pub struct CertificateAuthority {
     cache: Mutex<lru::LruCache<(String, bool), Arc<ServerConfig>>>,
     provider: Arc<rustls::crypto::CryptoProvider>,
     cert_path: PathBuf,
+    not_after: OffsetDateTime,
+    permitted_domains: Vec<String>,
+}
+
+/// Days before expiry at which `doctor` and the UI start to warn.
+pub const EXPIRY_WARN_DAYS: i64 = 30;
+
+/// How the CA is created.
+#[derive(Debug, Clone, Default)]
+pub struct CaOptions {
+    /// When not empty, the CA is name-constrained: clients that honour the constraint accept its certificates
+    /// only for these domains (and their subdomains) and never for IP addresses.
+    pub permitted_domains: Vec<String>,
+}
+
+/// What `rotate` did.
+#[derive(Debug, Clone)]
+pub struct Rotation {
+    /// Fingerprint of the CA that was replaced.
+    pub old_fingerprint: String,
+    /// Where the old certificate was kept (certificate only; its key is deleted).
+    pub archived_cert: PathBuf,
 }
 
 impl std::fmt::Debug for CertificateAuthority {
@@ -75,6 +99,11 @@ impl std::fmt::Debug for CertificateAuthority {
 impl CertificateAuthority {
     /// Load the CA from `dir`, or create a new one there.
     pub fn load_or_create(dir: &Path, key: &DataKey) -> Result<Self, CaError> {
+        Self::load_or_create_with(dir, key, &CaOptions::default())
+    }
+
+    /// Like [`Self::load_or_create`], with options for a CA that has to be created.
+    pub fn load_or_create_with(dir: &Path, key: &DataKey, opts: &CaOptions) -> Result<Self, CaError> {
         let cert_path = dir.join(CA_CERT_FILE);
         let key_path = dir.join(CA_KEY_FILE);
         let io = |p: &Path| {
@@ -92,7 +121,7 @@ impl CertificateAuthority {
             }
             (false, false) => {
                 std::fs::create_dir_all(dir).map_err(io(dir))?;
-                let (pem, ca_key) = generate_ca()?;
+                let (pem, ca_key) = generate_ca(opts)?;
                 let sealed = key.seal(SEAL_PURPOSE, &ca_key.serialize_der())?;
                 sealed::write_private(&key_path, &sealed).map_err(io(&key_path))?;
                 std::fs::write(&cert_path, &pem).map_err(io(&cert_path))?;
@@ -112,13 +141,48 @@ impl CertificateAuthority {
 
     /// Generate a throwaway CA held only in memory (tests, and `--ephemeral-ca`).
     pub fn ephemeral() -> Result<Self, CaError> {
-        let (pem, ca_key) = generate_ca()?;
+        Self::ephemeral_with(&CaOptions::default())
+    }
+
+    /// A throwaway CA with options.
+    pub fn ephemeral_with(opts: &CaOptions) -> Result<Self, CaError> {
+        let (pem, ca_key) = generate_ca(opts)?;
         Self::from_parts(&pem, ca_key, PathBuf::new())
+    }
+
+    /// Replace the CA in `dir` with a new one. The old certificate is kept under `previous/` for reference;
+    /// its key is deleted, since a retired CA key is only a liability. Running processes keep using the old CA
+    /// until they restart. The browser Bosun launches is pinned to the CA's key at launch, so the next launch
+    /// carries the new pin; a CA installed by hand elsewhere has to be replaced there too.
+    pub fn rotate(dir: &Path, key: &DataKey, opts: &CaOptions) -> Result<(Self, Rotation), CaError> {
+        let old = Self::load_or_create(dir, key)?;
+        let io = |p: &Path| {
+            let path = p.display().to_string();
+            move |source| CaError::Io { path, source }
+        };
+        let prev = dir.join("previous");
+        std::fs::create_dir_all(&prev).map_err(io(&prev))?;
+        let stamp = OffsetDateTime::now_utc().unix_timestamp();
+        let short = old.fingerprint().replace(':', "").to_ascii_lowercase();
+        let archived = prev.join(format!("ca-{stamp}-{}.crt.pem", &short[..16]));
+        std::fs::write(&archived, old.cert_pem()).map_err(io(&archived))?;
+        let (pem, ca_key) = generate_ca(opts)?;
+        let sealed = key.seal(SEAL_PURPOSE, &ca_key.serialize_der())?;
+        let key_path = dir.join(CA_KEY_FILE);
+        let cert_path = dir.join(CA_CERT_FILE);
+        sealed::write_private(&key_path, &sealed).map_err(io(&key_path))?;
+        std::fs::write(&cert_path, &pem).map_err(io(&cert_path))?;
+        let rotation = Rotation {
+            old_fingerprint: old.fingerprint(),
+            archived_cert: archived,
+        };
+        Ok((Self::from_parts(&pem, ca_key, cert_path)?, rotation))
     }
 
     fn from_parts(pem: &str, ca_key: KeyPair, cert_path: PathBuf) -> Result<Self, CaError> {
         let ca_der = CertificateDer::from(pem_to_der(pem).ok_or(rcgen::Error::CouldNotParseCertificate)?);
         let issuer = Issuer::from_ca_cert_der(&ca_der, ca_key)?;
+        let (not_after, permitted_domains) = inspect(ca_der.as_ref())?;
         Ok(Self {
             issuer,
             ca_der,
@@ -129,7 +193,24 @@ impl CertificateAuthority {
             )),
             provider: Arc::new(rustls::crypto::ring::default_provider()),
             cert_path,
+            not_after,
+            permitted_domains,
         })
+    }
+
+    /// When the CA certificate expires.
+    pub fn not_after(&self) -> OffsetDateTime {
+        self.not_after
+    }
+
+    /// Whole days until the CA expires (negative once it has).
+    pub fn days_left(&self) -> i64 {
+        (self.not_after - OffsetDateTime::now_utc()).whole_days()
+    }
+
+    /// The domains this CA is limited to; empty for an unconstrained CA.
+    pub fn permitted_domains(&self) -> &[String] {
+        &self.permitted_domains
     }
 
     pub fn cert_pem(&self) -> &str {
@@ -243,7 +324,40 @@ fn normalise_host(host: &str) -> Result<String, CaError> {
     }
 }
 
-fn generate_ca() -> Result<(String, KeyPair), CaError> {
+/// Expiry and permitted DNS subtrees of a CA certificate.
+fn inspect(der: &[u8]) -> Result<(OffsetDateTime, Vec<String>), CaError> {
+    use x509_parser::extensions::{GeneralName, ParsedExtension};
+    let bad = || rcgen::Error::CouldNotParseCertificate;
+    let (_, cert) = x509_parser::parse_x509_certificate(der).map_err(|_| bad())?;
+    let not_after =
+        OffsetDateTime::from_unix_timestamp(cert.validity().not_after.timestamp()).map_err(|_| bad())?;
+    let mut domains = Vec::new();
+    for ext in cert.extensions() {
+        if let ParsedExtension::NameConstraints(nc) = ext.parsed_extension() {
+            for st in nc.permitted_subtrees.iter().flatten() {
+                if let GeneralName::DNSName(d) = &st.base {
+                    domains.push((*d).to_string());
+                }
+            }
+        }
+    }
+    Ok((not_after, domains))
+}
+
+/// Lower-case a domain and refuse anything that is not a plain DNS name (no wildcard, no leading dot).
+fn normalise_domain(d: &str) -> Result<String, CaError> {
+    let d = d
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    match normalise_host(&d) {
+        Ok(h) if h.parse::<IpAddr>().is_err() => Ok(h),
+        _ => Err(CaError::BadDomain(d)),
+    }
+}
+
+fn generate_ca(opts: &CaOptions) -> Result<(String, KeyPair), CaError> {
     let key = KeyPair::generate()?;
     let mut params = CertificateParams::default();
     let mut id = [0u8; 4];
@@ -258,6 +372,20 @@ fn generate_ca() -> Result<(String, KeyPair), CaError> {
     params.distinguished_name = dn;
     params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    if !opts.permitted_domains.is_empty() {
+        let permitted = opts
+            .permitted_domains
+            .iter()
+            .map(|d| normalise_domain(d).map(GeneralSubtree::DnsName))
+            .collect::<Result<Vec<_>, _>>()?;
+        params.name_constraints = Some(NameConstraints {
+            permitted_subtrees: permitted,
+            excluded_subtrees: vec![
+                GeneralSubtree::IpAddress(CidrSubnet::V4([0; 4], [0; 4])),
+                GeneralSubtree::IpAddress(CidrSubnet::V6([0; 16], [0; 16])),
+            ],
+        });
+    }
     let now = OffsetDateTime::now_utc();
     params.not_before = now - Duration::days(1);
     params.not_after = now + Duration::days(CA_VALIDITY_DAYS);
@@ -310,6 +438,41 @@ mod tests {
         assert_eq!(a.alpn_protocols[0], b"h2");
         ca.server_config("127.0.0.1", false).unwrap();
         ca.server_config("[::1]", false).unwrap();
+    }
+
+    #[test]
+    fn rotate_replaces_the_ca_and_keeps_the_old_certificate() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = DataKey::generate();
+        let a = CertificateAuthority::load_or_create(dir.path(), &key).unwrap();
+        let (b, r) = CertificateAuthority::rotate(dir.path(), &key, &CaOptions::default()).unwrap();
+        assert_ne!(a.fingerprint(), b.fingerprint());
+        assert_ne!(a.spki_hash(), b.spki_hash());
+        assert_eq!(r.old_fingerprint, a.fingerprint());
+        assert_eq!(std::fs::read_to_string(&r.archived_cert).unwrap(), a.cert_pem());
+        let c = CertificateAuthority::load_or_create(dir.path(), &key).unwrap();
+        assert_eq!(c.fingerprint(), b.fingerprint());
+        assert!(b.days_left() > 365 * 2 && b.permitted_domains().is_empty());
+    }
+
+    #[test]
+    fn name_constrained_ca_carries_and_reloads_its_domains() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = DataKey::generate();
+        let opts = CaOptions {
+            permitted_domains: vec!["Example.com".into(), ".test.local".into()],
+        };
+        let ca = CertificateAuthority::load_or_create_with(dir.path(), &key, &opts).unwrap();
+        assert_eq!(ca.permitted_domains(), ["example.com", "test.local"]);
+        let again = CertificateAuthority::load_or_create(dir.path(), &key).unwrap();
+        assert_eq!(again.permitted_domains(), ["example.com", "test.local"]);
+        ca.server_config("www.example.com", false).unwrap();
+        for bad in ["*.example.com", "10.0.0.1", "a b"] {
+            let o = CaOptions {
+                permitted_domains: vec![bad.into()],
+            };
+            assert!(CertificateAuthority::ephemeral_with(&o).is_err(), "{bad}");
+        }
     }
 
     #[test]

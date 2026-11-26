@@ -1,7 +1,7 @@
 // The History table's columns, its sort keys, and the colour highlights. Pure, so it can be tested without a page.
 
-export type SortKey = 'id' | 'time' | 'method' | 'host' | 'path' | 'status' | 'size' | 'duration' | 'mime';
-export type ColKey = 'id' | 'method' | 'marks' | 'host' | 'path' | 'status' | 'length' | 'mime' | 'time' | 'duration' | 'source' | 'tags';
+export type SortKey = 'id' | 'time' | 'method' | 'host' | 'path' | 'status' | 'size' | 'req_size' | 'duration' | 'ttfb' | 'mime';
+export type ColKey = 'id' | 'method' | 'marks' | 'host' | 'path' | 'status' | 'length' | 'mime' | 'time' | 'duration' | 'ttfb' | 'reqlen' | 'source' | 'tags';
 
 export interface Col {
   key: ColKey;
@@ -25,6 +25,8 @@ export const COLS: Col[] = [
   { key: 'mime', title: 'MIME', width: '6rem', sort: 'mime' },
   { key: 'time', title: 'Time', width: '7.8rem', sort: 'time' },
   { key: 'duration', title: 'Duration', width: '5.5rem', sort: 'duration' },
+  { key: 'ttfb', title: 'TTFB', width: '5rem', sort: 'ttfb' },
+  { key: 'reqlen', title: 'Req. size', width: '6rem', sort: 'req_size' },
   { key: 'source', title: 'Source', width: '5.5rem' },
   { key: 'tags', title: 'Tags', width: '9rem' },
 ];

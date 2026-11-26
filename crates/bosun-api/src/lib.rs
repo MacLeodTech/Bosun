@@ -13,11 +13,15 @@ pub mod codec;
 pub mod engage;
 pub mod events;
 pub mod handlers;
+pub mod intruder;
+pub mod issues;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
 pub mod security;
+pub mod sequencer;
 pub mod sso;
+pub mod totp;
 pub mod web;
 
 use std::convert::Infallible;
@@ -46,6 +50,7 @@ pub const SETTING_SCOPE: &str = "scope";
 pub const SETTING_RULES: &str = "match_replace";
 pub const SETTING_SAVED_FILTERS: &str = "saved_filters";
 pub const SETTING_INTERCEPT: &str = "intercept";
+pub const SETTING_RESPONSE_FILTER: &str = "intercept_response_filter";
 pub const SETTING_REPEATER_TABS: &str = "repeater_tabs";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +176,8 @@ pub struct Inner {
     pub gate: Gate,
     /// The Repeater's sender. It shares the proxy's memory budget, upstream proxy and loop guard.
     pub repeater: bosun_http::Engine,
+    /// The Intruder attacks running now.
+    pub intruder: intruder::Attacks,
     pub ca: Arc<CertificateAuthority>,
     pub events: EventSender,
     pub limiter: auth::Limiter,
@@ -193,6 +200,14 @@ pub struct Inner {
     pub loop_guard: LoopGuard,
     pub sso: Option<sso::Sso>,
     pub tickets: auth::Tickets,
+    /// Password-checked sign-ins waiting for a second factor.
+    pub pending: totp::Pending,
+    /// The data key, for sealing second-factor secrets.
+    pub data_key: Arc<bosun_ca::DataKey>,
+    /// An admin requires a second factor of every password account.
+    pub totp_required: std::sync::atomic::AtomicBool,
+    /// Live captures of the Sequencer.
+    pub captures: sequencer::Captures,
 }
 
 pub struct Deps {
@@ -208,6 +223,8 @@ pub struct Deps {
     pub browser: Option<BrowserLauncher>,
     /// The UI's certificate; required when `api.tls` is on.
     pub ui_tls: Option<Arc<bosun_ca::UiTls>>,
+    /// The install's data key (second-factor secrets are sealed with it).
+    pub data_key: Arc<bosun_ca::DataKey>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -300,6 +317,8 @@ impl AppState {
         } else {
             None
         };
+        let totp_required =
+            std::sync::atomic::AtomicBool::new(d.app.meta("totp_required")?.as_deref() == Some("1"));
         let loop_guard = d.proxy.loop_guard();
         let sso = match &cfg.sso {
             Some(c) => Some(sso::Sso::new(c).map_err(bosun_store::StoreError::Conflict)?),
@@ -310,6 +329,7 @@ impl AppState {
             projects: projects::Manager::new(d.projects_dir, d.project_path.as_deref(), MAX_PROJECT_UPLOAD),
             repeater: bosun_http::Engine::new(d.gate.clone(), d.proxy.budget())
                 .with_connector(d.proxy.tool_connector()),
+            intruder: intruder::Attacks::default(),
             proxy: d.proxy,
             gate: d.gate,
             ca: d.ca,
@@ -336,6 +356,10 @@ impl AppState {
             loop_guard,
             sso,
             tickets: auth::Tickets::default(),
+            pending: totp::Pending::default(),
+            data_key: d.data_key,
+            totp_required,
+            captures: sequencer::Captures::default(),
         };
         Ok((
             Self {
@@ -357,6 +381,14 @@ pub fn router(st: AppState) -> Router {
         .route("/auth/ticket", post(auth::ticket))
         .route("/auth/sso", get(sso::config))
         .route("/auth/password", post(auth::change_password))
+        .route("/auth/login/totp", post(totp::login))
+        .route("/auth/totp", get(totp::status))
+        .route("/auth/totp/enroll", post(totp::enroll))
+        .route("/auth/totp/confirm", post(totp::confirm))
+        .route("/auth/totp/disable", post(totp::disable))
+        .route("/auth/totp/recovery-codes", post(totp::recovery_codes))
+        .route("/auth/totp/required", put(totp::set_required))
+        .route("/users/{id}/totp", axum::routing::delete(totp::admin_reset))
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
         .route("/flows/query", get(h::check_flow_query))
         .route("/flows/tags", post(h::change_tags))
@@ -373,11 +405,16 @@ pub fn router(st: AppState) -> Router {
         .route("/flows/{id}/ws", get(h::ws_messages))
         .route("/flows/{id}/engage", get(engage::flow_engage))
         .route("/flows/{id}/csrf-poc", get(engage::flow_csrf_poc))
+        .route("/analysis", get(engage::host_analysis))
         .route("/flows/{id}/{part}/body", get(h::flow_body))
         .route("/sitemap", get(h::site_map))
         .route("/scope", get(h::get_scope).put(h::put_scope))
         .route("/rules", get(h::get_rules).put(h::put_rules))
         .route("/intercept", get(h::get_intercept).put(h::put_intercept))
+        .route(
+            "/intercept/response-filter",
+            get(h::get_response_filter).put(h::put_response_filter),
+        )
         .route("/intercept/queue", get(h::intercept_queue))
         .route(
             "/intercept/queue/{id}",
@@ -425,10 +462,28 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/repeater/ws", post(repeater::ws_send))
         .route("/repeater/tabs", get(repeater::get_tabs).put(repeater::put_tabs))
+        .route("/sequencer/analyze", post(sequencer::analyze))
+        .route("/sequencer/capture", post(sequencer::start_capture))
+        .route("/sequencer/capture/{id}", get(sequencer::capture_status))
+        .route("/sequencer/capture/{id}/stop", post(sequencer::stop_capture))
+        .route("/intruder/plan", post(intruder::plan))
+        .route("/intruder/attacks", get(intruder::list).post(intruder::start))
+        .route(
+            "/intruder/attacks/{id}",
+            get(intruder::get).delete(intruder::delete),
+        )
+        .route("/intruder/attacks/{id}/results", get(intruder::results))
+        .route("/intruder/attacks/{id}/stop", post(intruder::stop))
+        .route("/issues", get(issues::list))
+        .route("/issues/report", get(issues::report))
+        .route("/issues/rescan", post(issues::rescan))
+        .route("/issues/{id}", get(issues::get).patch(issues::change))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()
         .nest("/api/v1", api)
+        // Container health check: no authentication, no detail (not part of the versioned API).
+        .route("/healthz", get(h::healthz))
         // Outside /api/: the browser arrives by cross-site redirect (see sso.rs).
         .route("/auth/oidc/login", get(sso::login))
         .route("/auth/oidc/callback", get(sso::callback))

@@ -32,6 +32,8 @@ pub struct NewFlow {
     pub source: FlowSource,
     pub started_ms: i64,
     pub duration_ms: Option<i64>,
+    /// Milliseconds from the request being received to the response head arriving.
+    pub ttfb_ms: Option<i64>,
     pub scheme: Scheme,
     pub host: String,
     pub port: u16,
@@ -72,6 +74,8 @@ pub enum FlowSort {
     Status,
     Size,
     Duration,
+    Ttfb,
+    ReqSize,
     Mime,
 }
 
@@ -86,6 +90,8 @@ impl FlowSort {
             "status" => Self::Status,
             "size" => Self::Size,
             "duration" => Self::Duration,
+            "ttfb" => Self::Ttfb,
+            "req_size" => Self::ReqSize,
             "mime" => Self::Mime,
             _ => return None,
         })
@@ -102,6 +108,8 @@ impl FlowSort {
             Self::Status => "status",
             Self::Size => "response_len",
             Self::Duration => "duration_ms",
+            Self::Ttfb => "ttfb_ms",
+            Self::ReqSize => "request_len",
             Self::Mime => "mime",
         }
     }
@@ -149,6 +157,9 @@ pub struct OrganizerItem {
     pub updated_ms: i64,
     pub flow: FlowSummary,
 }
+
+pub mod intruder;
+pub mod issues;
 
 /// The most items the Organizer lists, and the longest note.
 pub const MAX_ORGANIZER_ITEMS: usize = 5_000;
@@ -198,6 +209,16 @@ pub struct SiteMapEntry {
     pub last_status: Option<u16>,
     pub count: i64,
     pub in_scope: bool,
+}
+
+/// One request of a host, for the target analysis.
+#[derive(Debug, Clone)]
+pub struct HostRequest {
+    pub id: FlowId,
+    pub method: String,
+    /// Path and query as sent.
+    pub path: String,
+    pub status: Option<u16>,
 }
 
 #[derive(Debug)]
@@ -298,6 +319,87 @@ const MIGRATIONS: &[migrate::Migration] = &[
                 added_ms INTEGER NOT NULL,
                 updated_ms INTEGER NOT NULL
             );
+        "#,
+    },
+    migrate::Migration {
+        version: 4,
+        rebuild: false,
+        what: "the Intruder: attacks and their results",
+        // Results refer to the flow that was recorded for the request by id only (as the organizer does).
+        sql: r#"
+            CREATE TABLE intruder_attacks (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_ms INTEGER NOT NULL,
+                finished_ms INTEGER,
+                state TEXT NOT NULL,
+                scheme TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                request BLOB NOT NULL,
+                config TEXT NOT NULL,
+                total INTEGER NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                skipped INTEGER NOT NULL DEFAULT 0,
+                errors INTEGER NOT NULL DEFAULT 0,
+                error TEXT
+            );
+            CREATE TABLE intruder_results (
+                attack_id INTEGER NOT NULL,
+                idx INTEGER NOT NULL,
+                position INTEGER,
+                payloads TEXT NOT NULL,
+                status INTEGER,
+                length INTEGER NOT NULL,
+                time_ms INTEGER NOT NULL,
+                flow_id INTEGER,
+                error TEXT,
+                matches TEXT NOT NULL,
+                extracts TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                PRIMARY KEY (attack_id, idx)
+            ) WITHOUT ROWID;
+        "#,
+    },
+    migrate::Migration {
+        version: 5,
+        rebuild: false,
+        what: "time to first byte in history",
+        sql: "ALTER TABLE flows ADD COLUMN ttfb_ms INTEGER;",
+    },
+    migrate::Migration {
+        version: 6,
+        rebuild: false,
+        what: "passive scanner: issues, and a mark on flows the scanner has not read yet",
+        // `scanned` starts at 0 for every existing flow, so a project's backlog is scanned once the scanner runs.
+        // Issues refer to their evidence flow by id only; deleting the flow clears the reference.
+        sql: r#"
+            ALTER TABLE flows ADD COLUMN scanned INTEGER NOT NULL DEFAULT 0;
+            CREATE INDEX flows_unscanned ON flows(id) WHERE scanned = 0;
+            CREATE TABLE issues (
+                id INTEGER PRIMARY KEY,
+                fingerprint TEXT NOT NULL UNIQUE,
+                rule TEXT NOT NULL,
+                title TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'new',
+                flow_id INTEGER,
+                scheme TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                remediation TEXT NOT NULL,
+                cwe TEXT NOT NULL,
+                owasp TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 1,
+                first_seen_ms INTEGER NOT NULL,
+                last_seen_ms INTEGER NOT NULL
+            );
+            CREATE INDEX issues_by_flow ON issues(flow_id);
         "#,
     },
 ];
@@ -575,6 +677,11 @@ impl Project {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "secure_delete", "ON")?;
         migrate::run(&mut conn, MIGRATIONS)?;
+        // An attack that was running when the engine died is not running now.
+        conn.execute(
+            "UPDATE intruder_attacks SET state = 'interrupted' WHERE state = 'running'",
+            [],
+        )?;
         let max: Option<i64> = conn.query_row("SELECT max(id) FROM flows", [], |r| r.get(0))?;
         Ok(Self {
             db: Db::new(conn, path, harden),
@@ -621,9 +728,9 @@ impl Project {
             tx.execute(
                 "INSERT INTO flows (id, source, started_ms, duration_ms, scheme, host, port, method, path,
                     base_path, http_version, status, request_len, response_len, mime, in_scope, edited, error,
-                    req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated)
+                    req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated, ttfb_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-                    ?20, ?21, ?22, ?23)",
+                    ?20, ?21, ?22, ?23, ?24)",
                 params![
                     f.id,
                     f.source.as_str(),
@@ -648,6 +755,7 @@ impl Project {
                     resp,
                     orig_resp,
                     f.response_truncated,
+                    f.ttfb_ms,
                 ],
             )?;
             tx.execute(
@@ -993,6 +1101,10 @@ impl Project {
         for id in ids {
             tx.execute("DELETE FROM flow_text WHERE rowid = ?1", [id])?;
             tx.execute("DELETE FROM organizer WHERE flow_id = ?1", [id])?;
+            tx.execute(
+                "UPDATE issues SET flow_id = NULL, evidence = '[]' WHERE flow_id = ?1",
+                [id],
+            )?;
             n += tx.execute("DELETE FROM flows WHERE id = ?1", [id])?;
         }
         tx.execute(
@@ -1081,6 +1193,29 @@ impl Project {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The newest `limit` requests to exactly this host (any port unless `port` is given), newest first.
+    pub fn host_requests(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        limit: u32,
+    ) -> Result<Vec<HostRequest>, StoreError> {
+        let conn = self.db.read()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, method, path, status FROM flows
+             WHERE host = ?1 AND (?2 IS NULL OR port = ?2) ORDER BY id DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![host.to_ascii_lowercase(), port, limit], |r| {
+            Ok(HostRequest {
+                id: r.get(0)?,
+                method: r.get(1)?,
+                path: r.get(2)?,
+                status: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn setting<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<Option<T>, StoreError> {
         let conn = self.db.read()?;
         let v: Option<String> = conn
@@ -1108,7 +1243,7 @@ impl Project {
 }
 
 const SUMMARY_COLS: &str = "id, source, started_ms, duration_ms, scheme, host, port, method, path, http_version, \
-     status, request_len, response_len, mime, in_scope, edited, error, tags, note, 0";
+     status, request_len, response_len, mime, in_scope, edited, error, tags, note, ttfb_ms";
 
 fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<FlowSummary> {
     let source: String = r.get(1)?;
@@ -1134,6 +1269,7 @@ fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<FlowSummary> {
         error: r.get(16)?,
         tags: serde_json::from_str(&tags).unwrap_or_default(),
         note: r.get(18)?,
+        ttfb_ms: r.get(19)?,
     })
 }
 
@@ -1492,6 +1628,7 @@ mod tests {
             source: FlowSource::Proxy,
             started_ms: 1,
             duration_ms: Some(5),
+            ttfb_ms: None,
             scheme: Scheme::Https,
             host: host.into(),
             port: 443,

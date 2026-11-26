@@ -12,6 +12,7 @@ use bosun_store::{NewFlow, Project};
 use bytes::Bytes;
 use http::header::{self, HeaderName, HeaderValue};
 use http::{HeaderMap, Method, Request, Response, StatusCode, Version};
+use http_body::Body as _;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
@@ -22,7 +23,7 @@ use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::body::{CollectError, TeeBody, collect_budgeted, discard_body};
+use crate::body::{CollectError, LimitBody, TeeBody, collect_budgeted, discard_body};
 use crate::budget::MemoryBudget;
 use crate::config::ProxyConfig;
 use crate::events::EventSender;
@@ -33,7 +34,117 @@ use crate::rules::{RuleSet, RuleSpec, RuleTarget};
 use crate::upstream::{BoxError, Connector, LoopGuard};
 
 pub type RespBody = UnsyncBoxBody<Bytes, BoxError>;
-type UpClient = Client<Connector, Full<Bytes>>;
+/// The body sent upstream: buffered (`Full`) or streamed from the client.
+type UpBody = UnsyncBoxBody<Bytes, BoxError>;
+type UpClient = Client<Connector, UpBody>;
+
+/// What the client asked for, passed along so recording does not parse the message again.
+struct ReqState {
+    raw: Vec<u8>,
+    original: Option<Vec<u8>>,
+    /// The streamed request body's captured bytes, appended to `raw` (and `original`) when the flow is stored.
+    tail: Option<Arc<Tail>>,
+    /// Milliseconds until the response head arrived.
+    ttfb_ms: Option<i64>,
+    method: String,
+    path: String,
+    version: String,
+}
+
+impl ReqState {
+    /// Re-derive the method, path and version after the message text was changed (rules or an edit).
+    fn reparse(&mut self) {
+        if let Ok(p) = RawRequest::parse(&self.raw) {
+            self.method = p.method;
+            self.path = p.target;
+            self.version = p.version;
+        }
+    }
+
+    /// The text to store: the head, plus the captured streamed body if the upload has ended. When it has not, the
+    /// tail is returned to be appended once it does (see [`submit`]).
+    fn finish(mut self) -> Finished {
+        let mut raw = std::mem::take(&mut self.raw);
+        let mut original = self.original.take();
+        let pending = match self.tail.take() {
+            Some(t) if t.is_done() => {
+                let d = t.take();
+                if let Some(o) = &mut original {
+                    o.extend_from_slice(&d);
+                }
+                raw.extend_from_slice(&d);
+                None
+            }
+            other => other,
+        };
+        (self.method, self.path, self.version, raw, original, pending)
+    }
+}
+
+/// Method, path, version, the request text, its original text and a not yet finished upload.
+type Finished = (
+    String,
+    String,
+    String,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Option<Arc<Tail>>,
+);
+
+/// A streamed request body's captured bytes and whether the upload has ended.
+struct Tail {
+    data: std::sync::Mutex<Vec<u8>>,
+    done: tokio::sync::watch::Sender<bool>,
+}
+
+impl Tail {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            data: Default::default(),
+            done: tokio::sync::watch::channel(false).0,
+        })
+    }
+    fn is_done(&self) -> bool {
+        *self.done.borrow()
+    }
+    fn take(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.data.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+    fn complete(&self, captured: Vec<u8>) {
+        *self.data.lock().unwrap_or_else(|e| e.into_inner()) = captured;
+        self.done.send_replace(true);
+    }
+}
+
+/// A flow ready to store, except that its streamed request body may still be uploading.
+struct Built {
+    flow: NewFlow,
+    pending: Option<Arc<Tail>>,
+}
+
+/// How long a recorded flow waits for a request upload that outlives its response.
+const UPLOAD_WAIT: Duration = Duration::from_secs(300);
+
+/// Store a flow. When the response ended before the request upload did, the flow is stored once the upload ends
+/// (or is cut off), so it holds the whole request body and not only what was captured so far.
+fn submit(active: &Arc<Active>, built: Built) {
+    let Built { mut flow, pending } = built;
+    let Some(tail) = pending else {
+        active.recorder.flow(flow);
+        return;
+    };
+    let active = active.clone();
+    tokio::spawn(async move {
+        let mut rx = tail.done.subscribe();
+        let _ = tokio::time::timeout(UPLOAD_WAIT, rx.wait_for(|d| *d)).await;
+        let d = tail.take();
+        if let Some(o) = &mut flow.original_request {
+            o.extend_from_slice(&d);
+        }
+        flow.request.extend_from_slice(&d);
+        active.recorder.flow(flow);
+    });
+}
 
 /// The magic host served by the proxy itself (CA download), like `http://burp` in other tools.
 pub const MAGIC_HOST: &str = "bosun";
@@ -613,7 +724,7 @@ impl Shared {
             ),
             _ => return text(StatusCode::NOT_FOUND, "not found"),
         };
-        let mut r = Response::new(full(body));
+        let mut r = Response::new(full(Bytes::from(body)));
         let h = r.headers_mut();
         h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
         h.insert(
@@ -640,29 +751,9 @@ impl Shared {
         let started = bosun_model::now_ms();
         let t0 = std::time::Instant::now();
         let active = self.active();
-        let flow_id = active.project.next_flow_id();
         let wants_upgrade = is_upgrade(req.headers());
         let client_upgrade = wants_upgrade.then(|| hyper::upgrade::on(&mut req));
         let (parts, mut body) = req.into_parts();
-        // `_mem` keeps the body's bytes counted against the memory budget while this request is in flight.
-        let (body, _mem) = match collect_budgeted(&mut body, self.cfg.max_request_body, &self.budget).await {
-            Ok(b) => b,
-            Err(CollectError::TooBig) => {
-                // Let the client finish its upload, so it can read the answer (see `discard_body`).
-                discard_body(body).await;
-                return text(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "request body is larger than proxy.max_request_body",
-                );
-            }
-            Err(CollectError::OutOfMemory) => {
-                discard_body(body).await;
-                return busy();
-            }
-            Err(CollectError::Other(_)) => {
-                return text(StatusCode::BAD_REQUEST, "failed to read the request body");
-            }
-        };
         let path = parts
             .uri
             .path_and_query()
@@ -671,35 +762,123 @@ impl Shared {
         let path = if path.is_empty() { "/".to_string() } else { path };
         let version = version_label(parts.version);
         let authority_for_h2 = (parts.version == Version::HTTP_2).then(|| authority(&target));
-        let mut raw = serialize_request(
-            parts.method.as_str(),
-            &path,
-            version,
-            &parts.headers,
-            &body,
-            authority_for_h2.as_deref(),
-        );
         let in_scope = self
             .gate
             .scope()
             .contains(target.scheme, &target.host, target.port, &path);
         let record = in_scope || self.cfg.record_out_of_scope;
+        // An id is reserved only for flows that are stored (or held in the intercept queue).
+        let mut flow_id: Option<FlowId> = record.then(|| active.project.next_flow_id());
         let rules = self.rules();
-        let mut original_request = None;
-        if let Some(new) = rules.apply_request(&raw) {
-            original_request = Some(std::mem::replace(&mut raw, new));
+        let hold_request = self.intercept.should_hold(Phase::Request, in_scope);
+        let any_request_rule = rules.has(|t| {
+            matches!(
+                t,
+                RuleTarget::RequestFirstLine | RuleTarget::RequestHeader | RuleTarget::RequestBody
+            )
+        });
+        // A request body is streamed (with a capped copy for the record) unless intercept or a body rule needs it
+        // whole.
+        let stream_request = !wants_upgrade
+            && !hold_request
+            && !body.is_end_stream()
+            && !rules.has(|t| t == RuleTarget::RequestBody);
+        let mut stream_body: Option<UpBody> = None;
+        let mut tail = None;
+        let _mem;
+        let body = if stream_request {
+            if body.size_hint().lower() > self.cfg.max_request_body as u64 {
+                discard_body(body).await;
+                return text(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "request body is larger than proxy.max_request_body",
+                );
+            }
+            let limited = LimitBody::new(body, self.cfg.max_request_body);
+            if record {
+                // Reserve the part that will be kept up front; refuse (503) when it would not fit the budget.
+                let expect = (limited.size_hint().lower() as usize).min(self.cfg.record_body_limit);
+                let Some(admit) = self.budget.reserve(expect * crate::budget::COPY_FACTOR) else {
+                    discard_body(limited).await;
+                    return busy();
+                };
+                let slot = Tail::new();
+                let slot2 = slot.clone();
+                let tee = TeeBody::new(
+                    limited,
+                    self.cfg.record_body_limit,
+                    Box::new(move |captured, _truncated, _error| {
+                        slot2.complete(captured);
+                    }),
+                )
+                .with_reservation(&self.budget, admit);
+                tail = Some(slot);
+                stream_body = Some(UnsyncBoxBody::new(tee));
+            } else {
+                stream_body = Some(UnsyncBoxBody::new(limited));
+            }
+            _mem = None;
+            Bytes::new()
+        } else {
+            // `_mem` keeps the body's bytes counted against the memory budget while this request is in flight.
+            let (b, mem) = match collect_budgeted(&mut body, self.cfg.max_request_body, &self.budget).await {
+                Ok(b) => b,
+                Err(CollectError::TooBig) => {
+                    // Let the client finish its upload, so it can read the answer (see `discard_body`).
+                    discard_body(body).await;
+                    return text(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "request body is larger than proxy.max_request_body",
+                    );
+                }
+                Err(CollectError::OutOfMemory) => {
+                    discard_body(body).await;
+                    return busy();
+                }
+                Err(CollectError::Other(_)) => {
+                    return text(StatusCode::BAD_REQUEST, "failed to read the request body");
+                }
+            };
+            _mem = Some(mem);
+            b
+        };
+        let need_raw = record || hold_request || any_request_rule;
+        let mut req_state = ReqState {
+            raw: if need_raw {
+                serialize_request(
+                    parts.method.as_str(),
+                    &path,
+                    version,
+                    &parts.headers,
+                    &body,
+                    authority_for_h2.as_deref(),
+                )
+            } else {
+                Vec::new()
+            },
+            original: None,
+            tail,
+            ttfb_ms: None,
+            method: parts.method.as_str().to_string(),
+            path: path.clone(),
+            version: version.to_string(),
+        };
+        if any_request_rule && let Some(new) = rules.apply_request(&req_state.raw) {
+            req_state.original = Some(std::mem::replace(&mut req_state.raw, new));
+            req_state.reparse();
         }
         let url = format!("{}{}", origin(&target), path);
-        if self.intercept.should_hold(Phase::Request, in_scope) {
+        if hold_request {
+            let id = *flow_id.get_or_insert_with(|| active.project.next_flow_id());
             let held = self
                 .intercept
                 .hold(
-                    flow_id,
+                    id,
                     Phase::Request,
-                    parts.method.as_str(),
+                    &req_state.method,
                     &url,
                     None,
-                    raw.clone(),
+                    req_state.raw.clone(),
                 )
                 .await;
             let Ok(held) = held else {
@@ -708,28 +887,32 @@ impl Shared {
             match held {
                 Decision::Drop => {
                     if record {
-                        active.recorder.flow(self.new_flow(
-                            flow_id,
-                            &target,
-                            started,
-                            t0,
-                            &raw,
-                            original_request,
-                            None,
-                            None,
-                            false,
-                            Some("dropped in the intercept queue".into()),
-                            in_scope,
-                        ));
+                        submit(
+                            &active,
+                            self.new_flow(
+                                flow_id.unwrap_or_default(),
+                                &target,
+                                started,
+                                t0,
+                                req_state,
+                                None,
+                                None,
+                                None,
+                                false,
+                                Some("dropped in the intercept queue".into()),
+                                in_scope,
+                            ),
+                        );
                     }
                     return text(
                         StatusCode::BAD_GATEWAY,
                         "Request dropped in Bosun's intercept queue.",
                     );
                 }
-                Decision::Forward { raw: Some(edited) } if edited != raw => {
-                    original_request.get_or_insert_with(|| raw.clone());
-                    raw = edited;
+                Decision::Forward { raw: Some(edited) } if edited != req_state.raw => {
+                    let old = std::mem::replace(&mut req_state.raw, edited);
+                    req_state.original.get_or_insert(old);
+                    req_state.reparse();
                 }
                 Decision::Forward { .. } => {}
             }
@@ -737,8 +920,8 @@ impl Shared {
 
         // Build the outbound request: from the (possibly edited) raw text if anything changed, otherwise from
         // the original parts so nothing is normalised unnecessarily.
-        let (method, out_path, mut headers, out_body) = if original_request.is_some() {
-            match RawRequest::parse(&raw) {
+        let (method, out_path, mut headers, out_body) = if req_state.original.is_some() {
+            match RawRequest::parse(&req_state.raw) {
                 Ok(r) => {
                     let mut hm = HeaderMap::new();
                     for (n, v) in &r.headers {
@@ -757,7 +940,7 @@ impl Shared {
                             .map(|p| p.as_str().to_string())
                             .unwrap_or_else(|| "/".into());
                     }
-                    if hm.contains_key(header::CONTENT_LENGTH) {
+                    if stream_body.is_none() && hm.contains_key(header::CONTENT_LENGTH) {
                         hm.insert(header::CONTENT_LENGTH, HeaderValue::from(r.body.len()));
                     }
                     let Ok(m) = Method::from_bytes(r.method.as_bytes()) else {
@@ -776,12 +959,7 @@ impl Shared {
                 }
             }
         } else {
-            (
-                parts.method.clone(),
-                path.clone(),
-                parts.headers.clone(),
-                Bytes::from(body),
-            )
+            (parts.method.clone(), path.clone(), parts.headers.clone(), body)
         };
         strip_hop_by_hop(&mut headers, wants_upgrade);
         if !headers.contains_key(header::HOST)
@@ -801,11 +979,13 @@ impl Shared {
         let Ok(uri) = uri.parse::<http::Uri>() else {
             return text(StatusCode::BAD_REQUEST, "invalid request target");
         };
-        let mut out = Request::new(Full::new(out_body));
+        let mut out = Request::new(stream_body.unwrap_or_else(|| {
+            UnsyncBoxBody::new(Full::new(out_body).map_err(|never: Infallible| match never {}))
+        }));
         *out.method_mut() = method;
         *out.uri_mut() = uri;
         *out.headers_mut() = headers;
-        if original_request.is_none() {
+        if req_state.original.is_none() {
             // Keeps the client's header-name casing for HTTP/1 (hyper stores it in the extensions).
             *out.extensions_mut() = parts.extensions;
         }
@@ -820,23 +1000,29 @@ impl Shared {
         )
         .await
         {
-            Ok(Ok(r)) => r,
+            Ok(Ok(r)) => {
+                req_state.ttfb_ms = Some(t0.elapsed().as_millis() as i64);
+                r
+            }
             Ok(Err(e)) => {
                 let msg = error_chain(&e);
                 if record {
-                    active.recorder.flow(self.new_flow(
-                        flow_id,
-                        &target,
-                        started,
-                        t0,
-                        &raw,
-                        original_request,
-                        None,
-                        None,
-                        false,
-                        Some(msg.clone()),
-                        in_scope,
-                    ));
+                    submit(
+                        &active,
+                        self.new_flow(
+                            flow_id.unwrap_or_default(),
+                            &target,
+                            started,
+                            t0,
+                            req_state,
+                            None,
+                            None,
+                            None,
+                            false,
+                            Some(msg.clone()),
+                            in_scope,
+                        ),
+                    );
                 }
                 return text(
                     StatusCode::BAD_GATEWAY,
@@ -846,19 +1032,22 @@ impl Shared {
             Err(_) => {
                 let msg = "timed out waiting for the response".to_string();
                 if record {
-                    active.recorder.flow(self.new_flow(
-                        flow_id,
-                        &target,
-                        started,
-                        t0,
-                        &raw,
-                        original_request,
-                        None,
-                        None,
-                        false,
-                        Some(msg.clone()),
-                        in_scope,
-                    ));
+                    submit(
+                        &active,
+                        self.new_flow(
+                            flow_id.unwrap_or_default(),
+                            &target,
+                            started,
+                            t0,
+                            req_state,
+                            None,
+                            None,
+                            None,
+                            false,
+                            Some(msg.clone()),
+                            in_scope,
+                        ),
+                    );
                 }
                 return text(StatusCode::GATEWAY_TIMEOUT, &msg);
             }
@@ -876,26 +1065,30 @@ impl Shared {
             && let (Some(client_upgrade), Some(server_upgrade)) = (client_upgrade, server_upgrade)
         {
             if record {
-                active.recorder.flow(self.new_flow(
-                    flow_id,
-                    &target,
-                    started,
-                    t0,
-                    &raw,
-                    original_request,
-                    Some(head),
-                    None,
-                    false,
-                    None,
-                    in_scope,
-                ));
+                submit(
+                    &active,
+                    self.new_flow(
+                        flow_id.unwrap_or_default(),
+                        &target,
+                        started,
+                        t0,
+                        req_state,
+                        Some(rparts.status.as_u16()),
+                        Some(head),
+                        None,
+                        false,
+                        None,
+                        in_scope,
+                    ),
+                );
             }
             let recorder = active.recorder.clone();
+            let ws_id = flow_id.unwrap_or_default();
             tokio::spawn(async move {
                 match tokio::join!(client_upgrade, server_upgrade) {
                     (Ok(c), Ok(s)) => {
                         if record {
-                            crate::ws::relay(TokioIo::new(c), TokioIo::new(s), flow_id, recorder).await;
+                            crate::ws::relay(TokioIo::new(c), TokioIo::new(s), ws_id, recorder).await;
                         } else {
                             let (mut c, mut s) = (TokioIo::new(c), TokioIo::new(s));
                             let _ = tokio::io::copy_bidirectional(&mut c, &mut s).await;
@@ -909,8 +1102,14 @@ impl Shared {
             return r;
         }
 
-        let need_buffer = self.intercept.should_hold(Phase::Response, in_scope)
-            || rules.has(|t| t == RuleTarget::ResponseBody);
+        let resp_hold = self.intercept.response_hold(
+            in_scope,
+            hold_request,
+            rparts.status.as_u16(),
+            &String::from_utf8_lossy(&head),
+        );
+        let need_buffer =
+            resp_hold != crate::intercept::RespHold::No || rules.has(|t| t == RuleTarget::ResponseBody);
         if need_buffer {
             let (rbody, _resp_mem) =
                 match collect_budgeted(&mut rbody, self.cfg.max_buffered_response, &self.budget).await {
@@ -919,19 +1118,22 @@ impl Shared {
                     Err(e) => {
                         let msg = format!("failed to read the response body: {e:?}");
                         if record {
-                            active.recorder.flow(self.new_flow(
-                                flow_id,
-                                &target,
-                                started,
-                                t0,
-                                &raw,
-                                original_request,
-                                Some(head),
-                                None,
-                                false,
-                                Some(msg.clone()),
-                                in_scope,
-                            ));
+                            submit(
+                                &active,
+                                self.new_flow(
+                                    flow_id.unwrap_or_default(),
+                                    &target,
+                                    started,
+                                    t0,
+                                    req_state,
+                                    Some(rparts.status.as_u16()),
+                                    Some(head),
+                                    None,
+                                    false,
+                                    Some(msg.clone()),
+                                    in_scope,
+                                ),
+                            );
                         }
                         return text(StatusCode::BAD_GATEWAY, &msg);
                     }
@@ -941,13 +1143,16 @@ impl Shared {
             if let Some(new) = rules.apply_response(&resp_raw, true) {
                 original_response = Some(std::mem::replace(&mut resp_raw, new));
             }
-            if self.intercept.should_hold(Phase::Response, in_scope) {
+            if resp_hold == crate::intercept::RespHold::Yes
+                || (resp_hold == crate::intercept::RespHold::IfBody && self.intercept.body_matches(&rbody))
+            {
+                let id = *flow_id.get_or_insert_with(|| active.project.next_flow_id());
                 let held = self
                     .intercept
                     .hold(
-                        flow_id,
+                        id,
                         Phase::Response,
-                        parts.method.as_str(),
+                        &req_state.method,
                         &url,
                         Some(rparts.status.as_u16()),
                         resp_raw.clone(),
@@ -959,19 +1164,22 @@ impl Shared {
                 match held {
                     Decision::Drop => {
                         if record {
-                            active.recorder.flow(self.new_flow(
-                                flow_id,
-                                &target,
-                                started,
-                                t0,
-                                &raw,
-                                original_request,
-                                Some(resp_raw),
-                                original_response,
-                                false,
-                                Some("response dropped in the intercept queue".into()),
-                                in_scope,
-                            ));
+                            submit(
+                                &active,
+                                self.new_flow(
+                                    flow_id.unwrap_or_default(),
+                                    &target,
+                                    started,
+                                    t0,
+                                    req_state,
+                                    status_of(&resp_raw),
+                                    Some(resp_raw),
+                                    original_response,
+                                    false,
+                                    Some("response dropped in the intercept queue".into()),
+                                    in_scope,
+                                ),
+                            );
                         }
                         return text(
                             StatusCode::BAD_GATEWAY,
@@ -985,6 +1193,11 @@ impl Shared {
                     Decision::Forward { .. } => {}
                 }
             }
+            let status = if original_response.is_some() {
+                status_of(&resp_raw)
+            } else {
+                Some(rparts.status.as_u16())
+            };
             let response = if original_response.is_some() {
                 match response_from_raw(&resp_raw, true) {
                     Ok(r) => r,
@@ -1000,19 +1213,22 @@ impl Shared {
                 Response::from_parts(rparts, full(rbody))
             };
             if record {
-                active.recorder.flow(self.new_flow(
-                    flow_id,
-                    &target,
-                    started,
-                    t0,
-                    &raw,
-                    original_request,
-                    Some(resp_raw),
-                    original_response,
-                    false,
-                    None,
-                    in_scope,
-                ));
+                submit(
+                    &active,
+                    self.new_flow(
+                        flow_id.unwrap_or_default(),
+                        &target,
+                        started,
+                        t0,
+                        req_state,
+                        status,
+                        Some(resp_raw),
+                        original_response,
+                        false,
+                        None,
+                        in_scope,
+                    ),
+                );
             }
             return response;
         }
@@ -1042,6 +1258,7 @@ impl Shared {
             }
         }
         strip_hop_by_hop(&mut rparts.headers, false);
+        let status = Some(rparts.status.as_u16());
         let shared = self.clone();
         let tee = TeeBody::new(
             rbody,
@@ -1056,19 +1273,22 @@ impl Shared {
                     h.extend_from_slice(&captured);
                     h
                 });
-                active.recorder.flow(shared.new_flow(
-                    flow_id,
-                    &target,
-                    started,
-                    t0,
-                    &raw,
-                    original_request,
-                    Some(full_resp),
-                    orig,
-                    truncated,
-                    error,
-                    in_scope,
-                ));
+                submit(
+                    &active,
+                    shared.new_flow(
+                        flow_id.unwrap_or_default(),
+                        &target,
+                        started,
+                        t0,
+                        req_state,
+                        status,
+                        Some(full_resp),
+                        orig,
+                        truncated,
+                        error,
+                        in_scope,
+                    ),
+                );
             }),
         );
         Response::from_parts(rparts, UnsyncBoxBody::new(tee.with_budget(&self.budget)))
@@ -1081,44 +1301,44 @@ impl Shared {
         target: &Tunnel,
         started: i64,
         t0: std::time::Instant,
-        request: &[u8],
-        original_request: Option<Vec<u8>>,
+        request: ReqState,
+        status: Option<u16>,
         response: Option<Vec<u8>>,
         original_response: Option<Vec<u8>>,
         truncated: bool,
         error: Option<String>,
         in_scope: bool,
-    ) -> NewFlow {
-        let parsed = RawRequest::parse(request).ok();
-        let status = response
-            .as_deref()
-            .and_then(|r| RawResponse::parse(r).ok())
-            .map(|r| r.status);
-        NewFlow {
+    ) -> Built {
+        let ttfb_ms = request.ttfb_ms;
+        let (method, path, http_version, request, original_request, pending) = request.finish();
+        let flow = NewFlow {
             id,
             source: FlowSource::Proxy,
             started_ms: started,
             duration_ms: Some(t0.elapsed().as_millis() as i64),
+            ttfb_ms,
             scheme: target.scheme,
             host: target.host.clone(),
             port: target.port,
-            method: parsed.as_ref().map(|p| p.method.clone()).unwrap_or_default(),
-            path: parsed
-                .as_ref()
-                .map(|p| p.target.clone())
-                .unwrap_or_else(|| "/".into()),
-            http_version: parsed.as_ref().map(|p| p.version.clone()).unwrap_or_default(),
+            method,
+            path,
+            http_version,
             status,
             in_scope,
             edited: original_request.is_some() || original_response.is_some(),
             error,
-            request: request.to_vec(),
+            request,
             original_request,
             response,
             original_response,
             response_truncated: truncated,
-        }
+        };
+        Built { flow, pending }
     }
+}
+
+fn status_of(raw: &[u8]) -> Option<u16> {
+    RawResponse::parse(raw).ok().map(|r| r.status)
 }
 
 fn origin(t: &Tunnel) -> String {
@@ -1207,7 +1427,8 @@ fn write_headers(out: &mut Vec<u8>, headers: &HeaderMap) {
 
 fn response_from_raw(raw: &[u8], fix_length: bool) -> Result<Response<RespBody>, bosun_model::ParseError> {
     let p = RawResponse::parse(raw)?;
-    let mut r = Response::new(full(p.body.clone()));
+    let body_len = p.body.len();
+    let mut r = Response::new(full(Bytes::from(p.body)));
     *r.status_mut() =
         StatusCode::from_u16(p.status).map_err(|e| bosun_model::ParseError::Invalid(e.to_string()))?;
     let h = r.headers_mut();
@@ -1218,7 +1439,7 @@ fn response_from_raw(raw: &[u8], fix_length: bool) -> Result<Response<RespBody>,
     }
     strip_hop_by_hop(h, false);
     if fix_length && h.contains_key(header::CONTENT_LENGTH) {
-        h.insert(header::CONTENT_LENGTH, HeaderValue::from(p.body.len()));
+        h.insert(header::CONTENT_LENGTH, HeaderValue::from(body_len));
     }
     Ok(r)
 }
@@ -1280,8 +1501,8 @@ fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {
     s
 }
 
-fn full(b: Vec<u8>) -> RespBody {
-    UnsyncBoxBody::new(Full::new(Bytes::from(b)).map_err(|never: Infallible| match never {}))
+fn full(b: Bytes) -> RespBody {
+    UnsyncBoxBody::new(Full::new(b).map_err(|never: Infallible| match never {}))
 }
 
 fn empty() -> RespBody {
@@ -1308,7 +1529,7 @@ fn queue_full() -> Response<RespBody> {
 }
 
 fn text(status: StatusCode, msg: &str) -> Response<RespBody> {
-    let mut r = Response::new(full(format!("{msg}\n").into_bytes()));
+    let mut r = Response::new(full(Bytes::from(format!("{msg}\n"))));
     *r.status_mut() = status;
     r.headers_mut().insert(
         header::CONTENT_TYPE,

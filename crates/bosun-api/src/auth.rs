@@ -110,6 +110,14 @@ impl Limiter {
         }
     }
 
+    /// Forget the failures counted under `key` (after a success).
+    pub(crate) fn clear_failures(&self, key: &str) {
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(key);
+    }
+
     pub(crate) fn fail(&self, key: &str) {
         let mut m = self.failures.lock().unwrap_or_else(|e| e.into_inner());
         if m.len() > 100_000 {
@@ -256,6 +264,24 @@ impl FromRequestParts<AppState> for Caller {
             .map_err(|_| unauth())?
             .map_err(|_| unauth())?
             .ok_or_else(unauth)?;
+        // An admin's "second factor required" policy: until the account has one, a session may only reach the
+        // pages that set it up.
+        if st.inner.totp_required.load(std::sync::atomic::Ordering::Relaxed) {
+            let path = parts.uri.path().to_string();
+            if !crate::totp::exempt_while_enrolling(&path) {
+                let (app, id) = (st.inner.app.clone(), session.user.id);
+                let missing = tokio::task::spawn_blocking(move || app.totp_missing(id))
+                    .await
+                    .map_err(|_| unauth())?
+                    .map_err(|_| unauth())?;
+                if missing {
+                    return Err(reject(
+                        StatusCode::FORBIDDEN,
+                        "an administrator requires a second factor: set one up in Settings first",
+                    ));
+                }
+            }
+        }
         if is_unsafe(&parts.method) {
             let sent = parts
                 .headers
@@ -290,7 +316,7 @@ pub struct LoginBody {
 }
 
 /// 429 with a `Retry-After`.
-fn too_many(wait_secs: u64) -> Response {
+pub(crate) fn too_many(wait_secs: u64) -> Response {
     let mut r = reject(
         StatusCode::TOO_MANY_REQUESTS,
         &format!("too many attempts; wait {wait_secs} seconds and try again"),
@@ -410,7 +436,7 @@ async fn session_created(st: &AppState, token: &str, user_id: i64, csrf: &str) -
     )
 }
 
-async fn start_session(st: &AppState, user: User, https: bool) -> Response {
+pub(crate) async fn start_session(st: &AppState, user: User, https: bool) -> Response {
     let token = random_token();
     let csrf = random_token();
     if !session_created(st, &token, user.id, &csrf).await {
@@ -440,6 +466,7 @@ pub async fn login(
     Json(b): Json<LoginBody>,
 ) -> Response {
     let https = info.as_ref().is_some_and(|i| i.https);
+    let info_ip = info.as_ref().map(|i| i.ip);
     let remote = info.map(|i| i.ip.to_string()).unwrap_or_default();
     let ip_key = format!("ip:{remote}");
     let pair = pair_key(&remote, &b.username);
@@ -470,6 +497,23 @@ pub async fn login(
     match found {
         Some(user) => {
             st.inner.limiter.succeeded(&ip_key, &pair);
+            // A second factor: no session yet, only a short-lived token that the code must be presented with.
+            let uid = user.id;
+            if matches!(st.with_app(move |a| a.totp_enabled(uid)).await, Ok(Ok(true))) {
+                let ip = info_ip.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+                let Some(pending) = st.inner.pending.start(user.clone(), ip) else {
+                    return too_many(30);
+                };
+                st.audit(
+                    Some(user.username.clone()),
+                    "login.password",
+                    "password accepted, waiting for the second factor",
+                    Some(remote.clone()),
+                )
+                .await;
+                return Json(serde_json::json!({ "second_factor": "totp", "pending": pending }))
+                    .into_response();
+            }
             st.audit(
                 Some(user.username.clone()),
                 "login",

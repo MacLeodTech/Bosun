@@ -29,6 +29,29 @@ pub struct Me {
     pub csrf: Option<String>,
 }
 
+/// Your second-factor state (`GET /auth/totp`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TotpStatus {
+    pub enabled: bool,
+    pub enrolling: bool,
+    pub recovery_codes_left: i64,
+    pub required: bool,
+    pub setup_required: bool,
+}
+
+/// A new TOTP secret to put in an authenticator app.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TotpEnrolment {
+    /// Base32.
+    pub secret: String,
+    pub otpauth_uri: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecoveryCodes {
+    pub recovery_codes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Status {
     pub name: String,
@@ -260,6 +283,21 @@ pub struct InterceptSettings {
     pub timeout_secs: Option<u64>,
 }
 
+/// Which responses are held when response interception is on (every condition set must match).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseFilter {
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    #[serde(default)]
+    pub mime_contains: Vec<String>,
+    #[serde(default)]
+    pub header_contains: Option<String>,
+    #[serde(default)]
+    pub body_contains: Option<String>,
+    #[serde(default)]
+    pub only_if_request_held: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
@@ -267,7 +305,7 @@ pub enum Phase {
     Response,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterceptSummary {
     pub id: u64,
     pub flow_id: FlowId,
@@ -332,10 +370,14 @@ pub struct CaInfo {
     pub fingerprint_sha256: String,
     pub spki_sha256: String,
     pub pem: String,
+    pub not_after: i64,
+    pub days_left: i64,
+    pub expiring: bool,
+    pub permitted_domains: Vec<String>,
 }
 
 /// One message on the event stream, without its sequence number (see [`crate::Sequenced`]).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     /// First message of a connection: this engine run's name and the latest sequence number.
@@ -375,6 +417,31 @@ pub enum Event {
     ProjectSwitched {
         name: Option<String>,
         temporary: bool,
+    },
+    /// An Intruder attack started, moved on or ended.
+    IntruderState {
+        attack_id: i64,
+        state: String,
+        total: u64,
+        done: u64,
+        skipped: u64,
+        errors: u64,
+        error: Option<String>,
+    },
+    /// One request of an Intruder attack finished.
+    IntruderResult {
+        attack_id: i64,
+        index: u64,
+        position: Option<u32>,
+        payloads: Vec<String>,
+        status: Option<u16>,
+        length: u64,
+        time_ms: u64,
+        flow_id: Option<i64>,
+        error: Option<String>,
+        matches: Vec<bool>,
+        extracts: Vec<Option<String>>,
+        attempts: u32,
     },
 }
 
@@ -504,4 +571,43 @@ pub struct EngageReport {
     pub params: Vec<Param>,
     pub truncated: bool,
     pub undecoded: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct StatusCount {
+    pub status: u16,
+    pub count: u32,
+}
+
+/// One endpoint of a host: a method and a path with its ids replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct EndpointStat {
+    pub method: String,
+    pub path: String,
+    pub count: u32,
+    pub statuses: Vec<StatusCount>,
+    pub params: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ParamStat {
+    pub name: String,
+    #[serde(rename = "where")]
+    pub location: ParamWhere,
+    pub count: u32,
+    pub endpoints: u32,
+    pub values: Vec<String>,
+    pub more_values: bool,
+}
+
+/// The endpoints and parameters of one host across the history (WP-45).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HostAnalysis {
+    pub host: String,
+    pub port: Option<u16>,
+    pub capped: bool,
+    pub requests: u32,
+    pub endpoints: Vec<EndpointStat>,
+    pub params: Vec<ParamStat>,
+    pub truncated: bool,
 }

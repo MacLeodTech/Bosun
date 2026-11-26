@@ -375,6 +375,7 @@ async fn proxy_auth_is_enforced() {
         auth: Some(ProxyAuth {
             username: "tester".into(),
             password: "correct horse battery".into(),
+            password_file: None,
         }),
         ..Default::default()
     };
@@ -502,6 +503,7 @@ async fn passthrough_tunnels_go_through_the_upstream_socks_proxy() {
                 addr: socks.to_string(),
                 username: None,
                 password: None,
+                password_file: None,
                 local_dns: false,
             }),
             ..Default::default()
@@ -844,4 +846,152 @@ async fn a_full_intercept_queue_refuses_with_503_and_never_forwards() {
     assert_eq!(h.proxy.stats().intercept_refused, 1);
     h.proxy.intercept().forward_all();
     assert_eq!(first.await.unwrap(), 200);
+}
+
+#[tokio::test]
+async fn a_large_streamed_upload_arrives_whole_and_is_recorded_whole() {
+    let up = upstream_http().await;
+    let h = start(ProxyConfig::default(), &[]).await;
+    let c = client(&h);
+    let body = "abcdefgh".repeat(40_000);
+    let r = c
+        .post(format!("http://{up}/up"))
+        .body(body.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        r.text().await.unwrap().ends_with(&body),
+        "the upstream got the whole body"
+    );
+    h.proxy.flush();
+    let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
+    let d = h.project.get_flow(flows[0].id).unwrap().unwrap();
+    assert!(
+        d.request.ends_with(body.as_bytes()),
+        "the record holds the whole body"
+    );
+    assert_eq!(h.proxy.stats().memory_used, 0);
+}
+
+#[tokio::test]
+async fn response_filter_decides_which_responses_are_held() {
+    use bosun_proxy::ResponseFilter;
+    let up = upstream_http().await;
+    let h = start(ProxyConfig::default(), &[]).await;
+    h.proxy.intercept().set(InterceptSettings {
+        requests: false,
+        responses: true,
+        in_scope_only: false,
+        timeout_secs: None,
+    });
+    // Not JSON: the response is not held, the request completes by itself.
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        mime_contains: vec!["json".into()],
+        ..Default::default()
+    });
+    let c = client(&h);
+    let r = tokio::time::timeout(Duration::from_secs(5), c.get(format!("http://{up}/a")).send())
+        .await
+        .expect("not held")
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(h.proxy.intercept().list().is_empty());
+    // A body filter that does not match: not held. One that matches: held.
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        body_contains: Some("nothing-like-this".into()),
+        ..Default::default()
+    });
+    tokio::time::timeout(Duration::from_secs(5), c.get(format!("http://{up}/b")).send())
+        .await
+        .expect("not held")
+        .unwrap();
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        statuses: vec!["2xx".into()],
+        mime_contains: vec!["PLAIN".into()],
+        body_contains: Some("get /c".into()),
+        ..Default::default()
+    });
+    let c2 = c.clone();
+    let url = format!("http://{up}/c");
+    let req = tokio::spawn(async move { c2.get(url).send().await.unwrap().status() });
+    let id = loop {
+        if let Some(s) = h.proxy.intercept().list().first() {
+            break s.id;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    h.proxy.intercept().resolve(id, Decision::Forward { raw: None });
+    assert_eq!(req.await.unwrap(), 200);
+    // Only when the request was held too.
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        only_if_request_held: true,
+        ..Default::default()
+    });
+    tokio::time::timeout(Duration::from_secs(5), c.get(format!("http://{up}/d")).send())
+        .await
+        .expect("not held")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_flow_answered_before_its_upload_ends_is_recorded_whole() {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let up = l.local_addr().unwrap();
+    // Answers as soon as the head has arrived, then keeps reading until the whole body is in.
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut got = Vec::new();
+                let mut buf = [0u8; 4096];
+                let mut answered = false;
+                loop {
+                    let n = s.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..n]);
+                    if !answered && got.windows(4).any(|w| w == b"\r\n\r\n") {
+                        answered = true;
+                        let _ = s
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nok",
+                            )
+                            .await;
+                    }
+                    if got.ends_with(b"0123456789abcdefghij") {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    let h = start(ProxyConfig::default(), &[]).await;
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    s.write_all(
+        format!("POST http://{up}/up HTTP/1.1\r\nHost: {up}\r\nContent-Length: 20\r\n\r\n0123456789")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let r = tokio::time::timeout(Duration::from_secs(5), read_response(&mut s))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    s.write_all(b"abcdefghij").await.unwrap();
+    let mut stored = String::new();
+    for _ in 0..100 {
+        h.proxy.flush();
+        if let Some(f) = h.project.list_flows(&FlowFilter::default()).unwrap().first() {
+            let d = h.project.get_flow(f.id).unwrap().unwrap();
+            stored = String::from_utf8_lossy(&d.request).into_owned();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(stored.ends_with("0123456789abcdefghij"), "{stored:?}");
 }

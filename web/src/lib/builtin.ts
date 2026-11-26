@@ -3,7 +3,7 @@
 
 import { api } from './api';
 import { commands, type Command } from './commands.svelte';
-import { copyAsCurl, copyMessage, copyRequestAs, copyUrls, deleteFlows, downloadCsrfPoc, exportHar, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
+import { copyAsCurl, copyMessage, copyRequestAs, copyUrls, deleteFlows, analyseHost, downloadCsrfPoc, exportHar, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToIntruder, sendToRepeater } from './flowactions';
 import { SNIPPETS } from './export';
 import { historyView } from './historyView.svelte';
 import { panels } from './panels';
@@ -107,6 +107,15 @@ export function registerBuiltins(): () => void {
         workspace.open('repeater');
       },
     },
+    {
+      id: 'flow.intruder',
+      title: 'Send to Intruder',
+      group: 'Request',
+      when: (c) => tester() && c.flows.length > 0,
+      run: async (c) => {
+        if (await sendToIntruder(c.flows)) workspace.open('intruder');
+      },
+    },
     ...(['request', 'response'] as const).map((part): Command => ({
       id: `flow.decoder.${part}`,
       title: `Send ${part} to Decoder`,
@@ -129,6 +138,7 @@ export function registerBuiltins(): () => void {
     ),
     { id: 'flow.organize', title: 'Save to Organizer', group: 'Request', when: (c) => tester() && hasFlows(c), run: (c) => saveToOrganizer(c.flows) },
     { id: 'flow.findings', title: 'Find comments, scripts and references', group: 'Request', when: (c) => c.focus !== null, run: (c) => { historyView.openId = c.focus; workspace.reveal('findings', 'flow'); } },
+    { id: 'flow.analyse-host', title: 'Analyse this host: endpoints and parameters', group: 'Request', when: (c) => c.focus !== null, run: (c) => analyseHost(c.focus!) },
     { id: 'flow.csrf-poc', title: 'Download CSRF proof of concept', group: 'Request', when: (c) => c.focus !== null, run: (c) => downloadCsrfPoc(c.focus!, false) },
     { id: 'flow.csrf-poc-auto', title: 'Download CSRF proof of concept (submits on load)', group: 'Request', when: (c) => c.focus !== null, run: (c) => downloadCsrfPoc(c.focus!, true) },
     { id: 'flow.copy-curl-powershell', title: 'Copy as PowerShell command', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyRequestAs(c.focus!, 'curl-powershell') },

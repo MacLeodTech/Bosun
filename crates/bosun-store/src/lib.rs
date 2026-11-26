@@ -10,10 +10,15 @@ pub(crate) mod pool;
 pub mod project;
 pub mod query;
 
-pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, SessionInfo, TokenScope, User};
+pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, SessionInfo, TokenScope, TotpRow, User};
+pub use project::intruder::{MAX_ATTACKS, NewAttack, StoredAttack, StoredRow};
+pub use project::issues::{
+    Confidence, Evidence, EvidencePart, Issue, IssueFilter, IssueStatus, MAX_ISSUES, NewIssue, Severity,
+};
 pub use project::{
-    FlowFilter, FlowMeta, FlowSort, MAX_ORGANIZER_NOTE, Message, NewFlow, NewWsMessage, OrganizerItem,
-    OrganizerStatus, PartInfo, Project, ProjectLock, SiteMapEntry, Which, import_foreign, settle,
+    FlowFilter, FlowMeta, FlowSort, HostRequest, MAX_ORGANIZER_NOTE, Message, NewFlow, NewWsMessage,
+    OrganizerItem, OrganizerStatus, PartInfo, Project, ProjectLock, SiteMapEntry, Which, import_foreign,
+    settle,
 };
 
 #[derive(Debug, thiserror::Error)]

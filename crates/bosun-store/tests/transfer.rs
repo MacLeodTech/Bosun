@@ -15,6 +15,7 @@ fn flow(p: &Project, path: &str, body: &[u8]) -> i64 {
             source: FlowSource::Proxy,
             started_ms: 1,
             duration_ms: Some(1),
+            ttfb_ms: None,
             scheme: Scheme::Https,
             host: "a.test".into(),
             port: 443,

@@ -10,6 +10,90 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/analysis": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "The distinct endpoints (ids in paths replaced by {n}, {uuid} and {hex}) and parameters of one host across the history, with counts, status codes and example values. Reads the newest 5,000 requests of the host (?limit up to 20,000); `capped` says there were more. Needs the viewer role.",
+        "operationId": "host_analysis",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "query",
+            "description": "Exact host name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "port",
+            "in": "query",
+            "description": "Only this port",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many of the newest requests to read",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostAnalysis"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No host given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/audit": {
       "get": {
         "tags": [
@@ -99,13 +183,74 @@
         "tags": [
           "session"
         ],
-        "description": "Sign in with a username and password. Sets the session cookie. No sign-in needed.",
+        "description": "Sign in with a username and password. Sets the session cookie, unless the account has a second factor: then the answer holds a `pending` token for `POST /auth/login/totp` and no cookie is set. No sign-in needed.",
         "operationId": "login",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A session (cookie set), or `second_factor` and `pending` when the account has a second factor: no session exists until `POST /auth/login/totp`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login/totp": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Finish a sign-in that asked for a second factor: the `pending` token and a TOTP code (or an unused recovery code). Each code works once; wrong codes count against the sign-in limits (429 with Retry-After). No sign-in needed.",
+        "operationId": "login_totp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpLoginBody"
               }
             }
           },
@@ -124,6 +269,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong code, or the pending sign-in expired",
             "content": {
               "application/json": {
                 "schema": {
@@ -445,6 +600,345 @@
           },
           "429": {
             "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "description": "Your own second-factor state. Needs the viewer role or above.",
+        "operationId": "totp_status",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/confirm": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Turn the second factor on with the first valid code, and get ten one-time recovery codes (shown once). Audited. Needs the viewer role or above.",
+        "operationId": "totp_confirm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodes"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Wrong code, or no enrolment in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/disable": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Turn your own second factor off. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.",
+        "operationId": "totp_disable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wrong code, or not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/enroll": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Make a TOTP secret for your account (base32 and an `otpauth://` URI). Nothing asks for a code until `POST /auth/totp/confirm` receives a valid one; enrolling again before that replaces the secret. 409 when a second factor is already on. Audited. Needs the viewer role or above.",
+        "operationId": "totp_enroll",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnrolment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/recovery-codes": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Make a new set of ten recovery codes; the old ones stop working. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.",
+        "operationId": "totp_recovery_codes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodes"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wrong code, or not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/required": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "description": "Require a second factor of every password account (single sign-on accounts and the desktop ticket are not asked). Accounts without one can then only reach the pages that set it up. Audited. Needs the admin role.",
+        "operationId": "totp_set_required",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpRequiredBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
             "content": {
               "application/json": {
                 "schema": {
@@ -2192,6 +2686,1013 @@
           },
           "404": {
             "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intercept/response-filter": {
+      "get": {
+        "tags": [
+          "intercept"
+        ],
+        "description": "Which responses are held when response interception is on. Needs the viewer role or above.",
+        "operationId": "get_response_filter",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseFilter"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "intercept"
+        ],
+        "description": "Change which responses are held (audited). Needs the tester role or above.",
+        "operationId": "put_response_filter",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResponseFilter"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseFilter"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/attacks": {
+      "get": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "The project's attacks, newest first, with live progress for running ones.",
+        "operationId": "intruder_attacks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttackList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "Start an attack: fill the marked positions of a request with payloads (sniper, battering ram, pitchfork or cluster bomb) and send every request through the scope gate (the target must be in scope; there is no out-of-scope setting), recorded as flows with source intruder. Results are stored in the project and sent on the event stream (intruder_result, intruder_state). Up to three attacks run at once. Needs the tester role or above; audited.",
+        "operationId": "intruder_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The attack, running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttackInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Too many attacks running or stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/attacks/{id}": {
+      "get": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "One attack, with its request (position markers included) and the configuration it was started with.",
+        "operationId": "intruder_attack",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttackDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "Delete an attack and its results (the flows it recorded stay in history). A running attack is a 409. Needs the tester role or above; audited.",
+        "operationId": "intruder_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The attack is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/attacks/{id}/results": {
+      "get": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "An attack's results in request order, up to 5000 per page (?offset and ?limit).",
+        "operationId": "intruder_results",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultsReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/attacks/{id}/stop": {
+      "post": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "The stop switch: no further request is sent and the ones in flight are dropped, at once. `stopped` is false when the attack was not running. (The kill switch, PUT /tools/stop, ends every attack too.) Needs the tester role or above; audited.",
+        "operationId": "intruder_stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attack id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such attack",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intruder/plan": {
+      "post": {
+        "tags": [
+          "intruder"
+        ],
+        "description": "Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first few payloads come back. A problem is a 400 that says what. Needs the tester role or above.",
+        "operationId": "intruder_plan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "description": "Issues the passive scanner found in recorded traffic, newest sighting first, with the number of flows it has not read yet. Filter by status, severity, confidence, rule, host, evidence flow or text. Needs the viewer role or above.",
+        "operationId": "list_issues",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "new, confirmed or false_positive",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "description": "info, low, medium or high",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confidence",
+            "in": "query",
+            "description": "tentative, firm or certain",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rule",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Text in the title, detail or path",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Up to 5000; default 1000",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues/report": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "description": "The issues (same filters as the list) as a report file: format html (default), json, sarif, junit or markdown. Always an attachment with a CSP that lets nothing run. Secrets (cookies, tokens, passwords) are redacted unless redact=0, which needs the tester role and is audited. Needs the viewer role or above.",
+        "operationId": "issues_report",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "html, json, sarif, junit or markdown",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redact",
+            "in": "query",
+            "description": "0 keeps secrets",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confidence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rule",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A report file",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues/rescan": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "description": "Queue every recorded flow for the scanner again (after a rule changed). Counts start over; statuses are kept. Needs the tester role or above; audited.",
+        "operationId": "rescan_issues",
+        "responses": {
+          "204": {
+            "description": "Queued"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/issues/{id}": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "description": "One issue with its evidence ranges and remediation. Needs the viewer role or above.",
+        "operationId": "get_issue",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Issue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such issue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "issues"
+        ],
+        "description": "Set an issue's status (new, confirmed or false_positive). Needs the tester role or above; audited.",
+        "operationId": "change_issue",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Issue id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Changed"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such issue",
             "content": {
               "application/json": {
                 "schema": {
@@ -4029,6 +5530,276 @@
         }
       }
     },
+    "/sequencer/analyze": {
+      "post": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "Analyse how random a set of tokens is (20 to 10000, each up to 1024 characters): per-position character statistics, bit-level bias, FIPS 140-2 (monobit, poker, runs, long run) on blocks of 20000 bits, an entropy estimate, checks for repeats and counters, and a verdict (excellent, good, poor, not_random). The result is the export. Needs the viewer role.",
+        "operationId": "sequencer_analyze",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Analysis"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sequencer/capture": {
+      "post": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "Start collecting tokens: send a request up to 5000 times (one after another, with an optional pause) and take the token from a response header, a Set-Cookie cookie or a regular expression over the body. Every request passes the scope gate (scope, kill switch, per-host rate limit; a rate-limit refusal is waited out) through the Repeater's engine and is recorded as a flow with source repeater. At most two captures run at once. Poll /sequencer/capture/{id}. Needs the tester role or above.",
+        "operationId": "sequencer_capture",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sequencer/capture/{id}": {
+      "get": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "The progress of a capture and its tokens from index `from` on. Needs the viewer role.",
+        "operationId": "sequencer_capture_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Capture id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Return tokens from this index on",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such capture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sequencer/capture/{id}/stop": {
+      "post": {
+        "tags": [
+          "sequencer"
+        ],
+        "description": "The stop switch: the capture ends after the request in flight. Needs the tester role or above.",
+        "operationId": "sequencer_capture_stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Capture id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such capture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/setup": {
       "post": {
         "tags": [
@@ -5123,6 +6894,62 @@
           }
         }
       }
+    },
+    "/users/{id}/totp": {
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "description": "Remove a user's second factor and recovery codes (a lost device) and end their sessions. Audited. Needs the admin role.",
+        "operationId": "reset_user_totp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "That user has no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5137,6 +6964,132 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "Analysis": {
+        "type": "object",
+        "required": [
+          "tokens",
+          "unique",
+          "min_length",
+          "max_length",
+          "charset_size",
+          "charset",
+          "positions",
+          "entropy_bits",
+          "capacity_bits",
+          "bit_stream_len",
+          "biased_bits",
+          "bit_positions",
+          "sequential_share",
+          "verdict",
+          "reliable",
+          "reasons"
+        ],
+        "properties": {
+          "biased_bits": {
+            "type": "integer",
+            "description": "Bit positions off one half beyond chance, and how many bit positions there are.",
+            "minimum": 0
+          },
+          "bit_positions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bit_stream_len": {
+            "type": "integer",
+            "description": "Bits in the bit-level stream (capped at 160 000).",
+            "minimum": 0
+          },
+          "capacity_bits": {
+            "type": "number",
+            "format": "double",
+            "description": "What the same positions would carry if every character seen there were equally likely."
+          },
+          "charset": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CharCount"
+            },
+            "description": "The most common characters over all tokens (up to 64)."
+          },
+          "charset_size": {
+            "type": "integer",
+            "description": "Distinct characters over all tokens.",
+            "minimum": 0
+          },
+          "entropy_bits": {
+            "type": "number",
+            "format": "double",
+            "description": "Effective entropy of a token in bits, character level."
+          },
+          "fips": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FipsReport",
+                "description": "None when there are fewer than 20 000 bits."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "min_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PositionStat"
+            }
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the verdict is what it is."
+          },
+          "reliable": {
+            "type": "boolean",
+            "description": "False under 100 tokens."
+          },
+          "sequential_share": {
+            "type": "number",
+            "format": "double",
+            "description": "Share of consecutive tokens that are numbers 1 to 65 536 above the one before (0 when they are not numbers)."
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unique": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          }
+        }
+      },
+      "AnalyzeBody": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tokens, one string each (20 to 10000, each up to 1024 characters)."
           }
         }
       },
@@ -5204,6 +7157,136 @@
           }
         }
       },
+      "AttackDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AttackInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "request",
+              "config"
+            ],
+            "properties": {
+              "config": {
+                "description": "The payload sets, options and grep rules it was started with."
+              },
+              "request": {
+                "type": "string",
+                "description": "The request with its position markers, base64."
+              }
+            }
+          }
+        ]
+      },
+      "AttackInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_ms",
+          "state",
+          "scheme",
+          "host",
+          "port",
+          "attack_type",
+          "total",
+          "done",
+          "skipped",
+          "errors"
+        ],
+        "properties": {
+          "attack_type": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "done": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests that finished.",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests that got no answer.",
+            "minimum": 0
+          },
+          "finished_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "scheme": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests left out because a payload was skipped.",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "description": "`running`, `completed`, `stopped`, `failed` or `interrupted` (the engine ended while it ran)."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "AttackList": {
+        "type": "object",
+        "required": [
+          "attacks"
+        ],
+        "properties": {
+          "attacks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttackInfo"
+            }
+          }
+        }
+      },
+      "AttackType": {
+        "type": "string",
+        "enum": [
+          "sniper",
+          "battering_ram",
+          "pitchfork",
+          "cluster_bomb"
+        ]
+      },
       "AuditEntry": {
         "type": "object",
         "required": [
@@ -5269,17 +7352,189 @@
         "required": [
           "fingerprint_sha256",
           "spki_sha256",
-          "pem"
+          "pem",
+          "not_after",
+          "days_left",
+          "expiring",
+          "permitted_domains"
         ],
         "properties": {
+          "days_left": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Whole days until expiry (negative once expired)."
+          },
+          "expiring": {
+            "type": "boolean",
+            "description": "True when the CA expires within 30 days or already has."
+          },
           "fingerprint_sha256": {
             "type": "string"
+          },
+          "not_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Expiry, seconds since the Unix epoch."
           },
           "pem": {
             "type": "string"
           },
+          "permitted_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Domains a name-constrained CA is limited to; empty when unconstrained."
+          },
           "spki_sha256": {
             "type": "string"
+          }
+        }
+      },
+      "CaptureBody": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "request",
+          "source",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many requests to send (1 to 5000).",
+            "minimum": 0
+          },
+          "delay_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pause between requests, milliseconds (0 to 10000).",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request": {
+            "type": "string",
+            "description": "The request to send each time, as written, base64 (up to 1 MiB)."
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TokenSource",
+            "description": "Where the token is in each response."
+          },
+          "update_content_length": {
+            "type": "boolean"
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CaptureStarted": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CaptureState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "done",
+          "stopped",
+          "failed"
+        ]
+      },
+      "CaptureStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "target",
+          "count",
+          "sent",
+          "extracted",
+          "missing",
+          "errors",
+          "tokens",
+          "from"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests asked for.",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests that failed.",
+            "minimum": 0
+          },
+          "extracted": {
+            "type": "integer",
+            "description": "Tokens extracted so far.",
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "missing": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Responses that had no token.",
+            "minimum": 0
+          },
+          "sent": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests sent so far.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/CaptureState"
+          },
+          "target": {
+            "type": "string",
+            "description": "`scheme://host:port` the capture sends to."
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tokens from index `from` on."
           }
         }
       },
@@ -5321,6 +7576,30 @@
             "minimum": 0
           }
         }
+      },
+      "CharCount": {
+        "type": "object",
+        "required": [
+          "ch",
+          "count"
+        ],
+        "properties": {
+          "ch": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "Confidence": {
+        "type": "string",
+        "enum": [
+          "tentative",
+          "firm",
+          "certain"
+        ]
       },
       "CurrentProject": {
         "type": "object",
@@ -5562,6 +7841,44 @@
           "server_to_client"
         ]
       },
+      "EndpointStat": {
+        "type": "object",
+        "required": [
+          "method",
+          "path",
+          "count",
+          "statuses",
+          "params"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "method": {
+            "type": "string"
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names of the parameters seen on this endpoint (at most 100)."
+          },
+          "path": {
+            "type": "string",
+            "description": "The path without its query, with ids replaced: `/users/{n}`, `/files/{uuid}`, `/blob/{hex}`."
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusCount"
+            },
+            "description": "How often each response status came back (requests with no response are not listed)."
+          }
+        }
+      },
       "EngageReport": {
         "type": "object",
         "required": [
@@ -5608,6 +7925,37 @@
           }
         }
       },
+      "Evidence": {
+        "type": "object",
+        "description": "A highlighted byte range in the stored request or response (end exclusive).",
+        "required": [
+          "part",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "part": {
+            "$ref": "#/components/schemas/EvidencePart"
+          },
+          "start": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "EvidencePart": {
+        "type": "string",
+        "enum": [
+          "request",
+          "response"
+        ]
+      },
       "Finding": {
         "type": "object",
         "required": [
@@ -5641,6 +7989,78 @@
           "url",
           "path"
         ]
+      },
+      "FipsBlock": {
+        "type": "object",
+        "required": [
+          "monobit",
+          "poker",
+          "runs",
+          "long_run"
+        ],
+        "properties": {
+          "long_run": {
+            "$ref": "#/components/schemas/FipsTest"
+          },
+          "monobit": {
+            "$ref": "#/components/schemas/FipsTest"
+          },
+          "poker": {
+            "$ref": "#/components/schemas/FipsTest"
+          },
+          "runs": {
+            "$ref": "#/components/schemas/FipsTest",
+            "description": "Run counts for lengths 1 to 6 and over, for zeros and for ones: all must be inside their ranges."
+          }
+        }
+      },
+      "FipsReport": {
+        "type": "object",
+        "required": [
+          "bits_tested",
+          "blocks",
+          "blocks_passed"
+        ],
+        "properties": {
+          "bits_tested": {
+            "type": "integer",
+            "description": "Bits that went into the tests.",
+            "minimum": 0
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FipsBlock"
+            }
+          },
+          "blocks_passed": {
+            "type": "integer",
+            "description": "Blocks in which every test passed.",
+            "minimum": 0
+          }
+        }
+      },
+      "FipsTest": {
+        "type": "object",
+        "required": [
+          "value",
+          "limit",
+          "pass"
+        ],
+        "properties": {
+          "limit": {
+            "type": "string",
+            "description": "The range that passes, as text."
+          },
+          "pass": {
+            "type": "boolean"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "The statistic (ones, poker X, total runs or the longest run)."
+          }
+        }
       },
       "FlowMeta": {
         "allOf": [
@@ -5835,6 +8255,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "ttfb_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds from the request being received to the response head arriving."
           }
         }
       },
@@ -5850,6 +8278,86 @@
             "minimum": 0
           }
         }
+      },
+      "GrepExtract": {
+        "type": "object",
+        "description": "Pull a value out of the response: the first group of the regular expression, or the whole match without one.",
+        "required": [
+          "pattern"
+        ],
+        "properties": {
+          "pattern": {
+            "type": "string"
+          }
+        }
+      },
+      "GrepMatch": {
+        "type": "object",
+        "description": "Mark a response as a match when this is found in it.",
+        "required": [
+          "pattern"
+        ],
+        "properties": {
+          "case_insensitive": {
+            "type": "boolean"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "regex": {
+            "type": "boolean",
+            "description": "A regular expression rather than plain text."
+          }
+        }
+      },
+      "Greps": {
+        "type": "object",
+        "description": "The grep rules of an attack.",
+        "properties": {
+          "extracts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrepExtract"
+            }
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrepMatch"
+            }
+          }
+        }
+      },
+      "HostAnalysis": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TargetAnalysis"
+          },
+          {
+            "type": "object",
+            "required": [
+              "host",
+              "capped"
+            ],
+            "properties": {
+              "capped": {
+                "type": "boolean",
+                "description": "The host has more recorded requests than were read; the newest were."
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ]
       },
       "InterceptItem": {
         "allOf": [
@@ -5942,6 +8450,159 @@
           }
         }
       },
+      "Issue": {
+        "type": "object",
+        "required": [
+          "id",
+          "rule",
+          "title",
+          "severity",
+          "confidence",
+          "status",
+          "scheme",
+          "host",
+          "port",
+          "path",
+          "detail",
+          "evidence",
+          "remediation",
+          "cwe",
+          "owasp",
+          "count",
+          "first_seen_ms",
+          "last_seen_ms"
+        ],
+        "properties": {
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many flows showed it."
+          },
+          "cwe": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "detail": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "first_seen_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The flow that shows the issue (the first one it was seen in); `None` once that flow is deleted."
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_seen_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "owasp": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "path": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remediation": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "scheme": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "IssueChange": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          }
+        }
+      },
+      "IssueList": {
+        "type": "object",
+        "required": [
+          "issues",
+          "pending",
+          "rules"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "description": "Newest sighting first."
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Flows the scanner has not read yet."
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The rule ids the scanner has, for filters."
+          }
+        }
+      },
+      "IssueStatus": {
+        "type": "string",
+        "enum": [
+          "new",
+          "confirmed",
+          "false_positive"
+        ]
+      },
       "Launched": {
         "type": "object",
         "required": [
@@ -5967,6 +8628,17 @@
             "type": "string"
           }
         }
+      },
+      "LoginReply": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Me"
+          },
+          {
+            "$ref": "#/components/schemas/SecondFactor"
+          }
+        ],
+        "description": "The answer to a password sign-in: a session, or a request for the second factor (no session yet)."
       },
       "MatchRule": {
         "type": "object",
@@ -6102,6 +8774,13 @@
           }
         }
       },
+      "NumberBase": {
+        "type": "string",
+        "enum": [
+          "decimal",
+          "hex"
+        ]
+      },
       "Op": {
         "type": "string",
         "description": "One step of a chain.",
@@ -6121,12 +8800,71 @@
           "deflate_decode",
           "brotli_decode",
           "zstd_decode",
+          "gzip_encode",
+          "deflate_encode",
+          "brotli_encode",
+          "zstd_encode",
           "jwt_decode",
           "unicode_escape",
           "unicode_unescape",
+          "md5",
+          "sha1",
           "sha256",
           "sha512"
         ]
+      },
+      "Options": {
+        "type": "object",
+        "description": "The resource pool and the sending options.",
+        "properties": {
+          "concurrency": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.",
+            "default": 5,
+            "minimum": 0
+          },
+          "delay_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The least time between the starts of two requests, milliseconds, whatever the concurrency.",
+            "default": 0,
+            "minimum": 0
+          },
+          "max_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Stop after this many requests (at most one million).",
+            "default": null,
+            "minimum": 0
+          },
+          "retries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How often a request that could not be sent or got no answer is tried again (0 to 10).",
+            "default": 0,
+            "minimum": 0
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The longest one request may take, seconds (1 to 300).",
+            "default": 30,
+            "minimum": 0
+          },
+          "update_content_length": {
+            "type": "boolean",
+            "description": "Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.",
+            "default": true
+          },
+          "verify_tls": {
+            "type": "boolean",
+            "default": false
+          }
+        }
       },
       "OrganizerAdd": {
         "type": "object",
@@ -6231,6 +8969,48 @@
           }
         }
       },
+      "ParamStat": {
+        "type": "object",
+        "required": [
+          "name",
+          "where",
+          "count",
+          "endpoints",
+          "values",
+          "more_values"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests that carried it.",
+            "minimum": 0
+          },
+          "endpoints": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Distinct endpoints it appeared on (counted up to 100).",
+            "minimum": 0
+          },
+          "more_values": {
+            "type": "boolean",
+            "description": "More distinct values than `values` holds: likely an identifier, a token or free text, not a flag."
+          },
+          "name": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The first distinct values seen."
+          },
+          "where": {
+            "$ref": "#/components/schemas/ParamWhere"
+          }
+        }
+      },
       "ParamWhere": {
         "type": "string",
         "enum": [
@@ -6288,12 +9068,462 @@
           }
         }
       },
+      "PayloadSet": {
+        "type": "object",
+        "description": "A source and the processing for what it yields.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "processing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Processing"
+            }
+          },
+          "source": {
+            "$ref": "#/components/schemas/PayloadSource"
+          }
+        }
+      },
+      "PayloadSource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "These strings, in order.",
+            "required": [
+              "items",
+              "type"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "list"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "`from` to `to` (inclusive) in steps of `step`; a negative step counts down.",
+            "required": [
+              "from",
+              "to",
+              "type"
+            ],
+            "properties": {
+              "base": {
+                "$ref": "#/components/schemas/NumberBase"
+              },
+              "from": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "min_digits": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Pad with leading zeros to this many digits.",
+                "minimum": 0
+              },
+              "step": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "to": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "numbers"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Every string of `min_len` to `max_len` characters from `charset`.",
+            "required": [
+              "charset",
+              "min_len",
+              "max_len",
+              "type"
+            ],
+            "properties": {
+              "charset": {
+                "type": "string"
+              },
+              "max_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "min_len": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "brute_force"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "`count` empty payloads: send the same request many times.",
+            "required": [
+              "count",
+              "type"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Each item as it is, in lower case, in upper case, capitalised and with its case swapped.",
+            "required": [
+              "items",
+              "type"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "case_changes"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Calendar dates from `from` to `to` (inclusive, `YYYY-MM-DD`), every `step_days` days (negative counts down).\n`format` uses `%Y`, `%m` and `%d` (default `%Y-%m-%d`).",
+            "required": [
+              "from",
+              "to",
+              "type"
+            ],
+            "properties": {
+              "format": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "from": {
+                "type": "string"
+              },
+              "step_days": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "to": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "dates"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Each item with every combination of the substitutions applied (`a` to `@`, `o` to `0`, ...). Each rule\nreplaces all of its character in the item; at most 8 rules apply to one item.",
+            "required": [
+              "items",
+              "rules",
+              "type"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Substitution"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "char_substitution"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A small wordlist that ships with Bosun: `passwords`, `usernames`, `paths` or `numbers-0-99`.",
+            "required": [
+              "name",
+              "type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "builtin"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A source of payloads."
+      },
       "Phase": {
         "type": "string",
         "enum": [
           "request",
           "response"
         ]
+      },
+      "PlanPreview": {
+        "type": "object",
+        "required": [
+          "index",
+          "payloads"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The payloads of one request (one per position, or one for sniper and battering ram).",
+            "minimum": 0
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PlanReply": {
+        "type": "object",
+        "required": [
+          "total",
+          "positions",
+          "preview"
+        ],
+        "properties": {
+          "positions": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "preview": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanPreview"
+            },
+            "description": "The first few requests' payloads."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests the attack would make (after the maximum, before skipped payloads are left out).",
+            "minimum": 0
+          }
+        }
+      },
+      "PositionStat": {
+        "type": "object",
+        "required": [
+          "position",
+          "count",
+          "distinct",
+          "entropy_bits",
+          "top_char",
+          "top_share",
+          "bits",
+          "bit_ones",
+          "biased_bits"
+        ],
+        "properties": {
+          "biased_bits": {
+            "type": "integer",
+            "description": "How many of those bits are off one half by more than chance allows (|z| above 3.29).",
+            "minimum": 0
+          },
+          "bit_ones": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "For each of those bits (most significant first): the share of ones."
+          },
+          "bits": {
+            "type": "integer",
+            "description": "Bits taken from this character for the bit-level analysis.",
+            "minimum": 0
+          },
+          "count": {
+            "type": "integer",
+            "description": "Tokens that have this position.",
+            "minimum": 0
+          },
+          "distinct": {
+            "type": "integer",
+            "description": "Distinct characters seen.",
+            "minimum": 0
+          },
+          "entropy_bits": {
+            "type": "number",
+            "format": "double"
+          },
+          "position": {
+            "type": "integer",
+            "description": "0-based character position.",
+            "minimum": 0
+          },
+          "top_char": {
+            "type": "string",
+            "description": "The most common character and its share."
+          },
+          "top_share": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "Processing": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "prefix"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "value",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "suffix"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Encode, escape or hash with one of the Decoder's operations (URL, HTML, Base64, hex, SHA-256, ...).",
+            "required": [
+              "op",
+              "type"
+            ],
+            "properties": {
+              "op": {
+                "$ref": "#/components/schemas/Op"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "encode"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Replace every match of the regular expression; `$1` in the replacement is the first group.",
+            "required": [
+              "pattern",
+              "replacement",
+              "type"
+            ],
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "replacement": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "replace_regex"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Leave out any payload that matches the regular expression.",
+            "required": [
+              "pattern",
+              "type"
+            ],
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "skip_if_matches"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A step applied to every payload, in order."
       },
       "ProjectInfo": {
         "type": "object",
@@ -6536,6 +9766,158 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "An Intruder attack started, moved on or ended.",
+            "required": [
+              "attack_id",
+              "state",
+              "total",
+              "done",
+              "skipped",
+              "errors",
+              "type"
+            ],
+            "properties": {
+              "attack_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "done": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errors": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "skipped": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "description": "`running`, `completed`, `stopped`, `failed` or `interrupted`."
+              },
+              "total": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "intruder_state"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One request of an Intruder attack finished. (The same fields as a stored result.)",
+            "required": [
+              "attack_id",
+              "index",
+              "payloads",
+              "length",
+              "time_ms",
+              "matches",
+              "extracts",
+              "attempts",
+              "type"
+            ],
+            "properties": {
+              "attack_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "attempts": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "extracts": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "flow_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64"
+              },
+              "index": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "length": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "boolean"
+                }
+              },
+              "payloads": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "position": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "status": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "minimum": 0
+              },
+              "time_ms": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "intruder_result"
+                ]
+              }
+            }
           }
         ],
         "description": "Events the proxy publishes for front ends (sent over the API's event stream)."
@@ -6701,6 +10083,21 @@
           }
         }
       },
+      "RecoveryCodes": {
+        "type": "object",
+        "required": [
+          "recovery_codes"
+        ],
+        "properties": {
+          "recovery_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Shown once; each works once."
+          }
+        }
+      },
       "RenameProject": {
         "type": "object",
         "required": [
@@ -6721,6 +10118,58 @@
           "allow_out_of_scope": {
             "type": "boolean",
             "description": "Let the Repeater send to hosts outside the scope. Starts off, and goes back off when a project is opened."
+          }
+        }
+      },
+      "ResponseFilter": {
+        "type": "object",
+        "description": "Which responses are held when response interception is on. Every condition that is set must match; an empty\nfilter holds every response.",
+        "properties": {
+          "body_contains": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A substring that must appear in the response body (the body is buffered to check it)."
+          },
+          "header_contains": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A substring that must appear in the response's header lines (case-insensitive)."
+          },
+          "mime_contains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Substrings of the `Content-Type` (any one may match, case-insensitive). Empty: any type."
+          },
+          "only_if_request_held": {
+            "type": "boolean",
+            "description": "Hold only responses whose request was held too."
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Status codes or classes, such as `404`, `5xx` (any one may match). Empty: any status."
+          }
+        }
+      },
+      "ResultsReply": {
+        "type": "object",
+        "required": [
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Row"
+            }
           }
         }
       },
@@ -6753,6 +10202,99 @@
         "properties": {
           "role": {
             "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "Row": {
+        "type": "object",
+        "description": "The outcome of one request.",
+        "required": [
+          "index",
+          "payloads",
+          "length",
+          "time_ms",
+          "matches",
+          "extracts",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many tries it took (1 when the first worked).",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "extracts": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "One entry per grep extract rule."
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The recorded flow, when something was sent."
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Which request of the attack (0-based).",
+            "minimum": 0
+          },
+          "length": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Response size in bytes.",
+            "minimum": 0
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "boolean"
+            },
+            "description": "One entry per grep match rule."
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The payloads used, as text (bytes that are not UTF-8 are replaced)."
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The position that was attacked, for a sniper attack.",
+            "minimum": 0
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "time_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -6848,6 +10390,23 @@
             "items": {
               "$ref": "#/components/schemas/ScopeRule"
             }
+          }
+        }
+      },
+      "SecondFactor": {
+        "type": "object",
+        "required": [
+          "second_factor",
+          "pending"
+        ],
+        "properties": {
+          "pending": {
+            "type": "string",
+            "description": "Send this with the code to `POST /auth/login/totp`. Valid for five minutes, from the same address."
+          },
+          "second_factor": {
+            "type": "string",
+            "description": "The kind of second factor to present: `totp`."
           }
         }
       },
@@ -7079,6 +10638,15 @@
           }
         }
       },
+      "Severity": {
+        "type": "string",
+        "enum": [
+          "info",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
       "SiteMapEntry": {
         "type": "object",
         "description": "A host and the paths seen on it, for the site map.",
@@ -7177,6 +10745,57 @@
           }
         }
       },
+      "StartBody": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "request",
+          "attack_type",
+          "payload_sets"
+        ],
+        "properties": {
+          "attack_type": {
+            "$ref": "#/components/schemas/AttackType"
+          },
+          "greps": {
+            "$ref": "#/components/schemas/Greps"
+          },
+          "host": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A label for the attack (defaults to the host and attack type)."
+          },
+          "options": {
+            "$ref": "#/components/schemas/Options"
+          },
+          "payload_sets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayloadSet"
+            },
+            "description": "One set for sniper and battering ram; one per position for pitchfork and cluster bomb."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request": {
+            "type": "string",
+            "description": "The request, base64, with `§` around each position (`§value§`: the text between is what is sent when the\nposition is not being attacked)."
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          }
+        }
+      },
       "Status": {
         "type": "object",
         "required": [
@@ -7193,6 +10812,25 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "StatusCount": {
+        "type": "object",
+        "required": [
+          "status",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -7251,6 +10889,18 @@
           }
         }
       },
+      "StopReply": {
+        "type": "object",
+        "required": [
+          "stopped"
+        ],
+        "properties": {
+          "stopped": {
+            "type": "boolean",
+            "description": "False when the attack was not running."
+          }
+        }
+      },
       "Stopped": {
         "type": "object",
         "required": [
@@ -7259,6 +10909,22 @@
         "properties": {
           "stopped": {
             "type": "boolean"
+          }
+        }
+      },
+      "Substitution": {
+        "type": "object",
+        "description": "One character-substitution rule.",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
           }
         }
       },
@@ -7283,6 +10949,40 @@
             "type": "array",
             "items": {},
             "description": "One object per tab (target, request text, options). Responses are not stored."
+          }
+        }
+      },
+      "TargetAnalysis": {
+        "type": "object",
+        "required": [
+          "requests",
+          "endpoints",
+          "params",
+          "truncated"
+        ],
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EndpointStat"
+            },
+            "description": "Most requested first."
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParamStat"
+            }
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requests analysed.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "A limit was hit: there were more endpoints or parameters than are listed."
           }
         }
       },
@@ -7397,6 +11097,156 @@
           "full"
         ]
       },
+      "TokenSource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The value of a response header (the first with that name).",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "header"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The value of a `Set-Cookie` cookie.",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cookie"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A regular expression over the body: capture group 1 if there is one, else the whole match.",
+            "required": [
+              "pattern",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "regex"
+                ]
+              },
+              "pattern": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Where a token sits in a response."
+      },
+      "TotpCodeBody": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "A 6-digit code (a recovery code also works where the operation allows it)."
+          }
+        }
+      },
+      "TotpEnrolment": {
+        "type": "object",
+        "required": [
+          "secret",
+          "otpauth_uri"
+        ],
+        "properties": {
+          "otpauth_uri": {
+            "type": "string",
+            "description": "The same secret as an `otpauth://` URI."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The shared secret, base32. Shown once."
+          }
+        }
+      },
+      "TotpLoginBody": {
+        "type": "object",
+        "required": [
+          "pending",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "A 6-digit code, or an unused recovery code."
+          },
+          "pending": {
+            "type": "string"
+          }
+        }
+      },
+      "TotpRequiredBody": {
+        "type": "object",
+        "required": [
+          "required"
+        ],
+        "properties": {
+          "required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TotpStatus": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "enrolling",
+          "recovery_codes_left",
+          "required",
+          "setup_required"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "A confirmed second factor is on for this account."
+          },
+          "enrolling": {
+            "type": "boolean",
+            "description": "A secret was made but no code has confirmed it yet."
+          },
+          "recovery_codes_left": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "An admin requires every password account to have a second factor."
+          },
+          "setup_required": {
+            "type": "boolean",
+            "description": "This account must set up a second factor before it can do anything else."
+          }
+        }
+      },
       "User": {
         "type": "object",
         "required": [
@@ -7421,6 +11271,15 @@
             "type": "string"
           }
         }
+      },
+      "Verdict": {
+        "type": "string",
+        "enum": [
+          "not_random",
+          "poor",
+          "good",
+          "excellent"
+        ]
       },
       "WsBody": {
         "type": "object",
@@ -7669,6 +11528,15 @@
     },
     {
       "name": "decoder"
+    },
+    {
+      "name": "intruder"
+    },
+    {
+      "name": "issues"
+    },
+    {
+      "name": "sequencer"
     },
     {
       "name": "accounts"

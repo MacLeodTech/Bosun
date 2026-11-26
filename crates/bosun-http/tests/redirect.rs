@@ -269,6 +269,7 @@ async fn an_upstream_proxy_is_used_and_is_told_the_pinned_address_not_the_name()
             addr: proxy_addr.to_string(),
             username: None,
             password: None,
+            password_file: None,
         }),
         false,
         false,

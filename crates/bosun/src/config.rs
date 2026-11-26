@@ -17,6 +17,9 @@ pub struct Config {
     pub data_key_file: Option<PathBuf>,
     /// Project name (under `<data_dir>/projects/`) or a path to a `.bosun` file.
     pub project: String,
+    /// Serve Prometheus `/metrics` on this address, on its own listener without authentication (off by default;
+    /// bind it to an internal interface).
+    pub metrics_listen: Option<std::net::SocketAddr>,
     pub proxy: ProxyConfig,
     pub api: ApiConfig,
     pub browser: BrowserConfig,
@@ -48,6 +51,7 @@ impl Config {
         if cfg.data_key_file.is_none() {
             cfg.data_key_file = std::env::var_os("BOSUN_DATA_KEY_FILE").map(PathBuf::from);
         }
+        cfg.proxy.resolve_secrets().map_err(anyhow::Error::msg)?;
         Ok(cfg)
     }
 
@@ -83,6 +87,33 @@ fn default_data_dir() -> PathBuf {
         }
     }
     PathBuf::from("bosun-data")
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    #[test]
+    fn password_files_are_read_and_not_combined_with_inline_passwords() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("pw");
+        std::fs::write(&f, "twelve chars pw\n").unwrap();
+        let toml = format!(
+            "[proxy.auth]\nusername = \"u\"\npassword_file = {f:?}\n[proxy.upstream]\nkind = \"http\"\naddr = \"x:1\"\npassword_file = {f:?}\n"
+        );
+        let mut c: Config = toml::from_str(&toml).unwrap();
+        c.proxy.resolve_secrets().unwrap();
+        assert_eq!(c.proxy.auth.as_ref().unwrap().password, "twelve chars pw");
+        c.proxy.validate().unwrap();
+        let mut c: Config = toml::from_str(&format!(
+            "[proxy.auth]\nusername = \"u\"\npassword = \"x\"\npassword_file = {f:?}\n"
+        ))
+        .unwrap();
+        assert!(c.proxy.resolve_secrets().is_err());
+        let mut c: Config =
+            toml::from_str("[proxy.auth]\nusername = \"u\"\npassword_file = \"/nonexistent\"\n").unwrap();
+        assert!(c.proxy.resolve_secrets().is_err());
+    }
 }
 
 #[cfg(test)]

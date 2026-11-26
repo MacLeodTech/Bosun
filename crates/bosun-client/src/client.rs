@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::error::{Error, Result};
 use crate::events::{EventStream, Position};
+use crate::issues::*;
 use crate::types::*;
 
 /// Builds a [`Client`].
@@ -199,15 +200,88 @@ impl Client {
     }
 
     /// Sign in with a password. The session cookie and CSRF token are kept for later calls.
+    ///
+    /// An account with a second factor answers [`Error::SecondFactor`] (no session yet): call
+    /// [`Client::login_totp`] with the `pending` token it carries.
     pub async fn login(&self, username: &str, password: &str) -> Result<Me> {
-        let me: Me = self
+        let v: serde_json::Value = self
             .json(
                 self.req(Method::POST, "/auth/login")
                     .json(&json!({ "username": username, "password": password })),
             )
             .await?;
+        if let Some(pending) = v.get("pending").and_then(|p| p.as_str()) {
+            return Err(Error::SecondFactor {
+                pending: pending.to_string(),
+            });
+        }
+        let me: Me = serde_json::from_value(v).map_err(Error::decode)?;
         self.remember(&me);
         Ok(me)
+    }
+
+    /// Finish a sign-in that asked for a second factor, with a 6-digit code or an unused recovery code.
+    pub async fn login_totp(&self, pending: &str, code: &str) -> Result<Me> {
+        let me: Me = self
+            .json(
+                self.req(Method::POST, "/auth/login/totp")
+                    .json(&json!({ "pending": pending, "code": code })),
+            )
+            .await?;
+        self.remember(&me);
+        Ok(me)
+    }
+
+    /// Your own second-factor state.
+    pub async fn totp_status(&self) -> Result<TotpStatus> {
+        self.json(self.req(Method::GET, "/auth/totp")).await
+    }
+
+    /// Make a TOTP secret for your account. Nothing is enforced until [`Client::totp_confirm`].
+    pub async fn totp_enroll(&self) -> Result<TotpEnrolment> {
+        self.json(self.req(Method::POST, "/auth/totp/enroll")).await
+    }
+
+    /// Turn the second factor on with the first valid code. The recovery codes are shown only here.
+    pub async fn totp_confirm(&self, code: &str) -> Result<RecoveryCodes> {
+        self.json(
+            self.req(Method::POST, "/auth/totp/confirm")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Turn your own second factor off (needs a valid code or recovery code).
+    pub async fn totp_disable(&self, code: &str) -> Result<()> {
+        self.unit(
+            self.req(Method::POST, "/auth/totp/disable")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Replace your recovery codes (needs a valid code).
+    pub async fn totp_recovery_codes(&self, code: &str) -> Result<RecoveryCodes> {
+        self.json(
+            self.req(Method::POST, "/auth/totp/recovery-codes")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Admin: require a second factor of every password account, or stop requiring it.
+    pub async fn totp_set_required(&self, required: bool) -> Result<TotpStatus> {
+        self.json(
+            self.req(Method::PUT, "/auth/totp/required")
+                .json(&json!({ "required": required })),
+        )
+        .await
+    }
+
+    /// Admin: remove a user's second factor (a lost device); their sessions end.
+    pub async fn reset_user_totp(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/users/{id}/totp")))
+            .await
     }
 
     /// Sign in with the login ticket an embedded engine (`bosun serve --embedded`) gave its parent process.
@@ -366,6 +440,15 @@ impl Client {
             .await
     }
 
+    /// The distinct endpoints and parameters of a host across the history, with counts.
+    pub async fn host_analysis(&self, host: &str, port: Option<u16>) -> Result<HostAnalysis> {
+        let mut rb = self.req(Method::GET, "/analysis").query(&[("host", host)]);
+        if let Some(p) = port {
+            rb = rb.query(&[("port", p)]);
+        }
+        self.json(rb).await
+    }
+
     /// A CSRF proof of concept for the request, as HTML text.
     pub async fn flow_csrf_poc(&self, id: FlowId, auto_submit: bool) -> Result<String> {
         let mut rb = self.req(Method::GET, &format!("/flows/{id}/csrf-poc"));
@@ -443,6 +526,16 @@ impl Client {
         self.json(self.req(Method::PUT, "/intercept").json(s)).await
     }
 
+    pub async fn response_filter(&self) -> Result<ResponseFilter> {
+        self.json(self.req(Method::GET, "/intercept/response-filter"))
+            .await
+    }
+
+    pub async fn put_response_filter(&self, f: &ResponseFilter) -> Result<ResponseFilter> {
+        self.json(self.req(Method::PUT, "/intercept/response-filter").json(f))
+            .await
+    }
+
     pub async fn intercept_queue(&self) -> Result<Vec<InterceptSummary>> {
         self.json(self.req(Method::GET, "/intercept/queue")).await
     }
@@ -502,6 +595,35 @@ impl Client {
         .await
     }
 
+    /// Analyse how random a set of tokens is (20 to 10000). Returns the `Analysis` of the API: statistics, FIPS 140-2
+    /// results, an entropy estimate and a `verdict` (`excellent`, `good`, `poor`, `not_random`).
+    pub async fn sequencer_analyze(&self, tokens: &[String]) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/sequencer/analyze")
+                .json(&json!({ "tokens": tokens })),
+        )
+        .await
+    }
+
+    /// Start a live capture. `body` is the `CaptureBody` of the API: target, base64 request, `source` (header,
+    /// cookie or regex), `count` and optionally `delay_ms`. Returns `{ "id": n }`.
+    pub async fn sequencer_capture(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/sequencer/capture").json(body))
+            .await
+    }
+
+    /// The progress of a capture, with its tokens from index `from` on.
+    pub async fn sequencer_capture_status(&self, id: u64, from: usize) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/sequencer/capture/{id}?from={from}")))
+            .await
+    }
+
+    /// Stop a capture after the request in flight.
+    pub async fn sequencer_capture_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/sequencer/capture/{id}/stop")))
+            .await
+    }
+
     /// Compare two base64 inputs; `level` is `words` or `bytes`.
     pub async fn comparer_diff(&self, a_b64: &str, b_b64: &str, level: &str) -> Result<serde_json::Value> {
         self.json(
@@ -544,6 +666,59 @@ impl Client {
     /// Replace the Repeater's saved tabs.
     pub async fn put_repeater_tabs(&self, doc: &serde_json::Value) -> Result<serde_json::Value> {
         self.json(self.req(Method::PUT, "/repeater/tabs").json(doc)).await
+    }
+
+    /// Check an attack without sending anything. `body` is the `StartBody` of the API: target, base64 request with
+    /// `§` around each position, attack type and payload sets (and optionally options and grep rules). Returns the
+    /// number of requests and the first few payloads, or an error that says what is wrong.
+    pub async fn intruder_plan(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/intruder/plan").json(body))
+            .await
+    }
+
+    /// Start an Intruder attack (same body as [`Client::intruder_plan`]). Returns the attack as it starts; results
+    /// arrive as `IntruderResult` events and can be read with [`Client::intruder_results`].
+    pub async fn intruder_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/intruder/attacks").json(body))
+            .await
+    }
+
+    /// The project's Intruder attacks, newest first.
+    pub async fn intruder_attacks(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/intruder/attacks")).await
+    }
+
+    /// One attack with its request and configuration.
+    pub async fn intruder_attack(&self, id: i64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/intruder/attacks/{id}")))
+            .await
+    }
+
+    /// A page of an attack's results, in request order (at most 5000 a page).
+    pub async fn intruder_results(&self, id: i64, offset: u64, limit: u64) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::GET, &format!("/intruder/attacks/{id}/results"))
+                .query(&[("offset", offset), ("limit", limit)]),
+        )
+        .await
+    }
+
+    /// Throw the stop switch of an attack. False if it was not running.
+    pub async fn intruder_stop(&self, id: i64) -> Result<bool> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            stopped: bool,
+        }
+        let r: R = self
+            .json(self.req(Method::POST, &format!("/intruder/attacks/{id}/stop")))
+            .await?;
+        Ok(r.stopped)
+    }
+
+    /// Delete an attack and its results.
+    pub async fn intruder_delete(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/intruder/attacks/{id}")))
+            .await
     }
 
     /// The kill switch for all tool traffic. Returns the new state.
@@ -734,6 +909,42 @@ impl Client {
                 .query(&[("before", before), ("limit", limit.map(i64::from))]),
         )
         .await
+    }
+
+    // --- issues (passive scanner) --------------------------------------------------------------------------
+
+    pub async fn issues(&self, q: &IssueQuery) -> Result<IssueList> {
+        self.json(self.req(Method::GET, "/issues").query(q)).await
+    }
+
+    pub async fn issue(&self, id: i64) -> Result<Issue> {
+        self.json(self.req(Method::GET, &format!("/issues/{id}"))).await
+    }
+
+    pub async fn change_issue(&self, id: i64, status: IssueStatus) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/issues/{id}"))
+                .json(&json!({ "status": status })),
+        )
+        .await
+    }
+
+    /// The issues as a report file (`format`: html, json, sarif, junit or markdown). Secrets are redacted unless
+    /// `redact` is false (tester role; audited).
+    pub async fn issues_report(&self, q: &IssueQuery, format: &str, redact: bool) -> Result<Bytes> {
+        let mut rb = self
+            .req(Method::GET, "/issues/report")
+            .query(q)
+            .query(&[("format", format)]);
+        if !redact {
+            rb = rb.query(&[("redact", "0")]);
+        }
+        Ok(self.check(rb.send().await?).await?.bytes().await?)
+    }
+
+    /// Queue every recorded flow for the scanner again.
+    pub async fn rescan_issues(&self) -> Result<()> {
+        self.unit(self.req(Method::POST, "/issues/rescan")).await
     }
 
     // --- events --------------------------------------------------------------------------------------------

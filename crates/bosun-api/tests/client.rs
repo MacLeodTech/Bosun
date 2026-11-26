@@ -422,6 +422,66 @@ async fn engagement_helpers_report_a_response_and_build_a_csrf_page() {
 }
 
 #[tokio::test]
+async fn target_analysis_lists_endpoints_and_parameters_of_a_host() {
+    use bosun_client::ParamWhere;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    for (i, q) in ["?page=1&sort=asc", "?page=2", "?page=3&sort=desc"]
+        .iter()
+        .enumerate()
+    {
+        let path = format!("/items/{}{q}", 10 + i);
+        let req = format!("GET {path} HTTP/1.1\r\nHost: a.test\r\n\r\n");
+        common::recorded_exchange(&s, "GET", &path, req.as_bytes(), "", b"", None);
+    }
+    let login = b"POST /login HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nuser=a&pass=b";
+    common::recorded_exchange(&s, "POST", "/login", login, "", b"", None);
+    let json = b"POST /api/n HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/json\r\n\r\n{\"id\":7,\"user\":{\"role\":\"x\"}}";
+    common::recorded_exchange(&s, "POST", "/api/n", json, "", b"", None);
+
+    let r = c.host_analysis("A.test", None).await.unwrap();
+    assert_eq!(
+        (r.host.as_str(), r.requests, r.capped, r.truncated),
+        ("a.test", 5, false, false)
+    );
+    let items = &r.endpoints[0];
+    assert_eq!(
+        (items.method.as_str(), items.path.as_str(), items.count),
+        ("GET", "/items/{n}", 3)
+    );
+    assert_eq!(items.params, ["page", "sort"]);
+    assert_eq!(items.statuses.len(), 1);
+    let page = r.params.iter().find(|p| p.name == "page").unwrap();
+    assert_eq!(
+        (page.location, page.count, page.endpoints, page.values.len()),
+        (ParamWhere::Query, 3, 1, 3)
+    );
+    assert!(
+        r.params
+            .iter()
+            .any(|p| p.name == "pass" && p.location == ParamWhere::Form)
+    );
+    assert!(
+        r.params
+            .iter()
+            .any(|p| p.name == "user.role" && p.location == ParamWhere::Json)
+    );
+
+    // The port narrows it; another host, or a limit, changes what is read.
+    assert_eq!(c.host_analysis("a.test", Some(443)).await.unwrap().requests, 5);
+    assert_eq!(c.host_analysis("a.test", Some(8080)).await.unwrap().requests, 0);
+    assert_eq!(c.host_analysis("b.test", None).await.unwrap().requests, 0);
+    assert!(c.host_analysis("  ", None).await.is_err());
+    let anon = reqwest::Client::new();
+    let r = anon
+        .get(format!("{}/api/v1/analysis?host=a.test", url(&s)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test]
 async fn history_bodies_annotations_and_sitemap() {
     let s = stack(true).await;
     let c = admin(&s).await;
@@ -571,6 +631,19 @@ async fn scope_rules_proxy_and_ca() {
     };
     assert_eq!(c.put_intercept(&want).await.unwrap(), want);
     assert_eq!(c.intercept().await.unwrap(), want);
+    let f = bosun_client::ResponseFilter {
+        statuses: vec!["5xx".into()],
+        mime_contains: vec!["json".into()],
+        ..Default::default()
+    };
+    assert_eq!(c.put_response_filter(&f).await.unwrap(), f);
+    assert_eq!(c.response_filter().await.unwrap(), f);
+    let bad = bosun_client::ResponseFilter {
+        statuses: vec!["fifty".into()],
+        ..Default::default()
+    };
+    assert!(c.put_response_filter(&bad).await.is_err());
+    assert_eq!(c.response_filter().await.unwrap(), f);
     assert!(c.intercept_queue().await.unwrap().is_empty());
     assert_eq!(c.intercept_forward_all().await.unwrap(), 0);
     assert!(c.intercept_item(1).await.unwrap_err().is_not_found());
@@ -590,11 +663,17 @@ async fn scope_rules_proxy_and_ca() {
             && !ca.fingerprint_sha256.is_empty()
             && !ca.spki_sha256.is_empty()
     );
+    assert!(ca.days_left > 365 && !ca.expiring && ca.not_after > 0 && ca.permitted_domains.is_empty());
     // The test engine has no browser launcher.
     assert!(c.launch_browser().await.unwrap_err().is_forbidden());
 
     let audit = c.audit(None, None).await.unwrap();
-    for a in ["scope.update", "rules.update", "intercept.settings"] {
+    for a in [
+        "scope.update",
+        "rules.update",
+        "intercept.settings",
+        "intercept.response_filter",
+    ] {
         assert!(audit.iter().any(|e| e.action == a), "{a} missing");
     }
 }
@@ -843,11 +922,23 @@ fn the_client_covers_every_documented_operation() {
         ("post", "/organizer", "add_to_organizer"),
         ("patch", "/organizer/{id}", "update_organizer_item"),
         ("delete", "/organizer/{id}", "delete_organizer_item"),
+        ("get", "/issues", "issues"),
+        ("post", "/issues/rescan", "rescan_issues"),
+        ("get", "/issues/{id}", "issue"),
+        ("patch", "/issues/{id}", "change_issue"),
+        ("post", "/intruder/plan", "intruder_plan"),
+        ("get", "/intruder/attacks", "intruder_attacks"),
+        ("post", "/intruder/attacks", "intruder_start"),
+        ("get", "/intruder/attacks/{id}", "intruder_attack"),
+        ("delete", "/intruder/attacks/{id}", "intruder_delete"),
+        ("get", "/intruder/attacks/{id}/results", "intruder_results"),
+        ("post", "/intruder/attacks/{id}/stop", "intruder_stop"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),
         ("get", "/flows/{id}/ws", "ws_messages"),
         ("get", "/flows/{id}/engage", "flow_engage"),
         ("get", "/flows/{id}/csrf-poc", "flow_csrf_poc"),
+        ("get", "/analysis", "host_analysis"),
         ("get", "/flows/{id}/{part}/body", "flow_body"),
         ("get", "/sitemap", "site_map"),
         ("get", "/scope", "scope"),
@@ -856,6 +947,8 @@ fn the_client_covers_every_documented_operation() {
         ("put", "/rules", "put_rules"),
         ("get", "/intercept", "intercept"),
         ("put", "/intercept", "put_intercept"),
+        ("get", "/intercept/response-filter", "response_filter"),
+        ("put", "/intercept/response-filter", "put_response_filter"),
         ("get", "/intercept/queue", "intercept_queue"),
         ("get", "/intercept/queue/{id}", "intercept_item"),
         ("post", "/intercept/queue/{id}", "intercept_decide"),
@@ -871,12 +964,24 @@ fn the_client_covers_every_documented_operation() {
         ("post", "/repeater/ws", "repeater_ws"),
         ("get", "/repeater/tabs", "repeater_tabs"),
         ("put", "/repeater/tabs", "put_repeater_tabs"),
+        ("post", "/sequencer/analyze", "sequencer_analyze"),
+        ("post", "/sequencer/capture", "sequencer_capture"),
+        ("get", "/sequencer/capture/{id}", "sequencer_capture_status"),
+        ("post", "/sequencer/capture/{id}/stop", "sequencer_capture_stop"),
         ("get", "/ca", "ca_info"),
         ("get", "/ca/cert.pem", "ca_pem"),
         ("post", "/browser/launch", "launch_browser"),
         ("get", "/tokens", "tokens"),
         ("post", "/tokens", "create_token"),
         ("delete", "/tokens/{id}", "delete_token"),
+        ("post", "/auth/login/totp", "login_totp"),
+        ("get", "/auth/totp", "totp_status"),
+        ("post", "/auth/totp/enroll", "totp_enroll"),
+        ("post", "/auth/totp/confirm", "totp_confirm"),
+        ("post", "/auth/totp/disable", "totp_disable"),
+        ("post", "/auth/totp/recovery-codes", "totp_recovery_codes"),
+        ("put", "/auth/totp/required", "totp_set_required"),
+        ("delete", "/users/{id}/totp", "reset_user_totp"),
         ("get", "/users", "users"),
         ("post", "/users", "create_user"),
         ("delete", "/users/{id}", "delete_user"),

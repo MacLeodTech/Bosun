@@ -15,6 +15,10 @@ bosun-store = { path = "../crates/bosun-store" }
 bosun-proxy = { path = "../crates/bosun-proxy" }
 bosun-http = { path = "../crates/bosun-http" }
 bosun-codec = { path = "../crates/bosun-codec" }
+bosun-sequencer = { path = "../crates/bosun-sequencer" }
+bosun-intruder = { path = "../crates/bosun-intruder" }
+bosun-crawl = { path = "../crates/bosun-crawl" }
+serde_json = "1"
 
 # Not part of the main workspace: it needs nightly and is built only by `cargo fuzz`.
 [workspace]
@@ -69,6 +73,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "sequencer"
+path = "fuzz_targets/sequencer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "codec"
 path = "fuzz_targets/codec.rs"
 test = false
@@ -85,6 +96,20 @@ bench = false
 [[bin]]
 name = "engage"
 path = "fuzz_targets/engage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "intruder_plan"
+path = "fuzz_targets/intruder_plan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crawl_html"
+path = "fuzz_targets/crawl_html.rs"
 test = false
 doc = false
 bench = false

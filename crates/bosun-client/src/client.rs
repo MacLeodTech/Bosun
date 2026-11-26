@@ -1034,6 +1034,35 @@ impl Client {
         .await
     }
 
+    // --- client certificates -----------------------------------------------------------------------------------
+
+    pub async fn client_certs(&self) -> Result<Vec<ClientCert>> {
+        Ok(self
+            .json::<ClientCertList>(self.req(Method::GET, "/client-certs"))
+            .await?
+            .certs)
+    }
+
+    /// Add a client certificate for a host pattern from a PEM file (certificate and key) or a base64 PKCS#12 file.
+    /// Needs the admin role.
+    pub async fn add_client_cert(
+        &self,
+        host: &str,
+        pem: Option<&str>,
+        pkcs12_base64: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<ClientCert> {
+        self.json(self.req(Method::POST, "/client-certs").json(&json!({
+            "host": host, "pem": pem, "pkcs12_base64": pkcs12_base64, "password": password
+        })))
+        .await
+    }
+
+    pub async fn delete_client_cert(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/client-certs/{id}")))
+            .await
+    }
+
     // --- custom checks ---------------------------------------------------------------------------------------
 
     pub async fn checks(&self) -> Result<Vec<CustomCheck>> {

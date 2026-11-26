@@ -167,7 +167,8 @@ enum Route {
 #[derive(Clone)]
 pub struct Connector {
     route: Route,
-    tls: TlsConnector,
+    cfg: Arc<ClientConfig>,
+    certs: crate::clientcert::ClientCerts,
     guard: LoopGuard,
     /// Lower-cased target host -> server name to send instead.
     sni: Arc<std::collections::BTreeMap<String, String>>,
@@ -233,10 +234,22 @@ impl Connector {
         guard.add_self(self_addrs);
         Ok(Self {
             route,
-            tls: TlsConnector::from(Arc::new(client_tls(verify_tls, alpn_h2))),
+            cfg: Arc::new(client_tls(verify_tls, alpn_h2)),
+            certs: crate::clientcert::ClientCerts::default(),
             guard,
             sni: Arc::default(),
         })
+    }
+
+    /// Present client certificates from this shared registry to the hosts they are configured for.
+    #[must_use]
+    pub fn with_client_certs(mut self, certs: crate::clientcert::ClientCerts) -> Self {
+        self.certs = certs;
+        self
+    }
+
+    pub fn client_certs(&self) -> &crate::clientcert::ClientCerts {
+        &self.certs
     }
 
     /// Send a different TLS server name (SNI) to some targets: `host -> name`, hosts matched exactly and
@@ -324,9 +337,10 @@ impl tower_service::Service<Uri> for Connector {
             let (tcp, reg) = this.connect_tcp(&host, port).await?;
             let conn = if https {
                 let bare = host.trim_start_matches('[').trim_end_matches(']').to_string();
-                let sni = this.sni.get(&bare.to_ascii_lowercase()).cloned().unwrap_or(bare);
+                let sni = this.sni.get(&bare.to_ascii_lowercase()).cloned().unwrap_or_else(|| bare.clone());
                 let name = ServerName::try_from(sni)?;
-                let tls = this.tls.connect(name, tcp).await?;
+                let cfg = this.certs.apply(&bare, this.cfg.clone());
+                let tls = TlsConnector::from(cfg).connect(name, tcp).await?;
                 let h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
                 Conn {
                     io: ConnIo::Tls(Box::new(TokioIo::new(tls))),

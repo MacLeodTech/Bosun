@@ -332,6 +332,7 @@ impl Engine {
             Scheme::Http => Box::new(tcp),
             Scheme::Https => {
                 let cfg = self.tls.get(opts.verify_tls, h2);
+                let cfg = self.connector.client_certs().apply(&c.pinned.host, cfg);
                 let host = &c.pinned.host;
                 let sni = self.connector.sni_for(host);
                 let name = tls::server_name(&sni).map_err(|e| SendError::Tls(host.clone(), e))?;

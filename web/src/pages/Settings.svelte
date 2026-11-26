@@ -21,6 +21,10 @@
   let tokenDays = $state<number | null>(null);
   let revokeTokens = $state(true);
   let shownToken = $state('');
+  interface ClientCert { id: number; host: string; subject: string; not_after_ms: number }
+  let certs = $state<ClientCert[]>([]);
+  let cc = $state({ host: '', password: '' });
+  let ccFile = $state<File | null>(null);
   let note = $state('');
   let error = $state('');
   let pw = $state({ current: '', next: '' });
@@ -41,6 +45,7 @@
   async function load() {
     const me = session.me?.user.id;
     [proxy, ca, tokens, sessions] = await Promise.all([api.get<ProxyInfo>('/proxy'), api.get<CaInfo>('/ca'), api.get<ApiToken[]>('/tokens'), api.get<SessionInfo[]>(`/users/${me}/sessions`)]);
+    certs = (await api.get<{ certs: ClientCert[] }>('/client-certs')).certs;
     totpRequired = (await api.get<{ required: boolean }>('/auth/totp')).required;
     if (session.can('admin')) [users, audit] = await Promise.all([api.get<User[]>('/users'), api.get<AuditEntry[]>('/audit')]);
   }
@@ -55,6 +60,24 @@
       tokenDays = null;
       tokens = await api.get<ApiToken[]>('/tokens');
     });
+  const addCert = () =>
+    run(async () => {
+      if (!ccFile) throw new Error('Choose a certificate file.');
+      const bytes = new Uint8Array(await ccFile.arrayBuffer());
+      const text = new TextDecoder().decode(bytes);
+      const body: Record<string, string> = { host: cc.host, password: cc.password };
+      if (text.includes('-----BEGIN ')) body.pem = text;
+      else {
+        let bin = '';
+        for (const b of bytes) bin += String.fromCharCode(b);
+        body.pkcs12_base64 = btoa(bin);
+      }
+      await api.post('/client-certs', body);
+      cc = { host: '', password: '' };
+      ccFile = null;
+      await load();
+    }, 'Client certificate added.');
+  const deleteCert = (id: number) => run(async () => { await api.del(`/client-certs/${id}`); await load(); });
   const deleteToken = (id: number) => run(async () => { await api.del(`/tokens/${id}`); tokens = await api.get<ApiToken[]>('/tokens'); });
   const changePw = () =>
     run(async () => {
@@ -114,6 +137,24 @@
       {/if}
       <p><a href="/api/v1/ca/cert.pem" download>Download CA certificate (PEM)</a> or browse to <code>http://bosun/</code> through the proxy.</p>
       <p class="small muted">This CA is unique to this install. Install it only in a separate browser profile, never system-wide; anyone with the data key could impersonate any site to a device that trusts it.</p>
+    {/if}
+  </section>
+
+  <section>
+    <h2>Client certificates</h2>
+    <p class="small muted">For targets that require mutual TLS. Presented to hosts matching the pattern, by the proxy and every tool. The key is stored sealed and never shown again.</p>
+    <table class="grid"><tbody>
+      {#each certs as c (c.id)}
+        <tr><td>{c.host}</td><td class="small muted">{c.subject}</td><td class="small muted">expires {new Date(c.not_after_ms).toLocaleDateString()}</td>{#if session.can('admin')}<td><button onclick={() => deleteCert(c.id)}>Remove</button></td>{/if}</tr>
+      {/each}
+    </tbody></table>
+    {#if session.can('admin')}
+      <form class="row" onsubmit={(e) => { e.preventDefault(); addCert(); }}>
+        <input placeholder="host, or *.example.com" aria-label="Client certificate host" bind:value={cc.host} required maxlength="253" />
+        <input type="file" aria-label="Client certificate file (PEM or PKCS#12)" accept=".pem,.crt,.p12,.pfx" onchange={(e) => { ccFile = e.currentTarget.files?.[0] ?? null; }} />
+        <input type="password" placeholder="PKCS#12 password" aria-label="PKCS#12 password" autocomplete="off" bind:value={cc.password} />
+        <button>Add certificate</button>
+      </form>
     {/if}
   </section>
 

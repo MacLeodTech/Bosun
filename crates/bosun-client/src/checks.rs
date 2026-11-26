@@ -21,6 +21,21 @@ pub(crate) struct CustomCheckList {
     pub checks: Vec<CustomCheck>,
 }
 
+/// A client certificate as listed: never the key.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientCert {
+    pub id: i64,
+    pub host: String,
+    pub subject: String,
+    pub not_after_ms: i64,
+    pub created_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ClientCertList {
+    pub certs: Vec<ClientCert>,
+}
+
 /// The outcome of `Client::validate_check`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckValidation {

@@ -364,6 +364,41 @@ export interface paths {
         patch: operations["set_check_enabled"];
         trace?: never;
     };
+    "/client-certs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The project's client certificates for mutual-TLS targets: host pattern, subject and expiry. Private keys are never returned. Needs the viewer role or above. */
+        get: operations["list_client_certs"];
+        put?: never;
+        /** @description Add a client certificate (PEM with certificate and key, or PKCS#12 in base64 with its password) for a host pattern; the proxy and every tool present it to that host. The key is sealed with the data key. Needs the admin role; audited as `clientcert.add`. */
+        post: operations["add_client_cert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/client-certs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Remove a client certificate. Needs the admin role; audited as `clientcert.remove`. */
+        delete: operations["delete_client_cert"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/comparer/diff": {
         parameters: {
             query?: never;
@@ -1937,6 +1972,31 @@ export interface components {
             /** Format: int64 */
             updated_ms: number;
             yaml: string;
+        };
+        ClientCertBody: {
+            /** @description Host pattern: `api.example.com`, or `*.example.com` for every name under it. */
+            host: string;
+            /** @description The PKCS#12 password (may be empty). */
+            password?: string | null;
+            /** @description A PEM file holding the certificate (and any chain) and the private key. */
+            pem?: string | null;
+            /** @description A PKCS#12 file, base64. */
+            pkcs12_base64?: string | null;
+        };
+        ClientCertList: {
+            certs: components["schemas"]["ClientCertMeta"][];
+        };
+        /** @description What a list shows: no key material. */
+        ClientCertMeta: {
+            /** Format: int64 */
+            created_ms: number;
+            /** @description Host pattern: `api.example.com` or `*.example.com`. */
+            host: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            not_after_ms: number;
+            subject: string;
         };
         /** @enum {string} */
         Confidence: "tentative" | "firm" | "certain";
@@ -4794,6 +4854,152 @@ export interface operations {
                 };
             };
             /** @description No such check */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_client_certs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientCertList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    add_client_cert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientCertBody"];
+            };
+        };
+        responses: {
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientCertMeta"];
+                };
+            };
+            /** @description Not a usable certificate or host; the message says what is wrong */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The host already has a certificate, or the project holds the most */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_client_cert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Row id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such certificate */
             404: {
                 headers: {
                     [name: string]: unknown;

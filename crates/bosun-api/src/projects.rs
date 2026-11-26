@@ -831,7 +831,15 @@ async fn switch_to(st: &AppState, caller: &Caller, target: Option<&str>) -> Resu
     // Attacks belong to the project they started in.
     st.inner.intruder.stop_all();
     let (proxy, p) = (st.inner.proxy.clone(), new.clone());
-    blocking(move || proxy.switch_project(p)).await?;
+    let key = st.inner.data_key.clone();
+    blocking(move || {
+        proxy.switch_project(p);
+        // A project carries its own client certificates; a failure leaves the proxy presenting none.
+        if let Err(e) = crate::clientcerts::reload(&proxy, &key) {
+            tracing::warn!(error = %e, "loading the project's client certificates failed");
+        }
+    })
+    .await?;
     st.inner.gate.set_scope(loaded.scope);
     // Sending out of scope from the Repeater is a choice made for the work in front of you, not one a project carries.
     st.inner

@@ -28,7 +28,10 @@ fn purpose(host: &str) -> String {
 
 fn internal<E: std::fmt::Display>(e: E) -> Response {
     tracing::error!(error = %e, "a client certificate task failed");
-    reject(StatusCode::INTERNAL_SERVER_ERROR, "internal error (see the server log)")
+    reject(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal error (see the server log)",
+    )
 }
 
 fn store_err(e: StoreError) -> Response {
@@ -111,7 +114,11 @@ pub async fn add(State(st): State<AppState>, caller: Caller, Json(b): Json<Clien
         .await?
         .map_err(|e| bad(&e))?;
     let (subject, not_after) = describe(&id).map_err(|e| bad(&e))?;
-    let sealed = st.inner.data_key.seal(&purpose(&host), &id.key).map_err(internal)?;
+    let sealed = st
+        .inner
+        .data_key
+        .seal(&purpose(&host), &id.key)
+        .map_err(internal)?;
     let (p, h, s) = (st.project(), host.clone(), subject.clone());
     let chain = id.chain;
     let row = blocking(move || {
@@ -128,7 +135,11 @@ pub async fn add(State(st): State<AppState>, caller: Caller, Json(b): Json<Clien
     .map_err(store_err)?;
     refresh(&st).await?;
     caller
-        .audit(&st, "clientcert.add", &format!("client certificate for `{host}` ({subject})"))
+        .audit(
+            &st,
+            "clientcert.add",
+            &format!("client certificate for `{host}` ({subject})"),
+        )
         .await;
     Ok((StatusCode::CREATED, Json(row)).into_response())
 }
@@ -142,16 +153,18 @@ pub async fn delete(State(st): State<AppState>, caller: Caller, Path(id): Path<i
         .ok_or_else(|| reject(StatusCode::NOT_FOUND, "no such client certificate"))?;
     refresh(&st).await?;
     caller
-        .audit(&st, "clientcert.remove", &format!("client certificate for `{host}`"))
+        .audit(
+            &st,
+            "clientcert.remove",
+            &format!("client certificate for `{host}`"),
+        )
         .await;
     Ok(empty(StatusCode::NO_CONTENT))
 }
 
 async fn refresh(st: &AppState) -> Result<(), Response> {
     let (proxy, key) = (st.inner.proxy.clone(), st.inner.data_key.clone());
-    blocking(move || reload(&proxy, &key))
-        .await?
-        .map_err(internal)?;
+    blocking(move || reload(&proxy, &key)).await?.map_err(internal)?;
     // Pooled connections were made without (or with the old) certificate.
     st.inner.repeater.close_idle();
     Ok(())

@@ -10,7 +10,8 @@
 //!   outside the scope is never contacted (it is listed in [`Report::refused`]), the kill switch ends the scan, and
 //!   the gate's per-host rate limit applies on top of the scan's own delay;
 //! - the number of requests is capped by [`Options::max_requests`];
-//! - checks only read answers; the built-in ones send nothing destructive (a quote, a marker).
+//! - checks only read answers; the built-in ones send nothing destructive (a quote, a marker, a sleep, an
+//!   arithmetic expression). The ones that save data in the application ([`DESTRUCTIVE`]) are off unless named.
 //!
 //! The checks here are Rust checks ([`CHECKS`]). Active checks written in the check language arrive with the next
 //! package.
@@ -41,7 +42,54 @@ pub const CHECKS: &[(&str, &str)] = &[
         checks::XSS_REFLECTED,
         "Reflected cross-site scripting: a marker with HTML metacharacters comes back unescaped in an HTML page",
     ),
+    (
+        checks::SQLI_BOOLEAN,
+        "SQL injection, boolean blind: an always-true condition leaves the page as it was and an always-false one changes it, every time",
+    ),
+    (
+        checks::SQLI_TIME,
+        "SQL injection, time based: a sleep in the injected condition delays the answer, a sleep of zero does not",
+    ),
+    (
+        checks::XSS_STORED,
+        "Stored cross-site scripting (destructive: saves a marker in the application): a marker sent in one request comes back unescaped when the page is read again without it",
+    ),
+    (
+        checks::SSTI,
+        "Server-side template injection: an arithmetic expression in template syntax is evaluated and its result comes back",
+    ),
+    (
+        checks::CMD_INJECTION,
+        "OS command injection: an injected command's output (a computed number) comes back, or an injected sleep delays the answer",
+    ),
+    (
+        checks::PATH_TRAVERSAL,
+        "Path traversal and local file inclusion: dot-dot sequences make the application return a well-known system file",
+    ),
+    (
+        checks::OPEN_REDIRECT,
+        "Open redirect: a value naming another host is returned as the target of a redirect",
+    ),
+    (
+        checks::CRLF_INJECTION,
+        "CRLF and header injection: a line break in a value starts a new response header",
+    ),
+    (
+        checks::CORS,
+        "CORS misconfiguration: an arbitrary or null Origin is allowed together with credentials",
+    ),
+    (
+        checks::HOST_HEADER,
+        "Host header attack: a Host or X-Forwarded-Host of the scanner's choosing comes back in links or redirects",
+    ),
 ];
+
+/// Checks that change state in the application (they save data), off unless named in [`Options::checks`].
+pub const DESTRUCTIVE: &[&str] = &[checks::XSS_STORED];
+
+pub fn is_destructive(id: &str) -> bool {
+    DESTRUCTIVE.contains(&id)
+}
 
 const RATE_WAIT: Duration = Duration::from_secs(60);
 
@@ -68,7 +116,7 @@ pub enum Strength {
 
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// Ids from [`CHECKS`]; empty runs all of them.
+    /// Ids from [`CHECKS`]; empty runs all of them except the [`DESTRUCTIVE`] ones, which run only when named.
     pub checks: Vec<String>,
     pub strength: Strength,
     /// Units of work in flight at once (1 to 32).
@@ -122,7 +170,11 @@ impl Options {
     }
 
     fn enabled(&self, id: &str) -> bool {
-        self.checks.is_empty() || self.checks.iter().any(|c| c == id)
+        if self.checks.is_empty() {
+            !is_destructive(id)
+        } else {
+            self.checks.iter().any(|c| c == id)
+        }
     }
 }
 
@@ -253,6 +305,9 @@ pub(crate) struct Shared {
 /// A response, parsed far enough for checks.
 pub(crate) struct Answer {
     pub status: u16,
+    /// Header names lowercased, values as text.
+    pub headers: Vec<(String, String)>,
+    pub elapsed: Duration,
     pub content_type: String,
     pub body: String,
     pub flow_id: i64,
@@ -310,6 +365,7 @@ impl Shared {
             if self.opts.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.opts.delay_ms)).await;
             }
+            let sent_at = Instant::now();
             match self.engine.send(&target, &raw, &send).await {
                 Ok(ex) => {
                     let flow_id = self.sink.exchange(&ex);
@@ -324,6 +380,12 @@ impl Shared {
                     };
                     return Some(Answer {
                         status: ex.status.unwrap_or(0),
+                        headers: r
+                            .headers
+                            .iter()
+                            .map(|(k, v)| (k.to_ascii_lowercase(), String::from_utf8_lossy(v).into_owned()))
+                            .collect(),
+                        elapsed: sent_at.elapsed(),
                         content_type: r
                             .header("content-type")
                             .map_or(String::new(), |v| String::from_utf8_lossy(v).to_ascii_lowercase()),
@@ -376,6 +438,7 @@ pub async fn scan(
         for p in req.points(opts.strength) {
             units.push((req.clone(), p));
         }
+        units.push((req.clone(), Point::Whole));
     }
     let total = units.len();
     let shared = Arc::new(Shared {

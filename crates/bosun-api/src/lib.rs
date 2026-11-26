@@ -9,8 +9,8 @@
 pub mod auth;
 pub mod browser;
 pub mod checks;
-pub mod clientcerts;
 pub mod child;
+pub mod clientcerts;
 pub mod codec;
 pub mod crawl;
 pub mod engage;

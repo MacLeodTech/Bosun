@@ -33,7 +33,8 @@ async fn mtls_server() -> Pki {
     let ca = p.self_signed(&ca_key).unwrap();
     let client_key = KeyPair::generate().unwrap();
     let mut cp = CertificateParams::new(vec![]).unwrap();
-    cp.distinguished_name.push(DnType::CommonName, "bosun test client");
+    cp.distinguished_name
+        .push(DnType::CommonName, "bosun test client");
     let client = cp.signed_by(&client_key, &rcgen::Issuer::new(p, ca_key)).unwrap();
     let server = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
 
@@ -90,7 +91,14 @@ async fn a_client_certificate_is_sealed_listed_without_its_key_and_presented_by_
     let pki = mtls_server().await;
     let put = |p: &'static str, b: Value| {
         let (c, csrf, url) = (c.clone(), csrf.clone(), s.url(p));
-        async move { c.put(url).header("x-csrf-token", csrf).json(&b).send().await.unwrap() }
+        async move {
+            c.put(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+        }
     };
     let r = put(
         "/scope",
@@ -127,14 +135,29 @@ async fn a_client_certificate_is_sealed_listed_without_its_key_and_presented_by_
     // Bad input is a 400; a certificate whose key does not belong to it too.
     let add = |b: Value| {
         let (c, csrf, url) = (c.clone(), csrf.clone(), s.url("/client-certs"));
-        async move { c.post(url).header("x-csrf-token", csrf).json(&b).send().await.unwrap() }
+        async move {
+            c.post(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+        }
     };
     assert_eq!(add(json!({ "host": "bad host", "pem": "x" })).await.status(), 400);
     assert_eq!(add(json!({ "host": "127.0.0.1" })).await.status(), 400);
-    assert_eq!(add(json!({ "host": "127.0.0.1", "pem": "junk" })).await.status(), 400);
+    assert_eq!(
+        add(json!({ "host": "127.0.0.1", "pem": "junk" })).await.status(),
+        400
+    );
     let other = KeyPair::generate().unwrap().serialize_pem();
     let mismatched = format!("{}{other}", pki.client_pem);
-    assert_eq!(add(json!({ "host": "127.0.0.1", "pem": mismatched })).await.status(), 400);
+    assert_eq!(
+        add(json!({ "host": "127.0.0.1", "pem": mismatched }))
+            .await
+            .status(),
+        400
+    );
 
     // A certificate for another host is not presented here.
     let pem = format!("{}{}", pki.client_pem, pki.key_pem);
@@ -148,12 +171,25 @@ async fn a_client_certificate_is_sealed_listed_without_its_key_and_presented_by_
     assert_eq!(r.status(), StatusCode::CREATED);
     let created: Value = r.json().await.unwrap();
     assert!(created["subject"].as_str().unwrap().contains("bosun test client"));
-    assert_eq!(add(json!({ "host": "127.0.0.1", "pem": pem })).await.status(), 409);
+    assert_eq!(
+        add(json!({ "host": "127.0.0.1", "pem": pem })).await.status(),
+        409
+    );
     assert_eq!(send().await["status"], 200);
 
     // The list has metadata and no key material, and the stored key is sealed.
-    let text = c.get(s.url("/client-certs")).send().await.unwrap().text().await.unwrap();
-    assert!(!text.contains("PRIVATE") && !text.contains("sealed") && text.contains("127.0.0.1"), "{text}");
+    let text = c
+        .get(s.url("/client-certs"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !text.contains("PRIVATE") && !text.contains("sealed") && text.contains("127.0.0.1"),
+        "{text}"
+    );
     let key_der = KeyPair::from_pem(&pki.key_pem).unwrap().serialize_der();
     let rows = s.project.client_cert_rows().unwrap();
     assert!(
@@ -167,14 +203,25 @@ async fn a_client_certificate_is_sealed_listed_without_its_key_and_presented_by_
         .danger_accept_invalid_certs(true)
         .build()
         .unwrap();
-    let r = via.get(format!("https://127.0.0.1:{}/", pki.port)).send().await.unwrap();
+    let r = via
+        .get(format!("https://127.0.0.1:{}/", pki.port))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.text().await.unwrap(), "mtls-ok");
 
     // Removing it stops it; removing one that is gone is a 404.
     let id = created["id"].as_i64().unwrap();
     let del = |id: i64| {
         let (c, csrf, url) = (c.clone(), csrf.clone(), s.url(&format!("/client-certs/{id}")));
-        async move { c.delete(url).header("x-csrf-token", csrf).send().await.unwrap().status() }
+        async move {
+            c.delete(url)
+                .header("x-csrf-token", csrf)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }
     };
     assert_eq!(del(id).await, StatusCode::NO_CONTENT);
     assert_eq!(del(id).await, StatusCode::NOT_FOUND);
@@ -183,5 +230,8 @@ async fn a_client_certificate_is_sealed_listed_without_its_key_and_presented_by_
 
     let audit: Value = c.get(s.url("/audit")).send().await.unwrap().json().await.unwrap();
     let a = audit.to_string();
-    assert!(a.contains("clientcert.add") && a.contains("clientcert.remove"), "{a}");
+    assert!(
+        a.contains("clientcert.add") && a.contains("clientcert.remove"),
+        "{a}"
+    );
 }

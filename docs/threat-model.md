@@ -482,9 +482,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
   targets, 40 insertion points per target, a concurrency of 1 to 32, a request cap (default 5,000, at most 200,000)
   and a response cap; the API runs at most 2 scans at once and keeps the last 8 in memory. Pause holds every
   request that has not started. Targets, cookie values and headers are checked for line breaks, so a target cannot
-  smuggle a header; probe values are percent-encoded in the query, form and path. The built-in checks are
-  non-destructive and prove a finding from the answer (a database error that a doubled quote does not repeat; the
-  marker returned unescaped in an HTML page). Findings become issues with the proving flow attached; the target's
+  smuggle a header; probe values are percent-encoded in the query, form and path. The built-in checks prove a finding from the answer (a database error that a doubled quote does not repeat; the
+  marker returned unescaped in an HTML page; a computed number, a delay that a sleep of zero does not cause, a
+  system file, a header only the probe could have named, an origin or host of the scanner's own choosing coming
+  back). Probes are a quote, a marker, template and shell arithmetic, short sleeps (2 seconds, at most a few
+  per insertion point), dot-dot paths, and `Origin`, `Host` and `X-Forwarded-Host` headers; none runs a command of
+  the scanner's choosing, and the hosts it plants end in `.invalid`. Redirects are read, never followed. A line break
+  is sent only in query, form and path values, never in a cookie or request header. The check that saves data in
+  the target (stored XSS, flagged `destructive` in `/scan/checks`) is off unless a scan names it in `checks`. Findings become issues with the proving flow attached; the target's
   answers are target content and appear only as text. The target parser (URL, query, form, JSON) has a fuzz
   target (`active_targets`). The testbed (`bosun-testbed`) is intentionally vulnerable: it listens on loopback
   only by default, holds no data and is a test dependency, never part of the shipped binary.

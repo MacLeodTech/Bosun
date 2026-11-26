@@ -18,6 +18,9 @@ pub enum Point {
     Header(String),
     /// The last path segment.
     Path,
+    /// The request as a whole: carries the checks that need no value changed (CORS, Host header). Never returned
+    /// by [`Req::points`]; the scan adds one per target.
+    Whole,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +254,7 @@ impl Req {
                 .find(|(k, _)| k.eq_ignore_ascii_case(h))
                 .map(|x| x.1.clone()),
             Point::Path => self.path.rsplit('/').next().map(dec),
+            Point::Whole => None,
         }
         .unwrap_or_default()
     }
@@ -273,6 +277,7 @@ impl Req {
             Point::Cookie(i) => format!("cookie:{}", self.cookies.get(*i).map_or("", |x| &x.0)),
             Point::Header(h) => format!("header:{h}"),
             Point::Path => "path:last-segment".into(),
+            Point::Whole => "request".into(),
         }
     }
 
@@ -322,6 +327,7 @@ impl Req {
                         path = format!("{head}/{}", enc(v));
                     }
                 }
+                Point::Whole => {}
             }
         }
         let body_bytes: Vec<u8> = match &body {
@@ -356,5 +362,48 @@ impl Req {
         let mut b = out.into_bytes();
         b.extend_from_slice(&body_bytes);
         b
+    }
+
+    /// This request as a plain `GET` of the same path without query or body (or of `path` when given): how the
+    /// stored-XSS check reads a page back without sending the payload again.
+    pub fn page(&self, path: Option<&str>) -> Req {
+        let mut r = self.clone();
+        r.method = "GET".into();
+        r.body = Body::None;
+        r.query = None;
+        r.headers
+            .retain(|(k, _)| !k.eq_ignore_ascii_case("content-type") && !k.eq_ignore_ascii_case("origin"));
+        if let Some(p) = path {
+            r.path = p.to_string();
+        }
+        r
+    }
+
+    /// The request unchanged, but with `host` as the `Host` header (the connection still goes to the target's own
+    /// address) and `extra` headers added right after it.
+    pub fn bytes_with(&self, host: Option<&str>, extra: &[(&str, &str)]) -> Vec<u8> {
+        let b = self.bytes(None);
+        let text_end = b
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map_or(b.len(), |p| p + 2);
+        let head = String::from_utf8_lossy(&b[..text_end]).into_owned();
+        let mut out = String::new();
+        for (i, line) in head.split("\r\n").filter(|l| !l.is_empty()).enumerate() {
+            if i == 1 {
+                out.push_str(&format!("Host: {}\r\n", host.unwrap_or(&self.authority)));
+                for (k, v) in extra {
+                    if clean_header(k, v) {
+                        out.push_str(&format!("{k}: {v}\r\n"));
+                    }
+                }
+            } else {
+                out.push_str(line);
+                out.push_str("\r\n");
+            }
+        }
+        let mut res = out.into_bytes();
+        res.extend_from_slice(&b[text_end..]);
+        res
     }
 }

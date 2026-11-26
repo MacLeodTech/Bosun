@@ -105,13 +105,15 @@ async fn a_scan_of_the_testbed_pauses_resumes_finds_issues_and_is_audited() {
     assert_eq!(st["changed"], false);
     let (code, _) = post(&s, &c, &csrf, "/scan/scans/999/stop", json!({})).await;
     assert_eq!(code, StatusCode::NOT_FOUND);
-    assert!(
-        get(&s, &c, "/scan/checks").await["checks"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 2
-    );
+    let checks = get(&s, &c, "/scan/checks").await;
+    let checks = checks["checks"].as_array().unwrap();
+    assert!(checks.len() >= 12);
+    let destructive: Vec<&str> = checks
+        .iter()
+        .filter(|c| c["destructive"] == true)
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(destructive, ["active-xss-stored"]);
 }
 
 #[tokio::test]

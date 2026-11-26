@@ -1292,7 +1292,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description The active checks the scanner has: id and what each looks for. */
+        /** @description The active checks the scanner has: id, what each looks for, and whether it is destructive (saves data in the target, so it runs only when named in the scan's checks). */
         get: operations["scan_checks"];
         put?: never;
         post?: never;
@@ -3077,6 +3077,8 @@ export interface components {
         };
         ScanCheck: {
             description: string;
+            /** @description Saves data in the target application: off unless named in `checks`. */
+            destructive: boolean;
             id: string;
         };
         ScanChecks: {
@@ -3127,7 +3129,7 @@ export interface components {
             scans: components["schemas"]["ScanInfo"][];
         };
         ScanStartBody: {
-            /** @description Check ids (see the check list in the description); empty runs all. */
+            /** @description Check ids (see scan_checks); empty runs every check that is not destructive, and a destructive one (it saves data in the target) runs only when named. */
             checks?: string[];
             /**
              * Format: int32

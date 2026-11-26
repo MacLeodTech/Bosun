@@ -121,7 +121,7 @@ pub struct ScanTarget {
 pub struct ScanStartBody {
     /// The requests to test (1 to 2000).
     pub targets: Vec<ScanTarget>,
-    /// Check ids (see the check list in the description); empty runs all.
+    /// Check ids (see scan_checks); empty runs every check that is not destructive, and a destructive one (it saves data in the target) runs only when named.
     #[serde(default)]
     pub checks: Vec<String>,
     /// `low`, `medium` (default) or `high`: more insertion points and probes.
@@ -249,6 +249,8 @@ pub struct ScanDetail {
 pub struct ScanCheck {
     pub id: String,
     pub description: String,
+    /// Saves data in the target application: off unless named in `checks`.
+    pub destructive: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -466,6 +468,7 @@ pub async fn checks(caller: Caller) -> R {
             .map(|(id, d)| ScanCheck {
                 id: (*id).into(),
                 description: (*d).into(),
+                destructive: bosun_active::is_destructive(id),
             })
             .collect(),
     })

@@ -16,8 +16,8 @@ use bosun_proxy::intercept::{Decision, InterceptItem, InterceptSettings, Interce
 use bosun_proxy::{ProxyEvent, ProxyStats};
 use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
 
-use crate::clientcerts::{ClientCertBody, ClientCertList};
 use crate::checks::{CheckBody, CheckEnabled, CheckList, CheckValidation, CheckView};
+use crate::clientcerts::{ClientCertBody, ClientCertList};
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
 use crate::crawl::{CrawlDetail, CrawlInfo, CrawlList, CrawlStartBody, CrawlStopReply};
 use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
@@ -554,7 +554,7 @@ fn crawl_stop() {}
 fn scan_start() {}
 #[utoipa::path(get, path = "/scan/scans", operation_id = "scan_list", tag = "scan", description = "The scans of this run of the server, newest first, with live progress (units finished of planned, requests, findings).", responses((status = 200, description = "OK", body = ScanList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
 fn scan_list() {}
-#[utoipa::path(get, path = "/scan/checks", operation_id = "scan_checks", tag = "scan", description = "The active checks the scanner has: id and what each looks for.", responses((status = 200, description = "OK", body = ScanChecks), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+#[utoipa::path(get, path = "/scan/checks", operation_id = "scan_checks", tag = "scan", description = "The active checks the scanner has: id, what each looks for, and whether it is destructive (saves data in the target, so it runs only when named in the scan's checks).", responses((status = 200, description = "OK", body = ScanChecks), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
 fn scan_checks() {}
 #[utoipa::path(get, path = "/scan/scans/{id}", operation_id = "scan_get", tag = "scan", description = "One scan: its state, progress, the findings so far and, once it has ended, the refused targets.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanDetail), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
 fn scan_get() {}

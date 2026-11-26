@@ -82,7 +82,10 @@ fn flow_bytes(f: &NewFlow) -> usize {
 impl Recorder {
     pub fn start(project: Arc<Project>, events: EventSender, budget: MemoryBudget) -> Self {
         let p = project.clone();
-        let scanner = Arc::new(bosun_scan::Scanner::start(&project));
+        let bus = events.clone();
+        let scanner = Arc::new(bosun_scan::Scanner::start_notify(&project, move || {
+            bus.send(crate::events::ProxyEvent::IssuesChanged);
+        }));
         let mut r = Self::spawn(
             QUEUE,
             budget,

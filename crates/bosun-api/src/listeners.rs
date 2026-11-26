@@ -39,6 +39,8 @@ struct StoredSpec {
     tls_passthrough: Vec<String>,
     auth: Option<(String, String)>,
     allow_clients: Vec<ipnet::IpNet>,
+    #[serde(default)]
+    max_connections: Option<usize>,
 }
 
 impl From<&ListenerSpec> for StoredSpec {
@@ -49,6 +51,7 @@ impl From<&ListenerSpec> for StoredSpec {
             tls_passthrough: s.tls_passthrough.clone(),
             auth: s.auth.as_ref().map(|a| (a.username.clone(), a.password.clone())),
             allow_clients: s.allow_clients.clone(),
+            max_connections: s.max_connections,
         }
     }
 }
@@ -65,18 +68,20 @@ impl From<StoredSpec> for ListenerSpec {
                 password_file: None,
             }),
             allow_clients: s.allow_clients,
+            max_connections: s.max_connections,
         }
     }
 }
 
 fn describe(s: &ListenerSpec) -> String {
     format!(
-        "{} invisible={} passthrough={} auth={} allow_clients={}",
+        "{} invisible={} passthrough={} auth={} allow_clients={} max_connections={}",
         s.addr,
         s.invisible,
         s.tls_passthrough.len(),
         s.auth.as_ref().map_or("none", |a| a.username.as_str()),
-        s.allow_clients.len()
+        s.allow_clients.len(),
+        s.max_connections.map_or("none".to_string(), |n| n.to_string())
     )
 }
 

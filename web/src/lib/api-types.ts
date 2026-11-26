@@ -2295,6 +2295,11 @@ export interface components {
             auth?: components["schemas"]["ProxyAuth"] | null;
             /** @description Accept origin-form requests (`GET /path` with a Host header) as if they were proxied. */
             invisible?: boolean;
+            /**
+             * @description At most this many connections open on this listener at once; more are closed at accept (existing ones keep
+             *     running). Unset: only the proxy-wide connection limit applies.
+             */
+            max_connections?: number | null;
             /** @description Hosts whose TLS this listener tunnels untouched (scope host pattern syntax). */
             tls_passthrough?: string[];
         };
@@ -2675,6 +2680,9 @@ export interface components {
             temporary: boolean;
             /** @enum {string} */
             type: "project_switched";
+        } | {
+            /** @enum {string} */
+            type: "issues_changed";
         } | {
             /** Format: int64 */
             attack_id: number;

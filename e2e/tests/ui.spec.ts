@@ -1359,6 +1359,8 @@ test('issues: the passive scanner reports what recorded traffic shows, with evid
   await panel().getByRole('button', { name: /Show issue: Private key/ }).click();
   await panel().getByRole('button', { name: 'Open request' }).click();
   await expect(page.getByText('BEGIN RSA PRIVATE KEY').first()).toBeVisible();
+  // The flow viewer marks the evidence as plain text.
+  await expect(page.locator('span.ev').first()).toHaveText('-----BEGIN RSA PRIVATE KEY-----');
 });
 
 test('checks: a custom check is validated, saved, and after a rescan reports on recorded traffic', async () => {

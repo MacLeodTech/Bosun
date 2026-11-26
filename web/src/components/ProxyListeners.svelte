@@ -10,6 +10,7 @@
     invisible: boolean;
     tls_passthrough: string[];
     allow_clients: string[];
+    max_connections?: number | null;
     auth_required: boolean;
     auth?: { username: string } | null;
     accepted: number;
@@ -32,7 +33,7 @@
   let note = $state('');
   const admin = $derived(session.can('admin'));
 
-  let form = $state({ addr: '127.0.0.1:8081', invisible: false, passthrough: '', allow: '', user: '', password: '' });
+  let form = $state({ addr: '127.0.0.1:8081', invisible: false, passthrough: '', allow: '', cap: '', user: '', password: '' });
 
   const lines = (s: string) => s.split(/[\s,]+/).filter(Boolean);
 
@@ -55,18 +56,19 @@
     }
   }
 
-  const spec = (l: Pick<Listener, 'addr' | 'invisible' | 'tls_passthrough' | 'allow_clients'>, user = '', password = '') => ({
+  const spec = (l: Pick<Listener, 'addr' | 'invisible' | 'tls_passthrough' | 'allow_clients' | 'max_connections'>, user = '', password = '') => ({
     addr: l.addr,
     invisible: l.invisible,
     tls_passthrough: l.tls_passthrough,
     allow_clients: l.allow_clients,
+    max_connections: l.max_connections ?? null,
     auth: user ? { username: user, password } : null,
   });
 
   const add = () =>
     run(async () => {
-      await api.post('/proxy/listeners', spec({ addr: form.addr, invisible: form.invisible, tls_passthrough: lines(form.passthrough), allow_clients: lines(form.allow) }, form.user, form.password));
-      form = { ...form, passthrough: '', allow: '', user: '', password: '', invisible: false };
+      await api.post('/proxy/listeners', spec({ addr: form.addr, invisible: form.invisible, tls_passthrough: lines(form.passthrough), allow_clients: lines(form.allow), max_connections: form.cap ? Number(form.cap) : null }, form.user, form.password));
+      form = { ...form, passthrough: '', allow: '', cap: '', user: '', password: '', invisible: false };
     }, 'Listener started.');
   const toggleInvisible = (l: Listener) =>
     run(() => api.put(`/proxy/listeners/${l.id}`, spec({ ...l, invisible: !l.invisible }, l.auth_required ? (l.auth?.username ?? '') : '', '')), 'Listener changed.');
@@ -84,7 +86,7 @@
     {#each listeners as l (l.id)}
       <tr data-testid="listener-row">
         <td><code>{l.addr}</code>{l.primary ? ' (configured)' : ''}</td>
-        <td class="small muted">{l.auth_required ? 'auth' : 'no auth'}{l.invisible ? ', invisible' : ''}{l.tls_passthrough.length ? `, ${l.tls_passthrough.length} pass-through` : ''}{l.allow_clients.length ? `, only ${l.allow_clients.join(' ')}` : ''}</td>
+        <td class="small muted">{l.auth_required ? 'auth' : 'no auth'}{l.invisible ? ', invisible' : ''}{l.tls_passthrough.length ? `, ${l.tls_passthrough.length} pass-through` : ''}{l.allow_clients.length ? `, only ${l.allow_clients.join(' ')}` : ''}{l.max_connections ? `, max ${l.max_connections} connections` : ''}</td>
         <td class="small muted">{l.accepted} connections</td>
         <td>
           {#if admin}
@@ -100,6 +102,7 @@
       <input aria-label="Listener address" bind:value={form.addr} required />
       <input aria-label="Pass-through hosts" placeholder="pass-through hosts" bind:value={form.passthrough} />
       <input aria-label="Allowed client networks" placeholder="allowed networks (CIDR)" bind:value={form.allow} />
+      <input type="number" min="1" aria-label="Listener connection cap" placeholder="max connections" bind:value={form.cap} />
       <input aria-label="Proxy user name" placeholder="user" bind:value={form.user} />
       <input type="password" aria-label="Proxy password" placeholder="password (12+)" bind:value={form.password} autocomplete="new-password" />
       <label class="small"><input type="checkbox" bind:checked={form.invisible} /> invisible</label>

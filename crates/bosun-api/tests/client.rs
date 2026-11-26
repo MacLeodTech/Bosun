@@ -1234,6 +1234,14 @@ async fn proxy_listeners_and_live_settings_change_without_a_restart() {
         .unwrap();
     assert!(via(&addr, None).get(&target).send().await.is_err());
 
+    // A per-listener connection cap is stored, shown, and zero is refused.
+    c.update_listener(id, &json!({"addr": addr, "max_connections": 5}))
+        .await
+        .unwrap();
+    let shown = c.list_listeners().await.unwrap();
+    assert!(shown.iter().any(|l| l["max_connections"] == 5), "{shown:?}");
+    assert!(c.update_listener(id, &json!({"addr": addr, "max_connections": 0})).await.is_err());
+
     // Remove: the port stops answering.
     c.remove_listener(id).await.unwrap();
     assert_eq!(c.list_listeners().await.unwrap().len(), 1);

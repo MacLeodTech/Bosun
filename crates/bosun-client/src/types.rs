@@ -418,6 +418,8 @@ pub enum Event {
         name: Option<String>,
         temporary: bool,
     },
+    /// The passive scanner found something or caught up: fetch the issues again.
+    IssuesChanged,
     /// An Intruder attack started, moved on or ended.
     IntruderState {
         attack_id: i64,

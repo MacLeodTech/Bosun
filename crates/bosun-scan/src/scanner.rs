@@ -30,12 +30,18 @@ impl Scanner {
     /// Start reading `project`'s unread flows. The thread holds the project only while it works on a batch, so it
     /// never keeps a closed project open.
     pub fn start(project: &Arc<Project>) -> Self {
+        Self::start_notify(project, || {})
+    }
+
+    /// As [`Scanner::start`], and `changed` is called (on the scanner's thread, so keep it quick) after a batch
+    /// that found something, and once when the scanner runs dry after working, so a front end can look again.
+    pub fn start_notify(project: &Arc<Project>, changed: impl Fn() + Send + 'static) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let weak = Arc::downgrade(project);
         let s = stop.clone();
         let thread = thread::Builder::new()
             .name("bosun-scanner".into())
-            .spawn(move || run(&weak, &s))
+            .spawn(move || run(&weak, &s, &changed))
             .map_err(|e| tracing::error!(error = %e, "cannot start the passive scanner"))
             .ok();
         Self { stop, thread }
@@ -86,17 +92,25 @@ impl Custom {
     }
 }
 
-fn run(project: &Weak<Project>, stop: &AtomicBool) {
+fn run(project: &Weak<Project>, stop: &AtomicBool, changed: &dyn Fn()) {
     let mut custom = Custom::default();
+    let mut worked = false;
     while !stop.load(Ordering::Relaxed) {
         let Some(p) = project.upgrade() else { return };
         match step(&p, &mut custom) {
-            Ok(0) => {
+            Ok((0, _)) => {
                 drop(p);
+                if std::mem::take(&mut worked) {
+                    changed();
+                }
                 thread::park_timeout(IDLE);
             }
-            Ok(_) => {
+            Ok((_, found)) => {
                 drop(p);
+                worked = true;
+                if found {
+                    changed();
+                }
                 thread::sleep(BREATHER);
             }
             Err(e) => {
@@ -108,8 +122,8 @@ fn run(project: &Weak<Project>, stop: &AtomicBool) {
     }
 }
 
-/// Read one batch. Returns how many flows it covered.
-fn step(p: &Project, custom: &mut Custom) -> Result<usize, bosun_store::StoreError> {
+/// Read one batch. Returns how many flows it covered and whether any issue was found in them.
+fn step(p: &Project, custom: &mut Custom) -> Result<(usize, bool), bosun_store::StoreError> {
     let ids = p.scan_pending(BATCH)?;
     let now = now_ms();
     let custom = custom.get(p);
@@ -131,7 +145,7 @@ fn step(p: &Project, custom: &mut Custom) -> Result<usize, bosun_store::StoreErr
     if !ids.is_empty() {
         p.scan_commit(&ids, &found)?;
     }
-    Ok(ids.len())
+    Ok((ids.len(), !found.is_empty()))
 }
 
 #[cfg(test)]
@@ -230,6 +244,23 @@ mod tests {
                 .any(|i| i.status == bosun_store::IssueStatus::FalsePositive)
         );
         assert_eq!(p.scan_backlog().unwrap(), 0);
+    }
+
+    #[test]
+    fn the_scanner_says_when_it_found_something() {
+        let p = Arc::new(Project::open_in_memory().unwrap());
+        p.write_batch(&[flow(&p, "a.test", "/x")], &[]).unwrap();
+        let n = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n2 = n.clone();
+        let _s = Scanner::start_notify(&p, move || {
+            n2.fetch_add(1, Ordering::Relaxed);
+        });
+        wait_until_read(&p);
+        let t = Instant::now();
+        while n.load(Ordering::Relaxed) == 0 && t.elapsed() < Duration::from_secs(10) {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(n.load(Ordering::Relaxed) >= 1);
     }
 
     #[test]

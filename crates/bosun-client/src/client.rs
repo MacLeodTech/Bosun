@@ -397,6 +397,11 @@ impl Client {
             .await
     }
 
+    /// Open a WebSocket, send frames and listen. `body` is the `WsBody` of the API.
+    pub async fn repeater_ws(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/repeater/ws").json(body)).await
+    }
+
     /// Run a chain of decoders. `body` is the `DecodeBody` of the API: base64 `input` and a list of `ops`.
     pub async fn decoder_apply(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
         self.json(self.req(Method::POST, "/decoder/apply").json(body))

@@ -589,6 +589,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repeater/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Open a WebSocket with a raw handshake, send frames exactly as described (any opcode, reserved bits, FIN and mask), listen for a while, then close. The handshake is recorded as a flow with source repeater and the frames as its messages. Passes the scope gate. A refused or failed connection comes back as a reply with an error. Needs the tester role or above. */
+        post: operations["repeater_ws"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules": {
         parameters: {
             query?: never;
@@ -1445,6 +1462,53 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        WsBody: {
+            /** @description Frames to send, in order, once the server has answered `101`. */
+            frames?: components["schemas"]["WsFrameIn"][];
+            host: string;
+            /**
+             * Format: int32
+             * @description How long to keep listening after the last frame, in milliseconds (at most 10000).
+             */
+            listen_ms?: number;
+            /** Format: int32 */
+            port: number;
+            /** @description The handshake, a raw HTTP/1.1 upgrade request, base64. */
+            request: string;
+            scheme: components["schemas"]["Scheme"];
+            verify_tls?: boolean;
+        };
+        WsFrameIn: {
+            fin?: boolean;
+            /**
+             * @description `random` (the default), `none` (send unmasked, which a compliant client never does) or four bytes as eight
+             *     hex digits.
+             */
+            mask?: string | null;
+            /**
+             * Format: int32
+             * @description 0 continuation, 1 text, 2 binary, 8 close, 9 ping, 10 pong; anything from 0 to 15 is sent as given.
+             */
+            opcode: number;
+            /** @description The payload, base64. */
+            payload?: string;
+            /**
+             * Format: int32
+             * @description The three reserved bits as a number from 0 to 7.
+             */
+            rsv?: number;
+        };
+        WsFrameOut: {
+            direction: components["schemas"]["Direction"];
+            fin: boolean;
+            masked: boolean;
+            /** Format: int32 */
+            opcode: number;
+            /** @description The payload, unmasked, base64. */
+            payload: string;
+            /** Format: int32 */
+            rsv: number;
+        };
         /** @description A WebSocket message seen on an upgraded connection. */
         WsMessage: {
             direction: components["schemas"]["Direction"];
@@ -1459,6 +1523,27 @@ export interface components {
             /** Format: int64 */
             time_ms: number;
             truncated: boolean;
+        };
+        WsReply: {
+            /** @description The server sent a close frame. */
+            closed_by_server: boolean;
+            /** @description Why there is no open connection or why listening stopped early. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description The handshake as a recorded flow; the frames are its messages.
+             */
+            flow_id?: number | null;
+            /** @description Frames sent and received, in the order they happened (sent ones first, then what came back). */
+            frames: components["schemas"]["WsFrameOut"][];
+            in_scope?: boolean | null;
+            /** @description The scope gate or the kill switch stopped it; nothing was sent. */
+            refused: boolean;
+            /** @description The handshake request and the server's answer, base64. */
+            request: string;
+            response: string;
+            /** Format: int32 */
+            status?: number | null;
         };
         /** Format: int64 */
         i64: number;
@@ -3900,6 +3985,57 @@ export interface operations {
             };
             /** @description Too large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    repeater_ws: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WsBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WsReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

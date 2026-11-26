@@ -19,7 +19,7 @@ use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntr
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
 use crate::handlers::FlowOverview;
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
-use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc};
+use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
 use bosun_proxy::rules::RuleSpec as MatchRule;
 use bosun_scope::ScopeSpec;
 
@@ -323,6 +323,8 @@ fn get_repeater_settings() {}
 fn put_repeater_settings() {}
 #[utoipa::path(get, path = "/repeater/tabs", operation_id = "get_repeater_tabs", tag = "repeater", description = "The Repeater's tabs as saved in the open project (requests and options; responses are not stored).", responses((status = 200, description = "OK", body = TabsDoc), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
 fn get_repeater_tabs() {}
+#[utoipa::path(post, path = "/repeater/ws", operation_id = "repeater_ws", tag = "repeater", description = "Open a WebSocket with a raw handshake, send frames exactly as described (any opcode, reserved bits, FIN and mask), listen for a while, then close. The handshake is recorded as a flow with source repeater and the frames as its messages. Passes the scope gate. A refused or failed connection comes back as a reply with an error. Needs the tester role or above.", request_body = WsBody, responses((status = 200, description = "OK", body = WsReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn repeater_ws() {}
 #[utoipa::path(put, path = "/repeater/tabs", operation_id = "put_repeater_tabs", tag = "repeater", description = "Replace the Repeater's saved tabs (at most 100). Needs the tester role or above.", request_body = TabsDoc, responses((status = 200, description = "OK", body = TabsDoc), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Too large", body = Error)))]
 fn put_repeater_tabs() {}
 
@@ -330,7 +332,7 @@ fn put_repeater_tabs() {}
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
     components(schemas(ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
     tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
@@ -380,6 +382,7 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/repeater/send"),
     ("get", "/repeater/settings"),
     ("put", "/repeater/settings"),
+    ("post", "/repeater/ws"),
     ("get", "/repeater/tabs"),
     ("put", "/repeater/tabs"),
     ("get", "/ca"),

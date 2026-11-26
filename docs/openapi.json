@@ -2965,6 +2965,67 @@
         }
       }
     },
+    "/repeater/ws": {
+      "post": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Open a WebSocket with a raw handshake, send frames exactly as described (any opcode, reserved bits, FIN and mask), listen for a while, then close. The handshake is recorded as a flow with source repeater and the frames as its messages. Passes the scope gate. A refused or failed connection comes back as a reply with an error. Needs the tester role or above.",
+        "operationId": "repeater_ws",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WsReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rules": {
       "get": {
         "tags": [
@@ -6300,6 +6361,118 @@
           }
         }
       },
+      "WsBody": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "request"
+        ],
+        "properties": {
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WsFrameIn"
+            },
+            "description": "Frames to send, in order, once the server has answered `101`."
+          },
+          "host": {
+            "type": "string"
+          },
+          "listen_ms": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How long to keep listening after the last frame, in milliseconds (at most 10000).",
+            "minimum": 0
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request": {
+            "type": "string",
+            "description": "The handshake, a raw HTTP/1.1 upgrade request, base64."
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WsFrameIn": {
+        "type": "object",
+        "required": [
+          "opcode"
+        ],
+        "properties": {
+          "fin": {
+            "type": "boolean"
+          },
+          "mask": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`random` (the default), `none` (send unmasked, which a compliant client never does) or four bytes as eight\nhex digits."
+          },
+          "opcode": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0 continuation, 1 text, 2 binary, 8 close, 9 ping, 10 pong; anything from 0 to 15 is sent as given.",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "string",
+            "description": "The payload, base64."
+          },
+          "rsv": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The three reserved bits as a number from 0 to 7.",
+            "minimum": 0
+          }
+        }
+      },
+      "WsFrameOut": {
+        "type": "object",
+        "required": [
+          "direction",
+          "fin",
+          "rsv",
+          "opcode",
+          "masked",
+          "payload"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "fin": {
+            "type": "boolean"
+          },
+          "masked": {
+            "type": "boolean"
+          },
+          "opcode": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "string",
+            "description": "The payload, unmasked, base64."
+          },
+          "rsv": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "WsMessage": {
         "type": "object",
         "description": "A WebSocket message seen on an upgraded connection.",
@@ -6339,6 +6512,69 @@
           },
           "truncated": {
             "type": "boolean"
+          }
+        }
+      },
+      "WsReply": {
+        "type": "object",
+        "required": [
+          "refused",
+          "request",
+          "response",
+          "frames",
+          "closed_by_server"
+        ],
+        "properties": {
+          "closed_by_server": {
+            "type": "boolean",
+            "description": "The server sent a close frame."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no open connection or why listening stopped early."
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The handshake as a recorded flow; the frames are its messages."
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WsFrameOut"
+            },
+            "description": "Frames sent and received, in the order they happened (sent ones first, then what came back)."
+          },
+          "in_scope": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "refused": {
+            "type": "boolean",
+            "description": "The scope gate or the kill switch stopped it; nothing was sent."
+          },
+          "request": {
+            "type": "string",
+            "description": "The handshake request and the server's answer, base64."
+          },
+          "response": {
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

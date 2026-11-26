@@ -213,6 +213,8 @@ async fn bad_requests_are_rejected_and_viewers_cannot_send() {
     for (m, p, b) in [
         ("post", "/repeater/send", ok.clone()),
         ("put", "/repeater/settings", json!({ "allow_out_of_scope": true })),
+        ("post", "/repeater/ws", ok.clone()),
+        ("put", "/repeater/tabs", json!({ "tabs": [] })),
     ] {
         let rb = if m == "post" {
             viewer.post(s.url(p))
@@ -332,4 +334,135 @@ async fn tabs_are_saved_in_the_project_and_bounded() {
     assert_eq!(cl.repeater_tabs().await.unwrap(), doc);
     let doc2 = json!({ "tabs": [], "active": 0, "next": 1 });
     assert_eq!(cl.put_repeater_tabs(&doc2).await.unwrap(), doc2);
+}
+
+/// Accepts the upgrade and echoes every frame back unmasked, with the same opcode and flags.
+async fn ws_origin() -> u16 {
+    use bosun_http::ws::{Frame, parse_frame};
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else { return };
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut b = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if s.read(&mut b).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    head.push(b[0]);
+                }
+                let _ = s
+                    .write_all(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: x\r\n\r\n")
+                    .await;
+                let (mut buf, mut chunk) = (Vec::new(), [0u8; 4096]);
+                loop {
+                    let n = s.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    while let Ok(Some((f, used))) = parse_frame(&buf, 1 << 20) {
+                        buf.drain(..used);
+                        let _ = s.write_all(&Frame { mask: None, ..f }.encode()).await;
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn websocket_frames_are_sent_as_described_and_recorded() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    let handshake = B64.encode(
+        b"GET /chat HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+    );
+    let port = ws_origin().await;
+    let post = |b: Value| {
+        let (c, csrf, url) = (c.clone(), csrf.clone(), s.url("/repeater/ws"));
+        async move {
+            c.post(url)
+                .header("x-csrf-token", csrf)
+                .json(&b)
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    let body = json!({
+        "scheme": "http", "host": "127.0.0.1", "port": port, "request": handshake, "listen_ms": 400,
+        "frames": [
+            { "opcode": 1, "payload": B64.encode(b"hello") },
+            { "opcode": 2, "fin": false, "rsv": 0, "mask": "01020304", "payload": B64.encode([1u8, 2, 3]) },
+            { "opcode": 9, "mask": "none", "payload": "" },
+        ],
+    });
+
+    // Out of scope: refused, nothing sent.
+    let v: Value = post(body.clone()).await.json().await.unwrap();
+    assert_eq!(v["refused"], true, "{v}");
+    assert!(v["flow_id"].is_null());
+
+    c.put(s.url("/scope"))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({ "include": [{ "host": "127.0.0.1", "allow_private": true }] }))
+        .send()
+        .await
+        .unwrap();
+    let v: Value = post(body.clone()).await.json().await.unwrap();
+    assert_eq!(v["status"], 101, "{v}");
+    assert!(v["error"].is_null(), "{v}");
+    let frames = v["frames"].as_array().unwrap();
+    let sent: Vec<_> = frames
+        .iter()
+        .filter(|f| f["direction"] == "client_to_server")
+        .collect();
+    let got: Vec<_> = frames
+        .iter()
+        .filter(|f| f["direction"] == "server_to_client")
+        .collect();
+    // Three frames as written, then our close; the echo returns the three (flags kept) before the close is sent.
+    assert_eq!(sent.len(), 4, "{v}");
+    assert_eq!(got.len(), 3, "{v}");
+    assert_eq!(got[0]["opcode"], 1);
+    assert_eq!(got[0]["payload"], B64.encode(b"hello"));
+    assert_eq!(got[1]["fin"], false);
+    assert_eq!(got[1]["opcode"], 2);
+    assert_eq!(sent[1]["masked"], true);
+    assert_eq!(sent[2]["masked"], false);
+
+    // The handshake is a repeater flow and the frames are its messages.
+    s.state.inner.proxy.flush();
+    let id = v["flow_id"].as_i64().unwrap();
+    let flow = s.project.get_flow(id).unwrap().unwrap();
+    assert_eq!(flow.summary.source.as_str(), "repeater");
+    let msgs = s.project.ws_messages(id, None, 100).unwrap();
+    assert_eq!(msgs.len(), 7, "3 sent, 3 echoed, 1 close");
+
+    // Not an upgrade: the answer is shown and recorded, with no frames.
+    let plain = origin().await;
+    let mut b2 = body.clone();
+    b2["port"] = json!(plain);
+    let v: Value = post(b2).await.json().await.unwrap();
+    assert_eq!(v["status"], 200, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("did not switch"));
+    assert_eq!(v["frames"], json!([]));
+
+    // Bad input.
+    for bad in [
+        json!({ "frames": [{ "opcode": 16 }] }),
+        json!({ "frames": [{ "opcode": 1, "mask": "zz" }] }),
+        json!({ "frames": [{ "opcode": 1, "payload": "!!" }] }),
+        json!({ "listen_ms": 99999 }),
+    ] {
+        let mut b = body.clone();
+        for (k, val) in bad.as_object().unwrap() {
+            b[k] = val.clone();
+        }
+        assert_eq!(post(b).await.status(), StatusCode::BAD_REQUEST);
+    }
 }

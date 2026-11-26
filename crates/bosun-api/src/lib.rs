@@ -408,6 +408,7 @@ pub fn router(st: AppState) -> Router {
             "/repeater/settings",
             get(repeater::get_settings).put(repeater::put_settings),
         )
+        .route("/repeater/ws", post(repeater::ws_send))
         .route("/repeater/tabs", get(repeater::get_tabs).put(repeater::put_tabs))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));

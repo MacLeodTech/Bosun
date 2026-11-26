@@ -55,6 +55,8 @@ enum Cmd {
     },
     /// Check the install for common problems.
     Doctor,
+    /// Exit 0 when the running server answers its health check (for container HEALTHCHECK; no curl needed).
+    Healthcheck,
     /// The install's certificate authority.
     Ca {
         #[command(subcommand)]
@@ -416,13 +418,17 @@ enum UserCmd {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("BOSUN_LOG")
-                .unwrap_or_else(|_| "info,hyper=warn".into()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    let filter =
+        tracing_subscriber::EnvFilter::try_from_env("BOSUN_LOG").unwrap_or_else(|_| "info,hyper=warn".into());
+    let log = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr);
+    // BOSUN_LOG_FORMAT=json: one JSON object per line, for log collectors.
+    if std::env::var("BOSUN_LOG_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("json")) {
+        log.json().init();
+    } else {
+        log.init();
+    }
     match run(cli) {
         Ok(code) => code,
         Err(e) => {
@@ -476,6 +482,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             // A read of stdin may still be waiting on its thread; do not wait for it.
             rt.shutdown_timeout(std::time::Duration::from_secs(2));
             r?;
+        }
+        Cmd::Healthcheck => {
+            return Ok(if bosun::server_mode::healthcheck(cfg.api.listen, cfg.api.tls) {
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("unhealthy: no answer from {}", cfg.api.listen);
+                ExitCode::FAILURE
+            });
         }
         Cmd::Doctor => {
             let mut worst = doctor::Level::Ok;

@@ -172,6 +172,7 @@ impl Connector {
                 addr,
                 username,
                 password,
+                ..
             }) => {
                 let uri: Uri = format!("http://{addr}")
                     .parse()
@@ -192,6 +193,7 @@ impl Connector {
                 username,
                 password,
                 local_dns,
+                ..
             }) => {
                 let uri: Uri = format!("socks5://{addr}")
                     .parse()

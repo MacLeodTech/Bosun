@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,9 @@ pub enum UpstreamProxy {
         username: Option<String>,
         #[serde(default, skip_serializing)]
         password: Option<String>,
+        /// File holding the password (container secrets); read at start-up, and instead of `password`.
+        #[serde(default)]
+        password_file: Option<PathBuf>,
     },
     Socks5 {
         addr: String,
@@ -21,6 +25,9 @@ pub enum UpstreamProxy {
         username: Option<String>,
         #[serde(default, skip_serializing)]
         password: Option<String>,
+        /// File holding the password (container secrets); read at start-up, and instead of `password`.
+        #[serde(default)]
+        password_file: Option<PathBuf>,
         /// Resolve names locally instead of at the SOCKS server.
         #[serde(default)]
         local_dns: bool,
@@ -80,8 +87,18 @@ pub struct ProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyAuth {
     pub username: String,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub password: String,
+    /// File holding the password (container secrets); read at start-up, and instead of `password`.
+    #[serde(default)]
+    pub password_file: Option<PathBuf>,
+}
+
+/// Read a secret from a file: the contents without the trailing newline.
+pub fn read_secret_file(path: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read the secret file {}: {e}", path.display()))?;
+    Ok(text.trim_end_matches(['\r', '\n']).to_string())
 }
 
 impl Default for ProxyConfig {
@@ -111,6 +128,41 @@ impl Default for ProxyConfig {
 }
 
 impl ProxyConfig {
+    /// Load every `password_file` into its `password`. Setting both a password and its file is an error.
+    pub fn resolve_secrets(&mut self) -> Result<(), String> {
+        if let Some(a) = &mut self.auth
+            && let Some(f) = &a.password_file
+        {
+            if !a.password.is_empty() {
+                return Err("proxy.auth: set password or password_file, not both".into());
+            }
+            a.password = read_secret_file(f)?;
+        }
+        match &mut self.upstream {
+            Some(
+                UpstreamProxy::Http {
+                    password,
+                    password_file,
+                    ..
+                }
+                | UpstreamProxy::Socks5 {
+                    password,
+                    password_file,
+                    ..
+                },
+            ) => {
+                if let Some(f) = password_file {
+                    if password.is_some() {
+                        return Err("proxy.upstream: set password or password_file, not both".into());
+                    }
+                    *password = Some(read_secret_file(f)?);
+                }
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
     /// Refuse configurations that would make an open proxy.
     pub fn validate(&self) -> Result<(), String> {
         if !self.listen.ip().is_loopback() && self.auth.is_none() && self.allow_clients.is_empty() {

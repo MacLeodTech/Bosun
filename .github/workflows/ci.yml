@@ -241,10 +241,23 @@ jobs:
           set -euo pipefail
           docker run --rm bosun:ci --version
           docker run -d --name bosun --read-only --cap-drop ALL -p 127.0.0.1:18090:8090 bosun:ci
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18090/api/v1/status && break; sleep 1; done
+          for i in $(seq 1 30); do docker exec bosun /usr/local/bin/bosun healthcheck && break; sleep 1; done
+          docker exec bosun /usr/local/bin/bosun healthcheck
+          curl -sf http://127.0.0.1:18090/healthz
           # Capture first: `grep -q` quits at the first match, and with pipefail the writer's SIGPIPE (141) fails the step.
           logs=$(docker logs bosun 2>&1)
           grep -q "setup code" <<<"$logs"
+          docker rm -f bosun
+          # Non-interactive setup from secret files: the admin and the bootstrap token exist, and no setup code is printed.
+          d=$(mktemp -d)
+          printf 'a long enough password' > "$d/pw"
+          printf 'bootstrap-token-0123456789abcdefghijklmnop' > "$d/tok"
+          chmod 755 "$d"; chmod 644 "$d/pw" "$d/tok"
+          docker run -d --name bosun --read-only --cap-drop ALL -p 127.0.0.1:18090:8090 -v "$d:/run/secrets:ro" \
+            -e BOSUN_ADMIN_USER=admin -e BOSUN_ADMIN_PASSWORD_FILE=/run/secrets/pw \
+            -e BOSUN_BOOTSTRAP_TOKEN_FILE=/run/secrets/tok -e BOSUN_LOG_FORMAT=json bosun:ci
+          for i in $(seq 1 30); do docker exec bosun /usr/local/bin/bosun healthcheck && break; sleep 1; done
+          curl -sf -H "Authorization: Bearer $(cat "$d/tok")" http://127.0.0.1:18090/api/v1/auth/me | grep -q '"admin"'
           docker rm -f bosun
       - name: Trivy image (a fixable HIGH or CRITICAL fails)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0

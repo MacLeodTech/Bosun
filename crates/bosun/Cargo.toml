@@ -23,6 +23,7 @@ bosun-scope.workspace = true
 bosun-proxy.workspace = true
 bosun-api.workspace = true
 bosun-client.workspace = true
+bosun-report.workspace = true
 bosun-codec.workspace = true
 anyhow.workspace = true
 clap.workspace = true

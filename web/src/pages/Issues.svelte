@@ -98,6 +98,27 @@
     }
   }
 
+  let reportFormat = $state('html');
+
+  /** Saves a report of all issues as a file (never opened here: it has target content in it). */
+  async function saveReport() {
+    try {
+      const r = await fetch(`/api/v1/issues/report?format=${encodeURIComponent(reportFormat)}`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const url = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: 'application/octet-stream' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bosun-report.${reportFormat === 'junit' ? 'xml' : reportFormat === 'markdown' ? 'md' : reportFormat}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      toasts.push({ text: 'Report saved. Secrets in it are redacted.' });
+    } catch (e) {
+      toasts.push({ text: `Could not save the report: ${e instanceof Error ? e.message : e}` });
+    }
+  }
+
   async function rescan() {
     try {
       await api.post('/issues/rescan', {});
@@ -211,6 +232,14 @@
   <span class="muted small" aria-live="polite">
     {shown.length} of {issues.length}{#if pending > 0}; {pending} request{pending === 1 ? '' : 's'} still to scan{/if}
   </span>
+  <select aria-label="Report format" bind:value={reportFormat}>
+    <option value="html">HTML</option>
+    <option value="json">JSON</option>
+    <option value="sarif">SARIF</option>
+    <option value="junit">JUnit</option>
+    <option value="markdown">Markdown</option>
+  </select>
+  <button onclick={saveReport} title="Save a report of all issues, secrets redacted">Save report</button>
   {#if canEdit}<button onclick={rescan} title="Scan the whole history again with the current checks">Rescan</button>{/if}
 </div>
 <div class="body">

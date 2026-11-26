@@ -487,6 +487,7 @@ pub fn router(st: AppState) -> Router {
         .route("/intruder/attacks/{id}/results", get(intruder::results))
         .route("/intruder/attacks/{id}/stop", post(intruder::stop))
         .route("/issues", get(issues::list))
+        .route("/issues/report", get(issues::report))
         .route("/issues/rescan", post(issues::rescan))
         .route("/issues/{id}", get(issues::get).patch(issues::change))
         .route("/audit", get(h::audit_log))

@@ -725,6 +725,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/issues/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The issues (same filters as the list) as a report file: format html (default), json, sarif, junit or markdown. Always an attachment with a CSP that lets nothing run. Secrets (cookies, tokens, passwords) are redacted unless redact=0, which needs the tester role and is audited. Needs the viewer role or above. */
+        get: operations["issues_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/issues/rescan": {
         parameters: {
             query?: never;
@@ -5743,6 +5760,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssueList"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    issues_report: {
+        parameters: {
+            query?: {
+                /** @description html, json, sarif, junit or markdown */
+                format?: string;
+                /** @description 0 keeps secrets */
+                redact?: string;
+                status?: string;
+                severity?: string;
+                confidence?: string;
+                rule?: string;
+                host?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A report file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
                 };
             };
             /** @description Bad request */

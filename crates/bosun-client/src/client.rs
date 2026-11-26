@@ -973,6 +973,19 @@ impl Client {
         .await
     }
 
+    /// The issues as a report file (`format`: html, json, sarif, junit or markdown). Secrets are redacted unless
+    /// `redact` is false (tester role; audited).
+    pub async fn issues_report(&self, q: &IssueQuery, format: &str, redact: bool) -> Result<Bytes> {
+        let mut rb = self
+            .req(Method::GET, "/issues/report")
+            .query(q)
+            .query(&[("format", format)]);
+        if !redact {
+            rb = rb.query(&[("redact", "0")]);
+        }
+        Ok(self.check(rb.send().await?).await?.bytes().await?)
+    }
+
     /// Queue every recorded flow for the scanner again.
     pub async fn rescan_issues(&self) -> Result<()> {
         self.unit(self.req(Method::POST, "/issues/rescan")).await

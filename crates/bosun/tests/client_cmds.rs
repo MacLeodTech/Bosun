@@ -384,3 +384,20 @@ fn a_bad_target_is_refused_before_anything_is_sent() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("http or https"));
 }
+
+#[test]
+fn report_renders_issues_offline_and_redacts() {
+    let d = tempfile::tempdir().unwrap();
+    let issues = r#"[{"id":1,"issue_type":"x","title":"T <b>","severity":"high","confidence":"firm","status":"new",
+        "method":"GET","url":"https://h.example/?token=s3cret"}]"#;
+    let mut c = bosun(d.path(), d.path());
+    c.args(["report", "--input", "-", "--format", "sarif"]);
+    let out = run_with_stdin(c, issues);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("\"version\": \"2.1.0\"") && !text.contains("s3cret"));
+    let mut c = bosun(d.path(), d.path());
+    c.args(["report", "--input", "-", "--format", "json", "--no-redact"]);
+    let out = run_with_stdin(c, issues);
+    assert!(String::from_utf8(out.stdout).unwrap().contains("s3cret"));
+}

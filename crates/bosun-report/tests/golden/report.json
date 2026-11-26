@@ -1,0 +1,72 @@
+{
+  "by_severity": {
+    "critical": 0,
+    "high": 0,
+    "info": 1,
+    "low": 1,
+    "medium": 1
+  },
+  "issues": [
+    {
+      "confidence": "firm",
+      "cwe": [
+        693
+      ],
+      "description": "",
+      "evidence": [],
+      "id": 1,
+      "issue_type": "missing-csp",
+      "method": "GET",
+      "owasp": [],
+      "remediation": "Send a Content-Security-Policy header.",
+      "severity": "medium",
+      "status": "new",
+      "title": "No Content-Security-Policy",
+      "url": "https://app.example/"
+    },
+    {
+      "confidence": "certain",
+      "cwe": [
+        1004
+      ],
+      "description": "The session cookie can be read by script.",
+      "evidence": [
+        {
+          "excerpt": "HTTP/1.1 200 OK\nSet-Cookie: [redacted]\nContent-Type: text/html",
+          "part": "response"
+        }
+      ],
+      "id": 2,
+      "issue_type": "cookie-no-httponly",
+      "method": "GET",
+      "owasp": [
+        "A05:2021"
+      ],
+      "remediation": "Set the HttpOnly attribute.",
+      "severity": "low",
+      "status": "confirmed",
+      "title": "Session cookie without HttpOnly",
+      "url": "https://app.example/login?next=/home&token=[redacted]"
+    },
+    {
+      "confidence": "tentative",
+      "cwe": [
+        200
+      ],
+      "description": "",
+      "evidence": [],
+      "id": 3,
+      "issue_type": "server-banner",
+      "method": "GET",
+      "owasp": [],
+      "remediation": "",
+      "severity": "info",
+      "status": "false_positive",
+      "title": "Server version disclosed",
+      "url": "https://app.example/status"
+    }
+  ],
+  "redacted": true,
+  "tool": "bosun",
+  "total": 3
+}

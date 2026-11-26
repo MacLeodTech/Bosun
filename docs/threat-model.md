@@ -196,6 +196,16 @@ This document says what is protected, from whom, and how. Code comments refer ba
   (ChaCha20-Poly1305, bound to the user id) before they reach the account database, and shown once at enrolment;
   recovery codes are stored only as hashes. Someone who holds both the account database and the data key can read
   the secrets, as with the CA key.
+- *Reports (`bosun-report`).* A report carries target content (URLs, evidence excerpts), so each format escapes it
+  for its own syntax, and secrets (URL credentials, `Authorization`, cookies, bearer tokens, JWTs, `password=`-style
+  pairs) are redacted unless the caller opts out. The HTML report has no script, no links and no external loads,
+  and a CSP of `default-src 'none'` plus the hash of its own stylesheet, in a `<meta>` and as the header to serve it
+  under (`html_csp`); it is never rendered in the UI's origin. Redaction is pattern-based and best effort: a secret
+  with an unusual name can survive, so treat a report as sensitive. `GET /issues/report` needs the viewer role; keeping secrets (`redact=0`) needs the tester role and is audited
+  (`issues.report`). The response is always an attachment, `nosniff`, with `sandbox` plus the report's own CSP (the
+  API's CSP layer keeps a handler's stricter policy), and the UI saves it as a file instead of showing it. A
+  Playwright test opens a saved report and checks that no script exists and nothing is requested. `bosun report
+  --input` renders a file offline.
 - *An open proxy.* The proxy refuses to start on a non-loopback address without proxy authentication or a
   client allowlist. The same check applies to every listener added while running (`POST /proxy/listeners`), so an
   admin cannot open one by mistake; each listener has its own credentials and allowlist, and a listener's

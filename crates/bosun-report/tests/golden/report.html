@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;sha256-rZpkQKa0hcrLM4rrHd2hJ4i6pXYnu1J23b93pDIYrSg=&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">
+<meta name="referrer" content="no-referrer">
+<title>Bosun issues report</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#1b1b1b}h1{font-size:1.6rem}h2{font-size:1.15rem;margin:0}.issue{border:1px solid #bbb;border-radius:6px;padding:.8rem 1rem;margin:1rem 0}.sev{display:inline-block;padding:0 .5rem;border-radius:4px;color:#fff;font-size:.8rem;text-transform:uppercase}.critical{background:#7a0019}.high{background:#b3261e}.medium{background:#8a5300}.low{background:#245a8d}.info{background:#555}pre{background:#f3f3f3;padding:.6rem;overflow:auto;white-space:pre-wrap;word-break:break-all}dl{margin:.5rem 0}dt{font-weight:600}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:.2rem .6rem;text-align:left}</style>
+</head>
+<body>
+<h1>Bosun issues report</h1>
+<p>3 issue(s).</p>
+<table>
+<tr><th>Severity</th><th>Count</th></tr>
+<tr><td>critical</td><td>0</td></tr>
+<tr><td>high</td><td>0</td></tr>
+<tr><td>medium</td><td>1</td></tr>
+<tr><td>low</td><td>1</td></tr>
+<tr><td>info</td><td>1</td></tr>
+</table>
+<section class="issue">
+<h2><span class="sev medium">medium</span> No Content-Security-Policy</h2>
+<dl>
+<dt>Request</dt><dd>GET https://app.example/</dd>
+<dt>Type</dt><dd>missing-csp</dd>
+<dt>Confidence</dt><dd>firm</dd>
+<dt>Status</dt><dd>new</dd>
+<dt>CWE</dt><dd>CWE-693</dd>
+</dl>
+<p><strong>Remediation:</strong> Send a Content-Security-Policy header.</p>
+</section>
+<section class="issue">
+<h2><span class="sev low">low</span> Session cookie without HttpOnly</h2>
+<dl>
+<dt>Request</dt><dd>GET https://app.example/login?next=/home&amp;token=[redacted]</dd>
+<dt>Type</dt><dd>cookie-no-httponly</dd>
+<dt>Confidence</dt><dd>certain</dd>
+<dt>Status</dt><dd>confirmed</dd>
+<dt>CWE</dt><dd>CWE-1004</dd>
+<dt>OWASP</dt><dd>A05:2021</dd>
+</dl>
+<p>The session cookie can be read by script.</p>
+<p><strong>Remediation:</strong> Set the HttpOnly attribute.</p>
+<p>Evidence (response):</p>
+<pre>HTTP/1.1 200 OK
+Set-Cookie: [redacted]
+Content-Type: text/html</pre>
+</section>
+<section class="issue">
+<h2><span class="sev info">info</span> Server version disclosed</h2>
+<dl>
+<dt>Request</dt><dd>GET https://app.example/status</dd>
+<dt>Type</dt><dd>server-banner</dd>
+<dt>Confidence</dt><dd>tentative</dd>
+<dt>Status</dt><dd>false_positive</dd>
+<dt>CWE</dt><dd>CWE-200</dd>
+</dl>
+</section>
+</body>
+</html>

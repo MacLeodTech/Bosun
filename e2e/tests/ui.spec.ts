@@ -1394,4 +1394,31 @@ test('listeners: one is added and removed live, and a live setting is saved', as
   await rows.filter({ hasText: `127.0.0.1:${extra}` }).getByRole('button', { name: 'Stop' }).click();
   await expect(rows).toHaveCount(1);
   await expect.poll(() => viaProxy(extra, `${TARGET}/listener-check`).then(() => 'open', () => 'closed')).toBe('closed');
+test('issues: the saved HTML report runs no script and keeps no secrets', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Issues' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Issues', exact: true });
+  await panel.getByLabel('Report format').selectOption('html');
+  const [download] = await Promise.all([page.waitForEvent('download'), panel.getByRole('button', { name: 'Save report' }).click()]);
+  expect(download.suggestedFilename()).toBe('bosun-report.html');
+  const path = await download.path();
+  const html = fs.readFileSync(path, 'utf8');
+  expect(html).toContain('Private key in a response');
+  expect(html).not.toMatch(/<script|<a |href=|\son\w+=/i);
+  expect(html).not.toContain('leaky=1');
+
+  // Open the file as a browser would, in a page of its own, and watch for script and for network calls.
+  const viewer = await page.context().browser()!.newContext();
+  const vp = await viewer.newPage();
+  const calls: string[] = [];
+  const violations: string[] = [];
+  vp.on('request', (r) => calls.push(r.url()));
+  vp.on('console', (m) => m.text().includes('Content Security Policy') && violations.push(m.text()));
+  await vp.route('http://report.invalid/**', (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
+  await vp.goto('http://report.invalid/report.html');
+  await expect(vp.getByRole('heading', { name: 'Bosun issues report' })).toBeVisible();
+  expect(await vp.evaluate(() => document.scripts.length)).toBe(0);
+  expect(calls.filter((u) => !u.startsWith('http://report.invalid/'))).toEqual([]);
+  expect(violations).toEqual([]);
+  await viewer.close();
 });

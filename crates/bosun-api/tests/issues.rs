@@ -139,3 +139,74 @@ async fn the_scanner_reports_issues_that_can_be_triaged_and_rescanned() {
     );
     assert!(anon.rescan_issues().await.unwrap_err().is_unauthorized());
 }
+
+#[tokio::test]
+async fn the_report_is_an_inert_attachment_with_secrets_redacted() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let _scanner = bosun_scan::Scanner::start(&s.state.project());
+    recorded(
+        &s,
+        "/p?token=hunter2secret",
+        "Content-Type: text/plain\r\nSet-Cookie: sid=cookievalue99\r\n",
+        b"<script>alert(1)</script>",
+        None,
+    );
+    settled(&c).await;
+    let q = IssueQuery::default();
+    for f in ["html", "json", "sarif", "junit", "markdown"] {
+        let b = String::from_utf8(c.issues_report(&q, f, true).await.unwrap().to_vec()).unwrap();
+        assert!(
+            b.contains("cookie-no-httponly") || f == "markdown" || f == "html",
+            "{f}"
+        );
+        assert!(
+            !b.contains("hunter2secret") && !b.contains("cookievalue99"),
+            "{f} leaks"
+        );
+        assert!(!b.contains("<script>"), "{f} carries raw target markup");
+    }
+    // Headers: an attachment that nothing in it can turn into script.
+    let raw = reqwest::Client::new()
+        .get(format!("{}/api/v1/issues/report", url(&s)))
+        .bearer_auth(c.create_token("t", None, None).await.unwrap().token)
+        .send()
+        .await
+        .unwrap();
+    let h = raw.headers().clone();
+    assert!(
+        h["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment")
+    );
+    assert!(
+        h["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("default-src 'none'")
+    );
+    assert_eq!(h["x-content-type-options"], "nosniff");
+    assert!(c.issues_report(&q, "pdf", true).await.is_err());
+
+    // Keeping secrets is a tester action and is audited.
+    let kept = c.issues_report(&q, "json", false).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&kept).contains("cookievalue99")
+            || String::from_utf8_lossy(&kept).contains("hunter2secret")
+    );
+    assert!(
+        c.audit(None, Some(50))
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| e.action == "issues.report")
+    );
+    let anon = Client::new(url(&s)).unwrap();
+    assert!(
+        anon.issues_report(&q, "html", true)
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}

@@ -106,6 +106,24 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// A report of the engine's issues: html (a file with no script), json, sarif, junit or markdown. Secrets are
+    /// redacted unless --no-redact (tester role, audited). With --input it renders a JSON file of report-shaped
+    /// issues offline instead of asking an engine.
+    Report {
+        #[command(flatten)]
+        conn: Conn,
+        /// Render this JSON file of issues (or `-` for stdin) offline instead of asking an engine.
+        #[arg(long, short)]
+        input: Option<String>,
+        #[arg(long, short, default_value = "html")]
+        format: String,
+        /// Write the report here (else stdout).
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+        /// Keep secrets (cookies, tokens, passwords) in the report.
+        #[arg(long)]
+        no_redact: bool,
+    },
     /// Run the Decoder on a file or stdin, offline (no engine needed). The result goes to stdout.
     ///
     /// STEPS are Decoder operations, applied in order: url_decode, base64_decode, gzip_decode, sha256 and so on
@@ -681,6 +699,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
             username,
         } => {
             return tokio::runtime::Runtime::new()?.block_on(client_cmd::login(&server, &profile, username));
+        }
+        Cmd::Report {
+            conn,
+            input,
+            format,
+            output,
+            no_redact,
+        } => {
+            return match input {
+                Some(input) => client_cmd::report(&input, &format, output.as_deref(), no_redact),
+                None => tokio::runtime::Runtime::new()?.block_on(client_cmd::report_remote(
+                    conn.server.as_deref(),
+                    conn.profile.as_deref(),
+                    &format,
+                    output.as_deref(),
+                    no_redact,
+                )),
+            };
         }
         Cmd::Status { conn, json } => {
             return tokio::runtime::Runtime::new()?.block_on(client_cmd::status(

@@ -1184,6 +1184,11 @@ export interface components {
         };
         /** @description Resource counters (see [`Proxy::stats`]). */
         ProxyStats: {
+            /**
+             * Format: int64
+             * @description Connections closed at once because the proxy was at its connection limit.
+             */
+            connections_refused: number;
             intercept_queued_bytes: number;
             /** Format: int64 */
             intercept_refused: number;

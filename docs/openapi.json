@@ -5462,6 +5462,7 @@
           "memory_budget",
           "memory_used",
           "memory_refused",
+          "connections_refused",
           "recorder_bodies_dropped",
           "recorder_records_dropped",
           "recorder_write_failures",
@@ -5470,6 +5471,12 @@
           "intercept_queued_bytes"
         ],
         "properties": {
+          "connections_refused": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections closed at once because the proxy was at its connection limit.",
+            "minimum": 0
+          },
           "intercept_queued_bytes": {
             "type": "integer",
             "minimum": 0

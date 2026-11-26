@@ -292,6 +292,7 @@ pub struct ProxyStats {
     pub memory_budget: usize,
     pub memory_used: usize,
     pub memory_refused: u64,
+    pub connections_refused: u64,
     pub recorder_bodies_dropped: u64,
     pub recorder_records_dropped: u64,
     pub recorder_write_failures: u64,

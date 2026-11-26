@@ -387,3 +387,75 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 }
+
+#[cfg(test)]
+mod load {
+    use super::*;
+    use bosun_store::Project;
+
+    fn flow(id: i64) -> NewFlow {
+        let req = b"GET /x HTTP/1.1\r\nHost: h\r\n\r\n".to_vec();
+        NewFlow {
+            id,
+            source: bosun_model::FlowSource::Proxy,
+            started_ms: id,
+            duration_ms: Some(1),
+            scheme: bosun_model::Scheme::Http,
+            host: "h".into(),
+            port: 80,
+            method: "GET".into(),
+            path: format!("/x/{id}"),
+            http_version: "HTTP/1.1".into(),
+            status: Some(200),
+            in_scope: true,
+            edited: false,
+            error: None,
+            request: req,
+            original_request: None,
+            response: Some(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello".to_vec()),
+            original_response: None,
+            response_truncated: false,
+        }
+    }
+
+    /// A steady 7,000 flows a second (the rate at which flows seemed to go missing) into a real project file:
+    /// every one is stored and nothing is dropped. The writer is not the bottleneck; the proxy's connection
+    /// limit is, and that is counted separately (`connections_refused`).
+    #[test]
+    fn a_steady_seven_thousand_a_second_is_all_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Arc::new(Project::open(&dir.path().join("p.bosun")).unwrap());
+        let (events, _rx) = crate::events::EventBus::channel(1024);
+        let rec = Recorder::start(project.clone(), events, MemoryBudget::new(256 << 20));
+        let (rate, n) = (7000.0_f64, 14_000_i64);
+        let t = std::time::Instant::now();
+        for i in 0..n {
+            let due = Duration::from_secs_f64(i as f64 / rate);
+            while t.elapsed() < due {
+                std::hint::spin_loop();
+            }
+            rec.flow(flow(i + 1));
+        }
+        rec.flush();
+        let s = rec.stats();
+        assert_eq!(s.records_dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(s.bodies_dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(project.flow_count().unwrap(), n);
+    }
+
+    /// An instantaneous burst past the queue is dropped, and every drop is counted: stored + dropped = sent.
+    #[test]
+    fn a_burst_past_the_queue_is_counted_not_silent() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Arc::new(Project::open(&dir.path().join("p.bosun")).unwrap());
+        let (events, _rx) = crate::events::EventBus::channel(1024);
+        let rec = Recorder::start(project.clone(), events, MemoryBudget::new(256 << 20));
+        let n = 50_000_i64;
+        for i in 0..n {
+            rec.flow(flow(i + 1));
+        }
+        rec.flush();
+        let dropped = rec.stats().records_dropped.load(Ordering::Relaxed) as i64;
+        assert_eq!(project.flow_count().unwrap() + dropped, n);
+    }
+}

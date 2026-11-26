@@ -935,6 +935,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/map-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Map Local, Map Remote and throttle rules, in the order they are tried. Needs the viewer role or above. */
+        get: operations["get_map_rules"];
+        /** @description Replace the Map Local, Map Remote and throttle rules (audited). A Map Local directory must exist and a Map Remote target must pass the scope gate, or the whole list is refused with a 400 that names the rule. Needs the tester role or above, and the admin role when the list holds a Map Local rule (it serves files from this machine). */
+        put: operations["put_map_rules"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizer": {
         parameters: {
             query?: never;
@@ -2527,6 +2545,32 @@ export interface components {
         };
         /** @description The answer to a password sign-in: a session, or a request for the second factor (no session yet). */
         LoginReply: components["schemas"]["Me"] | components["schemas"]["SecondFactor"];
+        /** @enum {string} */
+        MapKind: "map_local" | "map_remote" | "throttle";
+        /** @description One rule as saved. The fields a kind does not use are ignored. */
+        MapRule: {
+            /**
+             * Format: int32
+             * @description Throttle: response bytes a second; 0 is unlimited.
+             */
+            bytes_per_sec?: number;
+            comment?: string;
+            /** @description Map Local: the directory files are served from. */
+            directory?: string;
+            enabled?: boolean;
+            /** @description Host to match: `api.example.com`, `*.example.com` for every name under it, or empty for any host. */
+            host?: string;
+            kind: components["schemas"]["MapKind"];
+            /**
+             * Format: int32
+             * @description Throttle: milliseconds added before the request is sent.
+             */
+            latency_ms?: number;
+            /** @description Match requests whose path (without the query) starts with this. Empty matches every path. */
+            path_prefix?: string;
+            /** @description Map Remote: the origin to send the request to, for example `https://staging.example.com:8443`. */
+            target?: string;
+        };
         MatchRule: {
             comment?: string;
             enabled?: boolean;
@@ -7284,6 +7328,95 @@ export interface operations {
             };
             /** @description No such issue */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_map_rules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapRule"][];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_map_rules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MapRule"][];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapRule"][];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

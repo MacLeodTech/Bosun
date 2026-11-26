@@ -838,6 +838,9 @@ async fn switch_to(st: &AppState, caller: &Caller, target: Option<&str>) -> Resu
         if let Err(e) = crate::clientcerts::reload(&proxy, &key) {
             tracing::warn!(error = %e, "loading the project's client certificates failed");
         }
+        if let Err(e) = crate::maprules::reload(&proxy) {
+            tracing::warn!(error = %e, "loading the project's map rules failed");
+        }
     })
     .await?;
     st.inner.gate.set_scope(loaded.scope);

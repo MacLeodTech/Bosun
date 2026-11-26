@@ -16,8 +16,8 @@ use bosun_proxy::intercept::{Decision, InterceptItem, InterceptSettings, Interce
 use bosun_proxy::{ProxyEvent, ProxyStats};
 use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
 
-use crate::clientcerts::{ClientCertBody, ClientCertList};
 use crate::checks::{CheckBody, CheckEnabled, CheckList, CheckValidation, CheckView};
+use crate::clientcerts::{ClientCertBody, ClientCertList};
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
 use crate::crawl::{CrawlDetail, CrawlInfo, CrawlList, CrawlStartBody, CrawlStopReply};
 use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
@@ -28,6 +28,7 @@ use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, Proje
 use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
 use crate::scan::{ScanChecks, ScanControlReply, ScanDetail, ScanInfo, ScanList, ScanStartBody};
 use crate::sequencer::{AnalyzeBody, CaptureBody, CaptureStarted, CaptureStatus};
+use bosun_proxy::mapping::MapRule;
 use bosun_proxy::rules::RuleSpec as MatchRule;
 use bosun_proxy::{ListenerInfo, ListenerSpec, LiveSettings};
 use bosun_scope::ScopeSpec;
@@ -333,6 +334,12 @@ fn get_rules() {}
 #[utoipa::path(put, path = "/rules", operation_id = "put_rules", tag = "rules", description = "Replace the rules (audited). Needs the tester role or above.", request_body = Vec<MatchRule>, responses((status = 200, description = "OK", body = Vec<MatchRule>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn put_rules() {}
 
+#[utoipa::path(get, path = "/map-rules", operation_id = "get_map_rules", tag = "rules", description = "Map Local, Map Remote and throttle rules, in the order they are tried. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<MapRule>), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn get_map_rules() {}
+
+#[utoipa::path(put, path = "/map-rules", operation_id = "put_map_rules", tag = "rules", description = "Replace the Map Local, Map Remote and throttle rules (audited). A Map Local directory must exist and a Map Remote target must pass the scope gate, or the whole list is refused with a 400 that names the rule. Needs the tester role or above, and the admin role when the list holds a Map Local rule (it serves files from this machine).", request_body = Vec<MapRule>, responses((status = 200, description = "OK", body = Vec<MapRule>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn put_map_rules() {}
+
 #[utoipa::path(get, path = "/intercept", operation_id = "get_intercept", tag = "intercept", description = "Interception settings. Needs the viewer role or above.", responses((status = 200, description = "OK", body = InterceptSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn get_intercept() {}
 
@@ -569,7 +576,7 @@ fn scan_resume() {}
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, list_listeners, add_listener, update_listener, remove_listener, get_proxy_config, put_proxy_config, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, import_requests, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, crawl_start, crawl_list, crawl_get, crawl_stop, scan_start, scan_list, scan_checks, scan_get, scan_stop, scan_pause, scan_resume, issues_report, issue_tracker, list_checks, add_check, validate_check, replace_check, set_check_enabled, delete_check, list_issues, rescan_issues, get_issue, change_issue, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, add_client_cert, delete_client_cert, list_client_certs, events),
+    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_map_rules, put_map_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, list_listeners, add_listener, update_listener, remove_listener, get_proxy_config, put_proxy_config, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, import_requests, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, crawl_start, crawl_list, crawl_get, crawl_stop, scan_start, scan_list, scan_checks, scan_get, scan_stop, scan_pause, scan_resume, issues_report, issue_tracker, list_checks, add_check, validate_check, replace_check, set_check_enabled, delete_check, list_issues, rescan_issues, get_issue, change_issue, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, add_client_cert, delete_client_cert, list_client_certs, events),
     components(schemas(bosun_proxy::ListenerSpec, bosun_proxy::ListenerInfo, bosun_proxy::LiveSettings, bosun_proxy::ProxyAuth, crate::listeners::ProxyConfigView, crate::imports::ImportBody, crate::imports::ImportReply, bosun_import::Format, ResponseFilter, bosun_store::Issue, bosun_store::Severity, bosun_store::Confidence, bosun_store::IssueStatus, bosun_store::Evidence, bosun_store::EvidencePart, LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
     tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "intruder"), (name = "crawl"), (name = "scan"), (name = "issues"), (name = "checks"), (name = "clientcerts"), (name = "sequencer"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
@@ -624,6 +631,8 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("put", "/scope"),
     ("get", "/rules"),
     ("put", "/rules"),
+    ("get", "/map-rules"),
+    ("put", "/map-rules"),
     ("get", "/intercept"),
     ("put", "/intercept"),
     ("get", "/intercept/response-filter"),

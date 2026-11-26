@@ -9,8 +9,8 @@
 pub mod auth;
 pub mod browser;
 pub mod checks;
-pub mod clientcerts;
 pub mod child;
+pub mod clientcerts;
 pub mod codec;
 pub mod crawl;
 pub mod engage;
@@ -20,6 +20,7 @@ pub mod imports;
 pub mod intruder;
 pub mod issues;
 pub mod listeners;
+pub mod maprules;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
@@ -330,6 +331,7 @@ impl AppState {
         let totp_required =
             std::sync::atomic::AtomicBool::new(d.app.meta("totp_required")?.as_deref() == Some("1"));
         clientcerts::reload(&d.proxy, &d.data_key)?;
+        maprules::reload(&d.proxy)?;
         let loop_guard = d.proxy.loop_guard();
         let sso = match &cfg.sso {
             Some(c) => Some(sso::Sso::new(c).map_err(bosun_store::StoreError::Conflict)?),
@@ -423,6 +425,7 @@ pub fn router(st: AppState) -> Router {
         .route("/sitemap", get(h::site_map))
         .route("/scope", get(h::get_scope).put(h::put_scope))
         .route("/rules", get(h::get_rules).put(h::put_rules))
+        .route("/map-rules", get(maprules::get).put(maprules::put))
         .route("/intercept", get(h::get_intercept).put(h::put_intercept))
         .route(
             "/intercept/response-filter",

@@ -30,6 +30,7 @@ use crate::config::{ListenerSpec, LiveSettings, ProxyConfig};
 use crate::events::EventSender;
 use crate::intercept::{Decision, InterceptController, Phase};
 use crate::limits::ConnLimit;
+use crate::mapping::{LocalOutcome, MapAction, MapDecision, MapRule, MapRules, RemoteTarget, ThrottleBody};
 use crate::recorder::Recorder;
 use crate::rules::{RuleSet, RuleSpec, RuleTarget};
 use crate::upstream::{BoxError, Connector, LoopGuard};
@@ -168,6 +169,7 @@ pub(crate) struct Shared {
     pub events: EventSender,
     pub intercept: Arc<InterceptController>,
     pub rules: RwLock<Arc<RuleSet>>,
+    pub maps: RwLock<Arc<MapRules>>,
     pub client: UpClient,
     pub ws_client: UpClient,
     /// Opens plain TCP for pass-through tunnels: same upstream proxy and loop guard as the HTTP clients.
@@ -363,7 +365,7 @@ impl Proxy {
         )
         .map_err(ProxyError::Config)?
         .with_sni_overrides(&cfg.upstream_sni)
-            .with_client_certs(certs.clone());
+        .with_client_certs(certs.clone());
         let limit = ConnLimit::new("proxy", cfg.max_connections);
         let client = mk(true)?;
         let ws_client = mk(false)?;
@@ -387,6 +389,7 @@ impl Proxy {
                 active: RwLock::new(active),
                 events,
                 rules: RwLock::new(Arc::new(RuleSet::default())),
+                maps: RwLock::new(Arc::new(MapRules::default())),
                 client,
                 ws_client,
                 tcp,
@@ -454,6 +457,29 @@ impl Proxy {
         let rs = RuleSet::compile(specs)?;
         *self.shared.rules.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(rs);
         Ok(())
+    }
+
+    pub fn map_rules(&self) -> Vec<MapRule> {
+        self.shared.maps().specs().to_vec()
+    }
+
+    /// Replace the Map Local, Map Remote and throttle rules; the first rule that cannot be used is an error.
+    pub fn set_map_rules(&self, specs: Vec<MapRule>) -> Result<(), String> {
+        let m = MapRules::compile(specs)?;
+        *self.shared.maps.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(m);
+        Ok(())
+    }
+
+    /// Load saved rules, leaving out any that cannot be used now. Returns how many were left out.
+    pub fn load_map_rules(&self, specs: Vec<MapRule>) -> usize {
+        let (m, skipped) = MapRules::compile_lossy(specs);
+        *self.shared.maps.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(m);
+        skipped
+    }
+
+    /// Whether the scope gate lets a Map Remote rule send to `target`. Resolves the name: blocking.
+    pub fn check_remote_target(&self, target: &RemoteTarget) -> Result<(), String> {
+        remote_gate_check(&self.shared.gate, target, "/")
     }
 
     /// Wait until everything recorded so far has been written to the project.
@@ -726,6 +752,10 @@ impl Shared {
         self.active.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    fn maps(&self) -> Arc<MapRules> {
+        self.maps.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     fn rules(&self) -> Arc<RuleSet> {
         self.rules.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -848,7 +878,20 @@ impl Shared {
                  http://bosun/ through it to download the CA certificate.",
             );
         };
-        self.proxy_request(ctx, target, req).await
+        let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
+        let maps = self.maps();
+        let decision = if maps.is_empty() {
+            MapDecision::default()
+        } else {
+            maps.decide(&target.host, req.method().as_str(), path)
+        };
+        let bps = decision.throttle.map_or(0, |t| t.bytes_per_sec);
+        let resp = self.proxy_request(ctx, target, req, decision).await;
+        if bps == 0 {
+            return resp;
+        }
+        let (parts, body) = resp.into_parts();
+        Response::from_parts(parts, UnsyncBoxBody::new(ThrottleBody::new(body, bps)))
     }
 
     fn authorised(&self, ctx: &ConnCtx, headers: &HeaderMap) -> bool {
@@ -1029,6 +1072,7 @@ impl Shared {
         _ctx: ConnCtx,
         target: Tunnel,
         mut req: Request<Incoming>,
+        decision: MapDecision,
     ) -> Response<RespBody> {
         let started = bosun_model::now_ms();
         let t0 = std::time::Instant::now();
@@ -1201,6 +1245,118 @@ impl Shared {
             }
         }
 
+        // Map Local answers here, from a file; Map Remote changes where the request goes (what is recorded and
+        // shown keeps the original target).
+        let mut out_target = target.clone();
+        let mut remapped = false;
+        match &decision.action {
+            Some(MapAction::Local(local)) => {
+                let (local, p, max) = (
+                    local.clone(),
+                    req_state.path.clone(),
+                    self.live().max_buffered_response,
+                );
+                let outcome = tokio::task::spawn_blocking(move || local.read(&p, max))
+                    .await
+                    .unwrap_or(LocalOutcome::NotFound);
+                let (status, bytes, ctype) = match outcome {
+                    LocalOutcome::File { bytes, content_type } => (StatusCode::OK, bytes, content_type),
+                    LocalOutcome::Forbidden => (
+                        StatusCode::FORBIDDEN,
+                        b"Map Local refused this path: it leaves the chosen directory.\n".to_vec(),
+                        "text/plain; charset=utf-8",
+                    ),
+                    LocalOutcome::TooBig => (
+                        StatusCode::BAD_GATEWAY,
+                        b"Map Local: the file is larger than proxy.max_buffered_response.\n".to_vec(),
+                        "text/plain; charset=utf-8",
+                    ),
+                    LocalOutcome::NotFound => (StatusCode::OK, Vec::new(), ""),
+                };
+                if !ctype.is_empty() {
+                    let head_only = req_state.method == "HEAD";
+                    let mut raw = format!(
+                        "HTTP/1.1 {} {}\r\ncontent-type: {ctype}\r\ncontent-length: {}\r\ncache-control: no-store\r\nx-bosun-map: local\r\n\r\n",
+                        status.as_u16(),
+                        status.canonical_reason().unwrap_or(""),
+                        bytes.len()
+                    )
+                    .into_bytes();
+                    let stored = {
+                        let mut r = raw.clone();
+                        r.extend_from_slice(&bytes);
+                        r
+                    };
+                    if !head_only {
+                        raw.extend_from_slice(&bytes);
+                    }
+                    if record {
+                        submit(
+                            &active,
+                            self.new_flow(
+                                flow_id.unwrap_or_default(),
+                                &target,
+                                started,
+                                t0,
+                                req_state,
+                                Some(status.as_u16()),
+                                Some(stored),
+                                None,
+                                false,
+                                None,
+                                in_scope,
+                            ),
+                        );
+                    }
+                    if let Ok(r) = response_from_raw(&raw, false) {
+                        return r;
+                    }
+                    return text(StatusCode::BAD_GATEWAY, "Map Local could not build the response");
+                }
+            }
+            Some(MapAction::Remote(to)) => {
+                // The new target must be allowed by the scope gate, exactly like a tool's request would be.
+                let (gate, to2, p) = (self.gate.clone(), to.clone(), req_state.path.clone());
+                let checked = tokio::task::spawn_blocking(move || remote_gate_check(&gate, &to2, &p))
+                    .await
+                    .unwrap_or_else(|_| Err("the check did not finish".into()));
+                if let Err(msg) = checked {
+                    let msg = format!("Map Remote refused: {msg}");
+                    if record {
+                        submit(
+                            &active,
+                            self.new_flow(
+                                flow_id.unwrap_or_default(),
+                                &target,
+                                started,
+                                t0,
+                                req_state,
+                                None,
+                                None,
+                                None,
+                                false,
+                                Some(msg.clone()),
+                                in_scope,
+                            ),
+                        );
+                    }
+                    return text(StatusCode::FORBIDDEN, &msg);
+                }
+                out_target = Tunnel {
+                    scheme: to.scheme,
+                    host: to.host.clone(),
+                    port: to.port,
+                };
+                remapped = true;
+            }
+            None => {}
+        }
+        if let Some(t) = decision.throttle
+            && t.latency_ms > 0
+        {
+            tokio::time::sleep(Duration::from_millis(u64::from(t.latency_ms))).await;
+        }
+
         // Build the outbound request: from the (possibly edited) raw text if anything changed, otherwise from
         // the original parts so nothing is normalised unnecessarily.
         let (method, out_path, mut headers, out_body) = if req_state.original.is_some() {
@@ -1245,14 +1401,14 @@ impl Shared {
             (parts.method.clone(), path.clone(), parts.headers.clone(), body)
         };
         strip_hop_by_hop(&mut headers, wants_upgrade);
-        if !headers.contains_key(header::HOST)
-            && let Ok(v) = HeaderValue::from_str(&authority(&target))
+        if (remapped || !headers.contains_key(header::HOST))
+            && let Ok(v) = HeaderValue::from_str(&authority(&out_target))
         {
             headers.insert(header::HOST, v);
         }
         let uri = format!(
             "{}{}",
-            origin(&target),
+            origin(&out_target),
             if out_path.starts_with('/') {
                 out_path.clone()
             } else {
@@ -1308,7 +1464,7 @@ impl Shared {
                 }
                 return text(
                     StatusCode::BAD_GATEWAY,
-                    &format!("Bosun could not reach {}: {msg}", origin(&target)),
+                    &format!("Bosun could not reach {}: {msg}", origin(&out_target)),
                 );
             }
             Err(_) => {
@@ -1376,7 +1532,8 @@ impl Shared {
                 match tokio::join!(client_upgrade, server_upgrade) {
                     (Ok(c), Ok(s)) => {
                         if record {
-                            crate::ws::relay(TokioIo::new(c), TokioIo::new(s), ws_id, recorder, deflate).await;
+                            crate::ws::relay(TokioIo::new(c), TokioIo::new(s), ws_id, recorder, deflate)
+                                .await;
                         } else {
                             let (mut c, mut s) = (TokioIo::new(c), TokioIo::new(s));
                             let _ = tokio::io::copy_bidirectional(&mut c, &mut s).await;
@@ -1627,6 +1784,13 @@ impl Shared {
 
 fn status_of(raw: &[u8]) -> Option<u16> {
     RawResponse::parse(raw).ok().map(|r| r.status)
+}
+
+/// Map Remote's check: the scope gate decides, as for any tool (an automated source never leaves scope).
+fn remote_gate_check(gate: &Gate, to: &RemoteTarget, path: &str) -> Result<(), String> {
+    gate.check(FlowSource::Plugin, to.scheme, &to.host, to.port, path)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn origin(t: &Tunnel) -> String {

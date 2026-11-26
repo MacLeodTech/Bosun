@@ -2,6 +2,8 @@ import { type Page, expect, test } from '@playwright/test';
 import { PROXY_PORT, TARGET_PORT } from '../ports';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { hits, seen, viaProxy } from '../target';
 
 // One engine and one account for the whole file; the tests build on each other in order.
@@ -1521,4 +1523,31 @@ test('spider: a crawl finds the linked pages, leaves the out-of-scope link alone
   expect(hist).toContain('/spider/a');
   expect(hist).toContain('crawler');
   expect(hist).not.toContain('/spider/post');
+});
+
+test('map rules: Map Local answers from a file, and a path outside the directory is refused', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bosun-e2e-map-'));
+  fs.writeFileSync(path.join(dir, 'hello.txt'), 'from a local file');
+  fs.writeFileSync(path.join(path.dirname(dir), 'bosun-e2e-secret.txt'), 'outside the directory');
+  await page.getByRole('navigation').getByRole('button', { name: 'Match & replace' }).click();
+  await page.getByRole('button', { name: 'Add map rule' }).click();
+  await page.getByLabel('Map rule 1: kind').selectOption('map_local');
+  await page.getByLabel('Map rule 1: host').fill('127.0.0.1');
+  await page.getByLabel('Map rule 1: path prefix').fill('/e2e-map');
+  await page.getByLabel('Map rule 1: directory').fill(dir);
+  await page.getByRole('button', { name: 'Save map rules' }).click();
+  await expect(page.getByText('Saved. The rules apply to new requests.')).toBeVisible();
+
+  expect(await viaProxy(PROXY_PORT, `${TARGET}/e2e-map/hello.txt`)).toEqual({ status: 200, body: 'from a local file' });
+  const out = await viaProxy(PROXY_PORT, `${TARGET}/e2e-map/%2e%2e/bosun-e2e-secret.txt`);
+  expect(out.status).toBe(403);
+  expect(out.body).not.toContain('outside the directory');
+
+  // A directory that does not exist is explained, and a reload keeps what was saved.
+  await page.getByLabel('Map rule 1: directory').fill(path.join(dir, 'nope'));
+  await page.getByRole('button', { name: 'Save map rules' }).click();
+  await expect(page.locator('.error')).toContainText('rule 1');
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'Match & replace' }).click();
+  await expect(page.getByLabel('Map rule 1: directory')).toHaveValue(dir);
 });

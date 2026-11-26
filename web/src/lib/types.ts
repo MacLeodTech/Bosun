@@ -34,6 +34,11 @@ export interface ScopeSpec { include: ScopeRule[]; exclude: ScopeRule[] }
 export type RuleTarget = 'request_first_line' | 'request_header' | 'request_body'
   | 'response_first_line' | 'response_header' | 'response_body';
 export interface MatchRule { enabled: boolean; target: RuleTarget; match: string; replace: string; regex: boolean; comment?: string }
+export type MapKind = 'map_local' | 'map_remote' | 'throttle';
+export interface MapRule {
+  enabled: boolean; kind: MapKind; host: string; path_prefix: string; directory: string; target: string;
+  latency_ms: number; bytes_per_sec: number; comment: string;
+}
 export interface InterceptSettings { requests: boolean; responses: boolean; in_scope_only: boolean; timeout_secs?: number | null }
 export interface InterceptSummary {
   id: number; flow_id: number; phase: 'request' | 'response'; method: string; url: string;

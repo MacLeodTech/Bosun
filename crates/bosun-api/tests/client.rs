@@ -967,6 +967,8 @@ fn the_client_covers_every_documented_operation() {
         ("put", "/scope", "put_scope"),
         ("get", "/rules", "rules"),
         ("put", "/rules", "put_rules"),
+        ("get", "/map-rules", "map_rules"),
+        ("put", "/map-rules", "put_map_rules"),
         ("get", "/intercept", "intercept"),
         ("put", "/intercept", "put_intercept"),
         ("get", "/intercept/response-filter", "response_filter"),

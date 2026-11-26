@@ -274,6 +274,42 @@ fn yes() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MapKind {
+    MapLocal,
+    MapRemote,
+    Throttle,
+}
+
+/// A Map Local, Map Remote or throttle rule. The fields a kind does not use are ignored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MapRule {
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    pub kind: MapKind,
+    /// A host, `*.example.com`, or empty for any host.
+    #[serde(default)]
+    pub host: String,
+    /// Match paths that start with this; empty matches all.
+    #[serde(default)]
+    pub path_prefix: String,
+    /// Map Local: the directory files are served from.
+    #[serde(default)]
+    pub directory: String,
+    /// Map Remote: the origin to send the request to, such as `https://staging.example.com`.
+    #[serde(default)]
+    pub target: String,
+    /// Throttle: milliseconds added before the request is sent.
+    #[serde(default)]
+    pub latency_ms: u32,
+    /// Throttle: response bytes a second; 0 is unlimited.
+    #[serde(default)]
+    pub bytes_per_sec: u32,
+    #[serde(default)]
+    pub comment: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InterceptSettings {
     pub requests: bool,

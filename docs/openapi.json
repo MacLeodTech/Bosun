@@ -4674,6 +4674,115 @@
         }
       }
     },
+    "/map-rules": {
+      "get": {
+        "tags": [
+          "rules"
+        ],
+        "description": "Map Local, Map Remote and throttle rules, in the order they are tried. Needs the viewer role or above.",
+        "operationId": "get_map_rules",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MapRule"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "description": "Replace the Map Local, Map Remote and throttle rules (audited). A Map Local directory must exist and a Map Remote target must pass the scope gate, or the whole list is refused with a 400 that names the rule. Needs the tester role or above, and the admin role when the list holds a Map Local rule (it serves files from this machine).",
+        "operationId": "put_map_rules",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MapRule"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MapRule"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/organizer": {
       "get": {
         "tags": [
@@ -11221,6 +11330,60 @@
           }
         ],
         "description": "The answer to a password sign-in: a session, or a request for the second factor (no session yet)."
+      },
+      "MapKind": {
+        "type": "string",
+        "enum": [
+          "map_local",
+          "map_remote",
+          "throttle"
+        ]
+      },
+      "MapRule": {
+        "type": "object",
+        "description": "One rule as saved. The fields a kind does not use are ignored.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "bytes_per_sec": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Throttle: response bytes a second; 0 is unlimited.",
+            "minimum": 0
+          },
+          "comment": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string",
+            "description": "Map Local: the directory files are served from."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string",
+            "description": "Host to match: `api.example.com`, `*.example.com` for every name under it, or empty for any host."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MapKind"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Throttle: milliseconds added before the request is sent.",
+            "minimum": 0
+          },
+          "path_prefix": {
+            "type": "string",
+            "description": "Match requests whose path (without the query) starts with this. Empty matches every path."
+          },
+          "target": {
+            "type": "string",
+            "description": "Map Remote: the origin to send the request to, for example `https://staging.example.com:8443`."
+          }
+        }
       },
       "MatchRule": {
         "type": "object",

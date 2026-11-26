@@ -162,6 +162,7 @@ pub mod checks;
 pub mod clientcerts;
 pub mod intruder;
 pub mod issues;
+pub mod maprules;
 
 /// The most items the Organizer lists, and the longest note.
 pub const MAX_ORGANIZER_ITEMS: usize = 5_000;
@@ -433,6 +434,17 @@ const MIGRATIONS: &[migrate::Migration] = &[
                 chain BLOB NOT NULL,
                 sealed_key BLOB NOT NULL,
                 created_ms INTEGER NOT NULL
+            );
+        "#,
+    },
+    migrate::Migration {
+        version: 9,
+        rebuild: false,
+        what: "Map Local, Map Remote and throttle rules (JSON, in the order they are tried)",
+        sql: r#"
+            CREATE TABLE map_rules (
+                position INTEGER PRIMARY KEY,
+                spec TEXT NOT NULL
             );
         "#,
     },

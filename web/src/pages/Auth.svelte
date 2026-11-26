@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, login, setup } from '../lib/api';
+  import { api, login, loginTotp, setup } from '../lib/api';
   import { session } from '../lib/session.svelte';
 
   // The setup code may arrive in the URL fragment (never sent to the server); take it and clear it.
@@ -12,6 +12,9 @@
   let confirm = $state('');
   let error = $state('');
   let busy = $state(false);
+  // Set after the password was right for an account with a second factor: no session exists until the code.
+  let pending = $state('');
+  let totp = $state('');
   // Single sign-on: offered when the server has it configured. With Edge SSO the first click goes through the
   // sign-in proxy; if that was refused (sso_error), the button falls back to the provider's own sign-in.
   let sso = $state<{ name: string; login: string; edge: string | null } | null>(null);
@@ -31,21 +34,41 @@
     }
     busy = true;
     try {
-      const me = session.setupRequired ? await setup(code.trim(), username, password) : await login(username, password);
-      session.signedIn(me);
+      if (pending) {
+        const me = await loginTotp(pending, totp.trim());
+        pending = '';
+        await session.signedIn(me);
+        return;
+      }
+      const r = session.setupRequired ? await setup(code.trim(), username, password) : await login(username, password);
+      if ('pending' in r) pending = r.pending;
+      else await session.signedIn(r);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
       busy = false;
       password = '';
       confirm = '';
+      totp = '';
     }
+  }
+
+  function back() {
+    pending = '';
+    error = '';
   }
 </script>
 
 <div class="auth">
   <form onsubmit={submit}>
     <h1><img src="/branding.jpg" alt="Bosun: fast web security proxy and scanner" /></h1>
+    {#if pending}
+      <p class="muted">Enter the code from your authenticator app, or one of your recovery codes.</p>
+      <label>Authentication code <input bind:value={totp} autocomplete="one-time-code" inputmode="text" autocapitalize="off" spellcheck="false" required /></label>
+      {#if error}<p class="error">{error}</p>{/if}
+      <button class="primary" disabled={busy}>Verify</button>
+      <button type="button" onclick={back}>Back</button>
+    {:else}
     {#if session.setupRequired}
       <p class="muted">First run: create the admin account. The setup code is printed by <code>bosun serve</code>.</p>
       <label>Setup code <input bind:value={code} autocomplete="off" required /></label>
@@ -64,6 +87,7 @@
       <a class="sso" href={sso.edge && !ssoError ? sso.edge : sso.login}>
         {sso.edge && !ssoError ? 'Continue with Edge SSO' : `Sign in with ${sso.name}`}
       </a>
+    {/if}
     {/if}
   </form>
 </div>

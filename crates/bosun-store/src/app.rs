@@ -179,7 +179,39 @@ const MIGRATIONS: &[migrate::Migration] = &[
             ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'full';
         "#,
     },
+    migrate::Migration {
+        version: 4,
+        rebuild: false,
+        what: "TOTP second factor and recovery codes",
+        sql: r#"
+            -- `secret` is sealed with the data key by the API layer. `confirmed_ms` is NULL until the first valid
+            -- code is presented, and the factor is only enforced once it is set. `last_step` is the newest
+            -- 30-second step already used, so a code works once.
+            CREATE TABLE totp (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                secret BLOB NOT NULL,
+                created_ms INTEGER NOT NULL,
+                confirmed_ms INTEGER,
+                last_step INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE totp_recovery (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                code_hash BLOB NOT NULL,
+                used_ms INTEGER
+            );
+            CREATE INDEX totp_recovery_user ON totp_recovery(user_id, code_hash);
+        "#,
+    },
 ];
+
+/// A user's TOTP enrolment, as stored. The secret is still sealed.
+#[derive(Debug, Clone)]
+pub struct TotpRow {
+    pub sealed_secret: Vec<u8>,
+    pub confirmed: bool,
+    pub last_step: i64,
+}
 
 #[derive(Debug)]
 pub struct AppDb {
@@ -520,6 +552,145 @@ impl AppDb {
             .execute("DELETE FROM sessions WHERE user_id = ?1", [user_id])?)
     }
 
+    // --- TOTP -----------------------------------------------------------------------------------------------
+
+    /// Start (or restart) enrolment with a sealed secret. Refused while a confirmed factor exists.
+    pub fn totp_begin(&self, user_id: i64, sealed_secret: &[u8]) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let confirmed: Option<bool> = tx
+            .query_row(
+                "SELECT confirmed_ms IS NOT NULL FROM totp WHERE user_id = ?1",
+                [user_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if confirmed == Some(true) {
+            return Err(StoreError::Conflict("a second factor is already set up".into()));
+        }
+        tx.execute(
+            "INSERT INTO totp (user_id, secret, created_ms, confirmed_ms, last_step) VALUES (?1, ?2, ?3, NULL, 0)
+             ON CONFLICT(user_id) DO UPDATE SET secret = excluded.secret, created_ms = excluded.created_ms,
+                confirmed_ms = NULL, last_step = 0",
+            params![user_id, sealed_secret, bosun_model::now_ms()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn totp_row(&self, user_id: i64) -> Result<Option<TotpRow>, StoreError> {
+        Ok(self
+            .db
+            .read()?
+            .query_row(
+                "SELECT secret, confirmed_ms IS NOT NULL, last_step FROM totp WHERE user_id = ?1",
+                [user_id],
+                |r| {
+                    Ok(TotpRow {
+                        sealed_secret: r.get(0)?,
+                        confirmed: r.get(1)?,
+                        last_step: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Whether the user has a confirmed second factor.
+    pub fn totp_enabled(&self, user_id: i64) -> Result<bool, StoreError> {
+        Ok(self
+            .db
+            .read()?
+            .query_row(
+                "SELECT confirmed_ms IS NOT NULL FROM totp WHERE user_id = ?1",
+                [user_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    /// A password account (not single sign-on) with no confirmed second factor: what a "require TOTP" policy stops.
+    pub fn totp_missing(&self, user_id: i64) -> Result<bool, StoreError> {
+        Ok(self
+            .db
+            .read()?
+            .query_row(
+                "SELECT sso IS NULL AND NOT EXISTS (SELECT 1 FROM totp WHERE user_id = users.id AND confirmed_ms IS NOT NULL)
+                 FROM users WHERE id = ?1",
+                [user_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    /// Finish enrolment: the first valid code (at `step`) turns the factor on and sets the recovery codes.
+    /// False when there was no unconfirmed enrolment.
+    pub fn totp_confirm(
+        &self,
+        user_id: i64,
+        step: i64,
+        recovery_hashes: &[Vec<u8>],
+    ) -> Result<bool, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let n = tx.execute(
+            "UPDATE totp SET confirmed_ms = ?1, last_step = ?2 WHERE user_id = ?3 AND confirmed_ms IS NULL",
+            params![bosun_model::now_ms(), step, user_id],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        replace_recovery(&tx, user_id, recovery_hashes)?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Use up a time step. True once per step (and never for an older step than one already used): a code that was
+    /// accepted cannot be accepted again.
+    pub fn totp_accept_step(&self, user_id: i64, step: i64) -> Result<bool, StoreError> {
+        Ok(self.conn().execute(
+            "UPDATE totp SET last_step = ?1 WHERE user_id = ?2 AND confirmed_ms IS NOT NULL AND last_step < ?1",
+            params![step, user_id],
+        )? > 0)
+    }
+
+    /// Use a recovery code (by its hash). True once per code.
+    pub fn totp_use_recovery(&self, user_id: i64, hash: &[u8]) -> Result<bool, StoreError> {
+        Ok(self.conn().execute(
+            "UPDATE totp_recovery SET used_ms = ?1 WHERE id = (
+                SELECT id FROM totp_recovery WHERE user_id = ?2 AND code_hash = ?3 AND used_ms IS NULL LIMIT 1)",
+            params![bosun_model::now_ms(), user_id, hash],
+        )? > 0)
+    }
+
+    pub fn totp_replace_recovery(&self, user_id: i64, hashes: &[Vec<u8>]) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        replace_recovery(&tx, user_id, hashes)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn totp_recovery_left(&self, user_id: i64) -> Result<i64, StoreError> {
+        Ok(self.db.read()?.query_row(
+            "SELECT count(*) FROM totp_recovery WHERE user_id = ?1 AND used_ms IS NULL",
+            [user_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Remove a user's second factor and recovery codes. True when there was one (confirmed or not).
+    pub fn totp_remove(&self, user_id: i64) -> Result<bool, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM totp_recovery WHERE user_id = ?1", [user_id])?;
+        let n = tx.execute("DELETE FROM totp WHERE user_id = ?1", [user_id])?;
+        tx.commit()?;
+        Ok(n > 0)
+    }
+
     pub fn delete_session(&self, token: &str) -> Result<(), StoreError> {
         self.conn()
             .execute("DELETE FROM sessions WHERE token_hash = ?1", [token_hash(token)])?;
@@ -658,6 +829,21 @@ impl AppDb {
         )?;
         Ok(())
     }
+}
+
+fn replace_recovery(
+    tx: &rusqlite::Transaction<'_>,
+    user_id: i64,
+    hashes: &[Vec<u8>],
+) -> Result<(), StoreError> {
+    tx.execute("DELETE FROM totp_recovery WHERE user_id = ?1", [user_id])?;
+    for h in hashes {
+        tx.execute(
+            "INSERT INTO totp_recovery (user_id, code_hash) VALUES (?1, ?2)",
+            params![user_id, h],
+        )?;
+    }
+    Ok(())
 }
 
 fn user_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<User> {

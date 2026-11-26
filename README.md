@@ -149,7 +149,7 @@ See [docs/testing.md](docs/testing.md) for the details.
 | `bosun serve [--project NAME] [--proxy ADDR] [--listen ADDR]` | Run the proxy and the UI/API |
 | `bosun doctor` | Check the install (permissions, keys, CA trust, exposure) |
 | `bosun ca export [--der] [--out FILE]`, `ca info` | The CA certificate and its fingerprints |
-| `bosun user add NAME [--role viewer\|tester\|admin]`, `user passwd NAME`, `user list` | Accounts (password on stdin) |
+| `bosun user add NAME [--role viewer\|tester\|admin]`, `user passwd NAME`, `user totp-reset NAME`, `user list` | Accounts (password on stdin) |
 | `bosun example-config` | An annotated configuration file |
 | `bosun login --server URL [--profile NAME] [-u USER]` | Sign in to an engine and keep an API token in a profile (password on stdin) |
 | `bosun status [--server URL] [--profile NAME] [--json]` | Show the engine you are signed in to |

@@ -3,6 +3,7 @@
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
   import { fmtTime } from '../lib/bytes';
+  import TotpPanel from '../components/TotpPanel.svelte';
   import type { ApiToken, AuditEntry, Role, SessionInfo, User } from '../lib/types';
 
   interface ProxyInfo { listen: string; http2: boolean; invisible: boolean; verify_upstream_tls: boolean; auth_required: boolean; tools_stopped: boolean; tls_passthrough: string[] }
@@ -22,6 +23,7 @@
   let note = $state('');
   let error = $state('');
   let pw = $state({ current: '', next: '' });
+  let totpRequired = $state(false);
   let nu = $state<{ username: string; password: string; role: Role }>({ username: '', password: '', role: 'tester' });
 
   async function run(f: () => Promise<unknown>, ok = '') {
@@ -38,6 +40,7 @@
   async function load() {
     const me = session.me?.user.id;
     [proxy, ca, tokens, sessions] = await Promise.all([api.get<ProxyInfo>('/proxy'), api.get<CaInfo>('/ca'), api.get<ApiToken[]>('/tokens'), api.get<SessionInfo[]>(`/users/${me}/sessions`)]);
+    totpRequired = (await api.get<{ required: boolean }>('/auth/totp')).required;
     if (session.can('admin')) [users, audit] = await Promise.all([api.get<User[]>('/users'), api.get<AuditEntry[]>('/audit')]);
   }
 
@@ -66,6 +69,8 @@
   const setRole = (id: number, role: Role) => run(async () => { await api.put(`/users/${id}/role`, { role }); await load(); }, 'Role changed; that user was signed out.');
   const revokeSession = (id: string) => run(async () => { await api.del(`/users/${session.me?.user.id}/sessions/${id}`); await load(); });
   const revokeOthers = () => run(async () => { await api.del(`/users/${session.me?.user.id}/sessions`); await load(); }, 'All sessions ended, including this one.');
+  const setTotpRequired = (required: boolean) => run(async () => { await api.put('/auth/totp/required', { required }); await load(); }, required ? 'A second factor is now required of every password account.' : 'A second factor is optional again.');
+  const resetTotp = (id: number) => run(async () => { await api.del(`/users/${id}/totp`); await load(); }, 'Second factor removed; that user was signed out.');
   const delUser = (id: number) => run(async () => { await api.del(`/users/${id}`); await load(); });
 
   onMount(load);
@@ -132,6 +137,11 @@
   </section>
 
   <section>
+    <h2>Second factor</h2>
+    <TotpPanel onchange={load} />
+  </section>
+
+  <section>
     <h2>Your sessions</h2>
     <table class="grid"><tbody>
       {#each sessions as s (s.id)}
@@ -146,9 +156,10 @@
       <h2>Users</h2>
       <table class="grid"><tbody>
         {#each users as u (u.id)}
-          <tr><td>{u.username}</td><td><select value={u.role} onchange={(e) => setRole(u.id, e.currentTarget.value as Role)}><option value="viewer">viewer</option><option value="tester">tester</option><option value="admin">admin</option></select></td><td>{#if u.id !== session.me?.user.id}<button onclick={() => delUser(u.id)}>Delete</button>{/if}</td></tr>
+          <tr><td>{u.username}</td><td><select value={u.role} onchange={(e) => setRole(u.id, e.currentTarget.value as Role)}><option value="viewer">viewer</option><option value="tester">tester</option><option value="admin">admin</option></select></td><td><button onclick={() => resetTotp(u.id)} title="Remove this user's second factor (a lost device) and sign them out">Reset second factor</button></td><td>{#if u.id !== session.me?.user.id}<button onclick={() => delUser(u.id)}>Delete</button>{/if}</td></tr>
         {/each}
       </tbody></table>
+      <label class="small"><input type="checkbox" checked={totpRequired} onchange={(e) => setTotpRequired(e.currentTarget.checked)} /> Require a second factor of every password account</label>
       <form class="row" onsubmit={(e) => { e.preventDefault(); addUser(); }}>
         <input placeholder="username" aria-label="New user name" bind:value={nu.username} required />
         <input type="password" placeholder="password (12+)" aria-label="New user password (12 or more characters)" bind:value={nu.password} minlength="12" autocomplete="new-password" required />

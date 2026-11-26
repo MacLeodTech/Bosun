@@ -18,6 +18,7 @@ pub mod projects;
 pub mod repeater;
 pub mod security;
 pub mod sso;
+pub mod totp;
 pub mod web;
 
 use std::convert::Infallible;
@@ -193,6 +194,12 @@ pub struct Inner {
     pub loop_guard: LoopGuard,
     pub sso: Option<sso::Sso>,
     pub tickets: auth::Tickets,
+    /// Password-checked sign-ins waiting for a second factor.
+    pub pending: totp::Pending,
+    /// The data key, for sealing second-factor secrets.
+    pub data_key: Arc<bosun_ca::DataKey>,
+    /// An admin requires a second factor of every password account.
+    pub totp_required: std::sync::atomic::AtomicBool,
 }
 
 pub struct Deps {
@@ -208,6 +215,8 @@ pub struct Deps {
     pub browser: Option<BrowserLauncher>,
     /// The UI's certificate; required when `api.tls` is on.
     pub ui_tls: Option<Arc<bosun_ca::UiTls>>,
+    /// The install's data key (second-factor secrets are sealed with it).
+    pub data_key: Arc<bosun_ca::DataKey>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -300,6 +309,8 @@ impl AppState {
         } else {
             None
         };
+        let totp_required =
+            std::sync::atomic::AtomicBool::new(d.app.meta("totp_required")?.as_deref() == Some("1"));
         let loop_guard = d.proxy.loop_guard();
         let sso = match &cfg.sso {
             Some(c) => Some(sso::Sso::new(c).map_err(bosun_store::StoreError::Conflict)?),
@@ -336,6 +347,9 @@ impl AppState {
             loop_guard,
             sso,
             tickets: auth::Tickets::default(),
+            pending: totp::Pending::default(),
+            data_key: d.data_key,
+            totp_required,
         };
         Ok((
             Self {
@@ -357,6 +371,14 @@ pub fn router(st: AppState) -> Router {
         .route("/auth/ticket", post(auth::ticket))
         .route("/auth/sso", get(sso::config))
         .route("/auth/password", post(auth::change_password))
+        .route("/auth/login/totp", post(totp::login))
+        .route("/auth/totp", get(totp::status))
+        .route("/auth/totp/enroll", post(totp::enroll))
+        .route("/auth/totp/confirm", post(totp::confirm))
+        .route("/auth/totp/disable", post(totp::disable))
+        .route("/auth/totp/recovery-codes", post(totp::recovery_codes))
+        .route("/auth/totp/required", put(totp::set_required))
+        .route("/users/{id}/totp", axum::routing::delete(totp::admin_reset))
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
         .route("/flows/query", get(h::check_flow_query))
         .route("/flows/tags", post(h::change_tags))

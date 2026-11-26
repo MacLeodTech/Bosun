@@ -30,8 +30,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Sign in with a username and password. Sets the session cookie. No sign-in needed. */
+        /** @description Sign in with a username and password. Sets the session cookie, unless the account has a second factor: then the answer holds a `pending` token for `POST /auth/login/totp` and no cookie is set. No sign-in needed. */
         post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Finish a sign-in that asked for a second factor: the `pending` token and a TOTP code (or an unused recovery code). Each code works once; wrong codes count against the sign-in limits (429 with Retry-After). No sign-in needed. */
+        post: operations["login_totp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -117,6 +134,108 @@ export interface paths {
         put?: never;
         /** @description Exchange the single-use, 60-second login ticket of an embedded engine (`bosun serve --embedded`) for an admin session. Loopback only; the exchange is audited. No sign-in needed. */
         post: operations["login_ticket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Your own second-factor state. Needs the viewer role or above. */
+        get: operations["totp_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Turn the second factor on with the first valid code, and get ten one-time recovery codes (shown once). Audited. Needs the viewer role or above. */
+        post: operations["totp_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Turn your own second factor off. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above. */
+        post: operations["totp_disable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Make a TOTP secret for your account (base32 and an `otpauth://` URI). Nothing asks for a code until `POST /auth/totp/confirm` receives a valid one; enrolling again before that replaces the secret. 409 when a second factor is already on. Audited. Needs the viewer role or above. */
+        post: operations["totp_enroll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Make a new set of ten recovery codes; the old ones stop working. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above. */
+        post: operations["totp_recovery_codes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/required": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Require a second factor of every password account (single sign-on accounts and the desktop ticket are not asked). Accounts without one can then only reach the pages that set it up. Audited. Needs the admin role. */
+        put: operations["totp_set_required"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -988,6 +1107,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{id}/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Remove a user's second factor and recovery codes (a lost device) and end their sessions. Audited. Needs the admin role. */
+        delete: operations["reset_user_totp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1235,6 +1371,8 @@ export interface components {
             password: string;
             username: string;
         };
+        /** @description The answer to a password sign-in: a session, or a request for the second factor (no session yet). */
+        LoginReply: components["schemas"]["Me"] | components["schemas"]["SecondFactor"];
         MatchRule: {
             comment?: string;
             enabled?: boolean;
@@ -1438,6 +1576,10 @@ export interface components {
             message: string;
             start: number;
         };
+        RecoveryCodes: {
+            /** @description Shown once; each works once. */
+            recovery_codes: string[];
+        };
         RenameProject: {
             name: string;
         };
@@ -1487,6 +1629,12 @@ export interface components {
         ScopeSpec: {
             exclude?: components["schemas"]["ScopeRule"][];
             include?: components["schemas"]["ScopeRule"][];
+        };
+        SecondFactor: {
+            /** @description Send this with the code to `POST /auth/login/totp`. Valid for five minutes, from the same address. */
+            pending: string;
+            /** @description The kind of second factor to present: `totp`. */
+            second_factor: string;
         };
         SendBody: {
             /**
@@ -1672,6 +1820,36 @@ export interface components {
          * @enum {string}
          */
         TokenScope: "read" | "full";
+        TotpCodeBody: {
+            /** @description A 6-digit code (a recovery code also works where the operation allows it). */
+            code: string;
+        };
+        TotpEnrolment: {
+            /** @description The same secret as an `otpauth://` URI. */
+            otpauth_uri: string;
+            /** @description The shared secret, base32. Shown once. */
+            secret: string;
+        };
+        TotpLoginBody: {
+            /** @description A 6-digit code, or an unused recovery code. */
+            code: string;
+            pending: string;
+        };
+        TotpRequiredBody: {
+            required: boolean;
+        };
+        TotpStatus: {
+            /** @description A confirmed second factor is on for this account. */
+            enabled: boolean;
+            /** @description A secret was made but no code has confirmed it yet. */
+            enrolling: boolean;
+            /** Format: int64 */
+            recovery_codes_left: number;
+            /** @description An admin requires every password account to have a second factor. */
+            required: boolean;
+            /** @description This account must set up a second factor before it can do anything else. */
+            setup_required: boolean;
+        };
         User: {
             /** Format: int64 */
             created_ms: number;
@@ -1846,6 +2024,57 @@ export interface operations {
             };
         };
         responses: {
+            /** @description A session (cookie set), or `second_factor` and `pending` when the account has a second factor: no session exists until `POST /auth/login/totp` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    login_totp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpLoginBody"];
+            };
+        };
+        responses: {
             /** @description OK */
             200: {
                 headers: {
@@ -1857,6 +2086,15 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Wrong code, or the pending sign-in expired */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2150,6 +2388,302 @@ export interface operations {
             };
             /** @description Too many attempts */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_confirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Wrong code, or no enrolment in progress */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already set up */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeBody"];
+            };
+        };
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Wrong code, or not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_enroll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpEnrolment"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already set up */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_recovery_codes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Wrong code, or not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attempts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    totp_set_required: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpRequiredBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5979,6 +6513,54 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    reset_user_totp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description That user has no second factor */
             404: {
                 headers: {
                     [name: string]: unknown;

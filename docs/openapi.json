@@ -99,13 +99,74 @@
         "tags": [
           "session"
         ],
-        "description": "Sign in with a username and password. Sets the session cookie. No sign-in needed.",
+        "description": "Sign in with a username and password. Sets the session cookie, unless the account has a second factor: then the answer holds a `pending` token for `POST /auth/login/totp` and no cookie is set. No sign-in needed.",
         "operationId": "login",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LoginBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A session (cookie set), or `second_factor` and `pending` when the account has a second factor: no session exists until `POST /auth/login/totp`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login/totp": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Finish a sign-in that asked for a second factor: the `pending` token and a TOTP code (or an unused recovery code). Each code works once; wrong codes count against the sign-in limits (429 with Retry-After). No sign-in needed.",
+        "operationId": "login_totp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpLoginBody"
               }
             }
           },
@@ -124,6 +185,16 @@
           },
           "400": {
             "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong code, or the pending sign-in expired",
             "content": {
               "application/json": {
                 "schema": {
@@ -445,6 +516,345 @@
           },
           "429": {
             "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "description": "Your own second-factor state. Needs the viewer role or above.",
+        "operationId": "totp_status",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/confirm": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Turn the second factor on with the first valid code, and get ten one-time recovery codes (shown once). Audited. Needs the viewer role or above.",
+        "operationId": "totp_confirm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodes"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Wrong code, or no enrolment in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/disable": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Turn your own second factor off. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.",
+        "operationId": "totp_disable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wrong code, or not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/enroll": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Make a TOTP secret for your account (base32 and an `otpauth://` URI). Nothing asks for a code until `POST /auth/totp/confirm` receives a valid one; enrolling again before that replaces the secret. 409 when a second factor is already on. Audited. Needs the viewer role or above.",
+        "operationId": "totp_enroll",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnrolment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/recovery-codes": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "description": "Make a new set of ten recovery codes; the old ones stop working. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.",
+        "operationId": "totp_recovery_codes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodes"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wrong code, or not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/totp/required": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "description": "Require a second factor of every password account (single sign-on accounts and the desktop ticket are not asked). Accounts without one can then only reach the pages that set it up. Audited. Needs the admin role.",
+        "operationId": "totp_set_required",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpRequiredBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
             "content": {
               "application/json": {
                 "schema": {
@@ -5123,6 +5533,62 @@
           }
         }
       }
+    },
+    "/users/{id}/totp": {
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "description": "Remove a user's second factor and recovery codes (a lost device) and end their sessions. Audited. Needs the admin role.",
+        "operationId": "reset_user_totp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "That user has no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5968,6 +6434,17 @@
           }
         }
       },
+      "LoginReply": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Me"
+          },
+          {
+            "$ref": "#/components/schemas/SecondFactor"
+          }
+        ],
+        "description": "The answer to a password sign-in: a session, or a request for the second factor (no session yet)."
+      },
       "MatchRule": {
         "type": "object",
         "required": [
@@ -6701,6 +7178,21 @@
           }
         }
       },
+      "RecoveryCodes": {
+        "type": "object",
+        "required": [
+          "recovery_codes"
+        ],
+        "properties": {
+          "recovery_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Shown once; each works once."
+          }
+        }
+      },
       "RenameProject": {
         "type": "object",
         "required": [
@@ -6848,6 +7340,23 @@
             "items": {
               "$ref": "#/components/schemas/ScopeRule"
             }
+          }
+        }
+      },
+      "SecondFactor": {
+        "type": "object",
+        "required": [
+          "second_factor",
+          "pending"
+        ],
+        "properties": {
+          "pending": {
+            "type": "string",
+            "description": "Send this with the code to `POST /auth/login/totp`. Valid for five minutes, from the same address."
+          },
+          "second_factor": {
+            "type": "string",
+            "description": "The kind of second factor to present: `totp`."
           }
         }
       },
@@ -7396,6 +7905,94 @@
           "read",
           "full"
         ]
+      },
+      "TotpCodeBody": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "A 6-digit code (a recovery code also works where the operation allows it)."
+          }
+        }
+      },
+      "TotpEnrolment": {
+        "type": "object",
+        "required": [
+          "secret",
+          "otpauth_uri"
+        ],
+        "properties": {
+          "otpauth_uri": {
+            "type": "string",
+            "description": "The same secret as an `otpauth://` URI."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The shared secret, base32. Shown once."
+          }
+        }
+      },
+      "TotpLoginBody": {
+        "type": "object",
+        "required": [
+          "pending",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "A 6-digit code, or an unused recovery code."
+          },
+          "pending": {
+            "type": "string"
+          }
+        }
+      },
+      "TotpRequiredBody": {
+        "type": "object",
+        "required": [
+          "required"
+        ],
+        "properties": {
+          "required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TotpStatus": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "enrolling",
+          "recovery_codes_left",
+          "required",
+          "setup_required"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "A confirmed second factor is on for this account."
+          },
+          "enrolling": {
+            "type": "boolean",
+            "description": "A secret was made but no code has confirmed it yet."
+          },
+          "recovery_codes_left": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "An admin requires every password account to have a second factor."
+          },
+          "setup_required": {
+            "type": "boolean",
+            "description": "This account must set up a second factor before it can do anything else."
+          }
+        }
       },
       "User": {
         "type": "object",

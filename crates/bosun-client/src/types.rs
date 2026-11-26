@@ -29,6 +29,29 @@ pub struct Me {
     pub csrf: Option<String>,
 }
 
+/// Your second-factor state (`GET /auth/totp`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TotpStatus {
+    pub enabled: bool,
+    pub enrolling: bool,
+    pub recovery_codes_left: i64,
+    pub required: bool,
+    pub setup_required: bool,
+}
+
+/// A new TOTP secret to put in an authenticator app.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TotpEnrolment {
+    /// Base32.
+    pub secret: String,
+    pub otpauth_uri: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecoveryCodes {
+    pub recovery_codes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Status {
     pub name: String,

@@ -57,6 +57,24 @@ This document says what is protected, from whom, and how. Code comments refer ba
   `read` scoped: such a token is refused (403) on anything but GET and HEAD. Users can list and end their own
   sessions; admins can list and end anyone's sessions and tokens and change roles (a role change ends the user's
   sessions; the last admin cannot be demoted).
+- *A stolen or guessed password (TOTP second factor).* An account can turn on an RFC 6238 second factor (HMAC-SHA-1,
+  6 digits, 30 s). Enrolment is two steps (a secret, then a first valid code), so a half-finished setup never locks
+  anyone out. With it on, `POST /auth/login` only checks the password and returns a five-minute `pending` token
+  bound to the client address; no session or cookie exists until `POST /auth/login/totp` receives the token and a
+  code. A pending sign-in allows five code tries. Codes are compared in constant time against the previous, current
+  and next step; the newest step used is stored in the account database and an equal or older step is refused, so
+  a code works once (the update is atomic, so two simultaneous requests cannot both win). Wrong codes use the
+  password limiter (three free tries per address and account, then growing delays; per-address caps) and also count
+  towards ten failures per account across all addresses in 15 minutes, which locks the second factor of that
+  account (and only that) for the rest of the window: guessing a six-digit code from many addresses is stopped at
+  about ten tries per window. Ten recovery codes (80 bits each) are shown once, stored as SHA-256 hashes and work once; using one is audited.
+  Turning the factor off, or making new recovery codes, needs a valid code or recovery code (so a stolen session
+  cannot remove it). An admin can reset a user's factor (`DELETE /users/{id}/totp`, or `bosun user totp-reset`; the
+  user's sessions end) for a lost device, and can require a second factor of every password account: until a
+  session's account has one, the API answers 403 for everything except the enrolment pages. Limits worth knowing:
+  single sign-on sessions are not asked for a code (the identity provider is the second factor) and are not subject
+  to the requirement; API tokens made before the requirement keep working (they are not ambient credentials, and
+  making one needs a session); the desktop login ticket skips the code, as it is a local single-use exchange.
 - *Spoofed client addresses.* Behind a reverse proxy every client shares the proxy's address. Set
   `api.trusted_proxies` to the proxy's network; only then are `X-Forwarded-For` (the rightmost entry that is not a
   trusted proxy) and `X-Forwarded-Proto` believed, and used for limits, audit entries and the `Secure` cookie.
@@ -131,7 +149,8 @@ This document says what is protected, from whom, and how. Code comments refer ba
 ### Repudiation
 
 - An append-only audit log (database triggers refuse UPDATE and DELETE) records sign-ins, account, token, scope,
-  rule, kill-switch, role, session-revocation, login-ticket, project (create, open, close, rename, delete, export,
+  rule, kill-switch, role, session-revocation, login-ticket, second-factor (enrolment, enable, disable, recovery
+  codes used or replaced, failed codes, the require-everyone policy, admin and CLI resets), project (create, open, close, rename, delete, export,
   backup, import and refused imports) and intercept changes (settings, drop, edited forward, forward-all),
   with the user and remote address. Admins can read it in the UI.
 
@@ -156,7 +175,10 @@ This document says what is protected, from whom, and how. Code comments refer ba
   `BOSUN_DATA_KEY` never reaches a process that loads hostile pages. Every spawn goes through
   `child::clean_command`.
 - *Secrets in responses.* API responses are `Cache-Control: no-store`; tokens are stored only as SHA-256 hashes
-  and shown once; password hashes never leave the account database.
+  and shown once; password hashes never leave the account database. TOTP secrets are sealed with the data key
+  (ChaCha20-Poly1305, bound to the user id) before they reach the account database, and shown once at enrolment;
+  recovery codes are stored only as hashes. Someone who holds both the account database and the data key can read
+  the secrets, as with the CA key.
 - *An open proxy.* The proxy refuses to start on a non-loopback address without proxy authentication or a
   client allowlist.
 

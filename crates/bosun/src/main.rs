@@ -158,6 +158,10 @@ enum UserCmd {
     Passwd {
         username: String,
     },
+    /// Remove a user's TOTP second factor and recovery codes (a lost device); signs the user out everywhere.
+    TotpReset {
+        username: String,
+    },
     List,
 }
 
@@ -292,6 +296,20 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     app.audit(None, "user.password", &format!("{} via CLI", u.username), None)?;
                     println!(
                         "password changed; {} is signed out everywhere and its API tokens are revoked",
+                        u.username
+                    );
+                }
+                UserCmd::TotpReset { username } => {
+                    let Some((u, _)) = app.user_for_login(&username)? else {
+                        bail!("no such user")
+                    };
+                    if !app.totp_remove(u.id)? {
+                        bail!("{} has no second factor", u.username);
+                    }
+                    app.revoke_sessions(u.id)?;
+                    app.audit(None, "user.totp.reset", &format!("{} via CLI", u.username), None)?;
+                    println!(
+                        "second factor removed; {} is signed out everywhere and can set up a new one in Settings",
                         u.username
                     );
                 }

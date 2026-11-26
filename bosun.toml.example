@@ -12,6 +12,9 @@
 # Project name (stored as <data_dir>/projects/<name>.bosun) or a path to a .bosun file.
 project = "default"
 
+# Prometheus /metrics on its own listener, without authentication (off by default; use an internal address).
+# metrics_listen = "127.0.0.1:9090"
+
 [proxy]
 # Loopback by default. Any other address needs [proxy.auth] or allow_clients, so the proxy is never open.
 listen = "127.0.0.1:8080"
@@ -29,7 +32,7 @@ upstream_timeout_secs = 120
 
 # [proxy.auth]
 # username = "bosun"
-# password = "at least twelve characters"
+# password = "at least twelve characters"   # or: password_file = "/run/secrets/bosun_proxy_password"
 
 # [proxy.upstream]
 # kind = "http"           # or "socks5"

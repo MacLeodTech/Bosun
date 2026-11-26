@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod doctor;
+pub mod server_mode;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -187,6 +188,17 @@ impl Engine {
         let r1 = rx.clone();
         let t1 = tokio::spawn(async move { p.serve(proxy_listener, wait(r1)).await });
         let mut tasks = vec![t1];
+        if let Some(addr) = cfg.metrics_listen {
+            let l = tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("cannot listen on {addr} for metrics"))?;
+            tracing::info!(addr = %l.local_addr()?, "serving Prometheus metrics (no authentication)");
+            tasks.push(tokio::spawn(server_mode::serve_metrics(
+                l,
+                proxy.clone(),
+                wait(rx.clone()),
+            )));
+        }
         let (mut ui_fingerprint, mut setup_code, mut login_ticket) = (None, None, None);
         if let (Some(app), Some(api_listener)) = (app, api_listener) {
             let browser = BrowserLauncher {
@@ -216,6 +228,7 @@ impl Engine {
                 None
             };
             ui_fingerprint = ui_tls.as_ref().map(|u| u.fingerprint());
+            server_mode::bootstrap(&app)?;
             let (state, code) = AppState::new(
                 &api_cfg,
                 Deps {

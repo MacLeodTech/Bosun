@@ -41,6 +41,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
   which a cross-origin page cannot set without a CORS preflight the API never answers. The Origin header must
   match the UI's own origin exactly (scheme, host and port) or an allowlisted origin, on every request including
   the WebSocket upgrade; `Sec-Fetch-Site: cross-site` is refused. There is no CORS at all.
+- *Non-interactive setup (containers).* `BOSUN_ADMIN_USER` with `BOSUN_ADMIN_PASSWORD_FILE` (and optionally
+  `BOSUN_BOOTSTRAP_TOKEN_FILE`, whose content becomes a full-scope API token) create the first admin at start-up,
+  only while there are no users, and each is audited (`setup`, `token.create`). Secrets come from files, never from
+  environment values, so they stay out of `docker inspect` and process listings; the same holds for
+  `password_file` on `proxy.auth` and the upstream proxy. Whoever can write those files or set that environment
+  controls the first admin, which is the same trust as owning the container. `/healthz` is the only unauthenticated
+  route besides `/status`: it returns `ok` and nothing else. The optional `/metrics` listener
+  (`metrics_listen`, off by default) has no authentication and shows only counters; bind it to an internal interface.
 - *DNS rebinding.* A hostile page rebinds its own name to 127.0.0.1 and becomes "same origin" with the UI. The
   Host header must be a known name (loopback names plus `api.hosts`); anything else gets 421.
 - *Guessing passwords.* argon2id hashes, a 12-character minimum, the same work for unknown users as for wrong

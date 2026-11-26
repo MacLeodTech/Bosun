@@ -44,6 +44,11 @@ async fn save_setting<T: Serialize + Send + 'static>(
         .map_err(internal)
 }
 
+/// Liveness for container health checks: no authentication, no detail.
+pub async fn healthz() -> &'static str {
+    "ok"
+}
+
 pub async fn status(State(st): State<AppState>) -> Response {
     let setup_required = st
         .inner

@@ -164,6 +164,19 @@ See [docs/testing.md](docs/testing.md) for the details.
 Configuration: `--config FILE` or `BOSUN_CONFIG`. Data: `--data-dir`, `BOSUN_DATA_DIR`, else the platform data
 directory. The data key: `BOSUN_DATA_KEY` (base64) or `BOSUN_DATA_KEY_FILE`, else `<data>/data.key`.
 
+Server mode (containers):
+
+- `GET /healthz` answers `ok` without authentication, and `bosun healthcheck` exits 0 when the configured UI/API
+  listener answers it (no curl needed; with `api.tls` it only checks that the port accepts connections).
+- Setup without a terminal: `BOSUN_ADMIN_USER` and `BOSUN_ADMIN_PASSWORD_FILE` create the first admin at start-up, and
+  `BOSUN_BOOTSTRAP_TOKEN_FILE` (a file holding a token of at least 32 characters) adds a full API token for it. Both
+  are audited and ignored once any user exists.
+- `password_file` replaces `password` in `proxy.auth` and `proxy.upstream`.
+- `BOSUN_LOG_FORMAT=json` writes one JSON object per log line.
+- `metrics_listen = "10.0.0.5:9090"` serves Prometheus `/metrics` on its own listener (off by default, no
+  authentication).
+- The memory budget defaults to half the container's cgroup memory limit (`proxy.memory_budget_mib` overrides it).
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) and the [threat model](docs/threat-model.md). In short: everything listens on

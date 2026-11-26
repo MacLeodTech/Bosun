@@ -472,6 +472,8 @@ pub fn router(st: AppState) -> Router {
         .route("/events", get(events::events));
     Router::new()
         .nest("/api/v1", api)
+        // Container health check: no authentication, no detail (not part of the versioned API).
+        .route("/healthz", get(h::healthz))
         // Outside /api/: the browser arrives by cross-site redirect (see sso.rs).
         .route("/auth/oidc/login", get(sso::login))
         .route("/auth/oidc/callback", get(sso::callback))

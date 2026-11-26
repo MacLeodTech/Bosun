@@ -375,6 +375,7 @@ async fn proxy_auth_is_enforced() {
         auth: Some(ProxyAuth {
             username: "tester".into(),
             password: "correct horse battery".into(),
+            password_file: None,
         }),
         ..Default::default()
     };
@@ -502,6 +503,7 @@ async fn passthrough_tunnels_go_through_the_upstream_socks_proxy() {
                 addr: socks.to_string(),
                 username: None,
                 password: None,
+                password_file: None,
                 local_dns: false,
             }),
             ..Default::default()

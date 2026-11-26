@@ -188,14 +188,13 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-23, WP-25, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
-| [ ] | WP-23 | Server mode in the engine | 3 | M | WP-03 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
 | [ ] | WP-26 | CLI: client commands | 3 | L | WP-14 |
 | [ ] | WP-20 | Data key in the OS keychain | 3 | M | |
@@ -328,22 +327,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Replaces:** Release items "Desktop installers" and "Auto-update for the desktop app".
 - **Decision for the owner:** deferred (2026-11-23). Ship unsigned Windows builds for now. The free option to try later
     is SignPath Foundation, which signs open-source projects at no cost.
-
-#### WP-23 Server mode in the engine · Phase 3 · M
-
-- **Why:** the container needs features that don't exist yet: health checks, setup without a terminal, secrets
-  from files and operational output.
-- **Do:**
-  - `GET /healthz` (no auth, no detail) and a `bosun healthcheck` subcommand, which needs no curl in distroless.
-  - Non-interactive setup: `BOSUN_ADMIN_USER` plus `BOSUN_ADMIN_PASSWORD_FILE`, and optionally
-    `BOSUN_BOOTSTRAP_TOKEN_FILE`, to create the first admin and an API token at start-up. Audited, and ignored when
-    users already exist.
-  - `password_file` options for `proxy.auth` and the upstream proxy credentials.
-  - JSON logs (`BOSUN_LOG_FORMAT=json`), and an optional Prometheus `/metrics` on a separate listener (off by
-    default).
-  - Size the WP-05 memory budget from the cgroup limit.
-- **Done when:** the container smoke test uses `bosun healthcheck` and the non-interactive setup.
-- **Replaces:** M1 "Health endpoint and a `bosun healthcheck` subcommand".
 
 #### WP-24 Docker and Podman support · Phase 3 · M
 

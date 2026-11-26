@@ -9,6 +9,13 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-23 Server mode** (`wp-43`, 2026-11-26). `GET /healthz` and `bosun healthcheck` (with `api.tls` on it only checks
+  that the port accepts connections); `BOSUN_ADMIN_USER`, `BOSUN_ADMIN_PASSWORD_FILE` and
+  `BOSUN_BOOTSTRAP_TOKEN_FILE` create the first admin and a full API token at start-up (audited; ignored once any user
+  exists); `password_file` for `proxy.auth` and `proxy.upstream`; `BOSUN_LOG_FORMAT=json`; an optional unauthenticated
+  Prometheus `/metrics` on its own listener (`metrics_listen`, off by default). The memory budget already followed the
+  cgroup limit. Dockerfile healthcheck and a CI container smoke test (not run locally: needs Docker).
+
 - **WP-32 CA management** (`wp-43`, 2026-11-26). `bosun ca rotate [--permit-domain D]...` creates a new CA, keeps the
   old certificate in `ca/previous/` and deletes its key (restart needed; the launched browser takes the new pin on its
   next launch). `--permit-domain` makes a name-constrained CA (all IP addresses excluded). `doctor` warns 30 days

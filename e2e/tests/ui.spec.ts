@@ -1361,6 +1361,57 @@ test('issues: the passive scanner reports what recorded traffic shows, with evid
   await expect(page.getByText('BEGIN RSA PRIVATE KEY').first()).toBeVisible();
 });
 
+test('checks: a custom check is validated, saved, and after a rescan reports on recorded traffic', async () => {
+  await layoutMenu('Reset layout');
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Checks' }).click();
+  const panel = () => page.getByRole('tabpanel', { name: 'Checks', exact: true });
+  await panel().getByRole('button', { name: 'Add check' }).click();
+
+  // A broken check is refused with the loader's message.
+  await panel().getByLabel('New check (YAML)').fill('version: 1\nid: custom-rsa\n');
+  await panel().getByRole('button', { name: 'Validate' }).click();
+  await expect(panel().getByRole('alert')).toContainText(/not a valid check|missing/i);
+  await panel().getByRole('button', { name: 'Save' }).click();
+  await expect(panel().getByRole('alert')).toBeVisible();
+
+  await panel().getByLabel('New check (YAML)').fill(
+    [
+      'version: 1',
+      'id: custom-rsa-marker',
+      'info:',
+      '  name: RSA marker in a response',
+      '  severity: medium',
+      'passive:',
+      '  matchers:',
+      '    - type: word',
+      '      part: body',
+      '      words: ["RSA PRIVATE KEY"]',
+      '',
+    ].join('\n'),
+  );
+  await panel().getByRole('button', { name: 'Validate' }).click();
+  await expect(panel().getByText('Valid: RSA marker in a response')).toBeVisible();
+  await panel().getByRole('button', { name: 'Save' }).click();
+  const row = () => panel().getByRole('row', { name: /custom-rsa-marker/ });
+  await expect(row()).toBeVisible();
+
+  // Rescan the recorded history; the check fires on /leaky.
+  expect(await viaProxy(PROXY_PORT, `${TARGET}/leaky`)).toMatchObject({ status: 200 });
+  await panel().getByRole('button', { name: 'Rescan history' }).click();
+  await nav.getByRole('button', { name: 'Issues' }).click();
+  const issues = page.getByRole('tabpanel', { name: 'Issues', exact: true });
+  await expect(issues.getByRole('row', { name: /RSA marker in a response/ })).toBeVisible({ timeout: 20_000 });
+
+  // Switch it off and delete it.
+  await nav.getByRole('button', { name: 'Checks' }).click();
+  await row().getByLabel('custom-rsa-marker: enabled').uncheck();
+  await expect(row().getByLabel('custom-rsa-marker: enabled')).not.toBeChecked();
+  page.once('dialog', (d) => d.accept());
+  await row().getByRole('button', { name: 'Delete custom-rsa-marker' }).click();
+  await expect(row()).toHaveCount(0);
+});
+
 test('listeners: one is added and removed live, and a live setting is saved', async () => {
   const extra = PROXY_PORT + 7;
   await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();

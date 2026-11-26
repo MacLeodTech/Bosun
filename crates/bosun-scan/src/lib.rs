@@ -9,5 +9,5 @@
 pub mod rules;
 mod scanner;
 
-pub use rules::{RULES, scan_flow};
+pub use rules::{RULES, scan_flow, scan_flow_with};
 pub use scanner::Scanner;

@@ -1,0 +1,31 @@
+//! Custom passive checks.
+
+use serde::Deserialize;
+
+/// A stored custom check.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomCheck {
+    pub id: i64,
+    /// The `id` in the YAML: the rule name on the issues it finds.
+    pub check_id: String,
+    pub name: String,
+    pub severity: String,
+    pub enabled: bool,
+    pub yaml: String,
+    pub created_ms: i64,
+    pub updated_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct CustomCheckList {
+    pub checks: Vec<CustomCheck>,
+}
+
+/// The outcome of `Client::validate_check`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CheckValidation {
+    pub valid: bool,
+    pub error: Option<String>,
+    pub check_id: Option<String>,
+    pub name: Option<String>,
+}

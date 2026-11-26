@@ -273,6 +273,15 @@ This document says what is protected, from whom, and how. Code comments refer ba
   names of a JWT, library versions, extracted values cut at 120 characters), never a token, a password or a query
   string. The loader is fuzzed (`check_language`). The code checks run behind the scanner's `catch_unwind`. Active
   checks, once the scan engine sends them (WP-54), go through the scope gate like every other tool.
+- *Custom checks (WP-50).* A project can store its own passive checks (`/checks`, table `checks`). The text goes
+  through the same loader and caps as above before it is stored (256 KiB, 200 checks per project, a `passive` section
+  required, ids of built-in rules refused) and is compiled again when the scanner loads it, so a file edited by hand
+  gets the same validation; a check that no longer loads is skipped and logged. A custom check is data: it cannot send
+  a request or run code, and it only reads recorded flows, so it needs no scope-gate check. Reading needs the viewer
+  role; validating, adding, replacing, switching and deleting need the tester role and are audited (`check.add`,
+  `check.update`, `check.enable`, `check.delete`). The UI shows the YAML only in a textarea and the loader's message as
+  text. What a check extracts is cut at 120 characters like a built-in's.
+  The `jwt-weak-secret` check verifies a token's HMAC against a short fixed list of common secrets (no cracking, no network); it reports that the secret is on the list but never copies the secret or the token into the issue.
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
 
 - *Hostile import files (WP-60).* `POST /import` reads OpenAPI/Swagger (JSON or YAML), GraphQL introspection,

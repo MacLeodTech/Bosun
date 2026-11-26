@@ -13,4 +13,4 @@ pub mod nuclei;
 pub mod passive;
 
 pub use lang::{Check, CheckError, Compiled, Interaction};
-pub use passive::{all_ids, scan_flow};
+pub use passive::{all_ids, scan_flow, scan_flow_with};

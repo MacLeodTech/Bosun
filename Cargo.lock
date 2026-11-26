@@ -606,6 +606,7 @@ dependencies = [
  "bosun-ca",
  "bosun-client",
  "bosun-codec",
+ "bosun-crawl",
  "bosun-http",
  "bosun-import",
  "bosun-intruder",

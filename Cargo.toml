@@ -62,6 +62,7 @@ bosun-codec = { path = "crates/bosun-codec" }
 bosun-report = { path = "crates/bosun-report" }
 bosun-sequencer = { path = "crates/bosun-sequencer" }
 bosun-intruder = { path = "crates/bosun-intruder" }
+bosun-crawl = { path = "crates/bosun-crawl" }
 bosun-import = { path = "crates/bosun-import" }
 bosun-api = { path = "crates/bosun-api" }
 bosun-client = { path = "crates/bosun-client" }

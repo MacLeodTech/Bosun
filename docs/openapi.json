@@ -1204,6 +1204,254 @@
         }
       }
     },
+    "/crawl/crawls": {
+      "get": {
+        "tags": [
+          "crawl"
+        ],
+        "description": "The crawls of this run of the server, newest first, with live counts.",
+        "operationId": "crawl_list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crawl"
+        ],
+        "description": "Start a spider crawl from one or more URLs: it follows links, frames, redirects, GET forms, robots.txt and sitemaps, up to a depth and a page limit. Every request goes through the scope gate (a link outside the scope is listed in out_of_scope, never requested) and is recorded as a flow with source crawler, so the pages appear in the history and site map. POST forms are sent only with submit_post_forms. Two crawls run at once. Needs the tester role or above; audited.",
+        "operationId": "crawl_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrawlStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The crawl, running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many crawls running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crawl/crawls/{id}": {
+      "get": {
+        "tags": [
+          "crawl"
+        ],
+        "description": "One crawl: its state, the pages found so far from index ?from on, and, once it has ended, forms, out-of-scope links, robots and sitemap findings.",
+        "operationId": "crawl_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Crawl id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such crawl",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/crawl/crawls/{id}/stop": {
+      "post": {
+        "tags": [
+          "crawl"
+        ],
+        "description": "The stop switch: no further request is sent. `stopped` is false when the crawl was not running. Needs the tester role or above; audited.",
+        "operationId": "crawl_stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Crawl id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlStopReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such crawl",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/decoder/apply": {
       "post": {
         "tags": [
@@ -8068,6 +8316,371 @@
           "certain"
         ]
       },
+      "CrawlDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CrawlInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "results",
+              "from",
+              "forms",
+              "out_of_scope",
+              "robots_blocked",
+              "robots_paths",
+              "sitemap_urls",
+              "truncated"
+            ],
+            "properties": {
+              "forms": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CrawlForm"
+                },
+                "description": "The lists below are filled when the crawl has ended."
+              },
+              "from": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "out_of_scope": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Links outside the scope, or that the gate refused. Never requested."
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CrawlPage"
+                },
+                "description": "The pages from index `from` on."
+              },
+              "robots_blocked": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "robots_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "sitemap_urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "truncated": {
+                "type": "boolean",
+                "description": "The crawl ended at the page limit with links left over."
+              }
+            }
+          }
+        ]
+      },
+      "CrawlField": {
+        "type": "object",
+        "required": [
+          "name",
+          "value",
+          "kind",
+          "submitted"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "submitted": {
+            "type": "boolean"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "CrawlForm": {
+        "type": "object",
+        "required": [
+          "page",
+          "action",
+          "method",
+          "enctype",
+          "fields"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "enctype": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CrawlField"
+            }
+          },
+          "method": {
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          }
+        }
+      },
+      "CrawlInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "start",
+          "created_ms",
+          "pages",
+          "requests"
+        ],
+        "properties": {
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pages": {
+            "type": "integer",
+            "description": "Pages the crawl has finished with so far.",
+            "minimum": 0
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests sent, robots and sitemaps included.",
+            "minimum": 0
+          },
+          "start": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "$ref": "#/components/schemas/CrawlState"
+          }
+        }
+      },
+      "CrawlList": {
+        "type": "object",
+        "required": [
+          "crawls"
+        ],
+        "properties": {
+          "crawls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CrawlInfo"
+            }
+          }
+        }
+      },
+      "CrawlPage": {
+        "type": "object",
+        "required": [
+          "url",
+          "method",
+          "depth",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no answer, or why it is partial."
+          },
+          "found_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The page that led here."
+          },
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where a redirect pointed."
+          },
+          "method": {
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "CrawlStartBody": {
+        "type": "object",
+        "required": [
+          "start"
+        ],
+        "properties": {
+          "concurrency": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Requests in flight at once (1 to 32, default 5).",
+            "minimum": 0
+          },
+          "delay_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The least time between two request starts, milliseconds (at most 60000).",
+            "minimum": 0
+          },
+          "follow_resources": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Follow `script`, `img` and similar sources too (default true)."
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra headers for every request, each `Name: value`."
+          },
+          "max_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Links followed from a start URL (0 to 100, default 5).",
+            "minimum": 0
+          },
+          "max_pages": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Most page requests (1 to 20000, default 1000).",
+            "minimum": 0
+          },
+          "respect_robots": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Do not fetch what `robots.txt` disallows (default true)."
+          },
+          "start": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Where to begin: absolute `http` or `https` URLs (at least one)."
+          },
+          "submit_get_forms": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send `GET` forms with the values the page gives them (default true)."
+          },
+          "submit_post_forms": {
+            "type": "boolean",
+            "description": "Send `POST` forms with their default values. Off by default: a form can change data."
+          },
+          "use_sitemap": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Read sitemaps and queue what they list (default true)."
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CrawlState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "done",
+          "stopped",
+          "failed"
+        ]
+      },
+      "CrawlStopReply": {
+        "type": "object",
+        "required": [
+          "stopped"
+        ],
+        "properties": {
+          "stopped": {
+            "type": "boolean",
+            "description": "False when the crawl was not running."
+          }
+        }
+      },
       "CurrentProject": {
         "type": "object",
         "description": "The project that is open.",
@@ -12273,6 +12886,9 @@
     },
     {
       "name": "intruder"
+    },
+    {
+      "name": "crawl"
     },
     {
       "name": "issues"

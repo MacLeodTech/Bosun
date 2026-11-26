@@ -217,6 +217,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RepeaterCmd,
     },
+    /// Spider: crawl a site from start URLs, inside the scope.
+    Crawl {
+        #[command(subcommand)]
+        cmd: CrawlCmd,
+    },
     /// Intruder: run an attack from a plan file.
     Intruder {
         #[command(subcommand)]
@@ -374,6 +379,41 @@ enum InterceptCmd {
     Forward { id: Option<u64> },
     /// Drop a held message.
     Drop { id: u64 },
+}
+
+#[derive(Subcommand, Debug)]
+enum CrawlCmd {
+    /// Crawl from the START URLs, wait for it and print the pages found (CSV or JSON). Every request goes through the
+    /// scope gate and is recorded in the history. Exit code 0 when it completed, 4 when it failed or was stopped.
+    Run {
+        #[arg(required = true)]
+        start: Vec<String>,
+        #[command(flatten)]
+        conn: Conn,
+        #[arg(long, default_value_t = 5)]
+        max_depth: u32,
+        #[arg(long, default_value_t = 1000)]
+        max_pages: u32,
+        #[arg(long, default_value_t = 5)]
+        concurrency: u32,
+        /// Ignore robots.txt.
+        #[arg(long)]
+        ignore_robots: bool,
+        /// Do not read sitemaps.
+        #[arg(long)]
+        no_sitemap: bool,
+        /// Also send POST forms with their default values (they can change data).
+        #[arg(long)]
+        submit_post_forms: bool,
+        /// An extra request header, `Name: value` (repeatable).
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+        #[arg(long, default_value = "csv", value_parser = ["csv", "json"])]
+        format: String,
+        /// Write the results here instead of stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -828,6 +868,35 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 out,
                 follow,
                 count,
+            ));
+        }
+        Cmd::Crawl {
+            cmd:
+                CrawlCmd::Run {
+                    start,
+                    conn,
+                    max_depth,
+                    max_pages,
+                    concurrency,
+                    ignore_robots,
+                    no_sitemap,
+                    submit_post_forms,
+                    headers,
+                    format,
+                    out,
+                },
+        } => {
+            let body = serde_json::json!({
+                "start": start, "max_depth": max_depth, "max_pages": max_pages, "concurrency": concurrency,
+                "respect_robots": !ignore_robots, "use_sitemap": !no_sitemap,
+                "submit_post_forms": submit_post_forms, "headers": headers,
+            });
+            return tokio::runtime::Runtime::new()?.block_on(client_cmd::crawl_run(
+                conn.server.as_deref(),
+                conn.profile.as_deref(),
+                &body,
+                &format,
+                out.as_deref(),
             ));
         }
         Cmd::Intruder {

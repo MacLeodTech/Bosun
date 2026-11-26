@@ -43,6 +43,13 @@ export function startTarget(port: number): Promise<http.Server> {
       // A session cookie per call: random (a CSPRNG) or a counter, for the Sequencer.
       const tok = url.pathname === '/seq-random' ? randomBytes(16).toString('hex') : String(counter++);
       res.writeHead(200, { 'content-type': 'text/plain', 'set-cookie': `seqid=${tok}; Path=/` }).end(`token ${tok}`);
+    } else if (url.pathname === '/spider') {
+      res.writeHead(200, { 'content-type': 'text/html' }).end(
+        '<title>Spider home</title><a href="/spider/a">a</a> <a href="http://other.invalid/x">out</a>' +
+          '<form method="post" action="/spider/post"><input name="q" value="1"></form>',
+      );
+    } else if (url.pathname === '/spider/a') {
+      res.writeHead(200, { 'content-type': 'text/html' }).end('<title>Spider A</title><a href="/spider/c">c</a>');
     } else if (url.pathname === '/echo') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(req.headers));
     } else {

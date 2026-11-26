@@ -405,7 +405,7 @@ This document says what is protected, from whom, and how. Code comments refer ba
   file, a row at a time, so they hold what the target sent back and are shown only as text in the UI; a CSV export
   puts a quote before any cell that a spreadsheet would run as a formula. Payload lists loaded from a file are read
   in the browser and sent as text. The request template and payload sets parser has a fuzz target (`intruder_plan`).
-- *The spider (`bosun-crawl`, an engine for now, with no API yet).* Every request, `robots.txt` and sitemaps
+- *The spider (`bosun-crawl`, API `/crawl/*`, `bosun crawl run`, the Spider panel).* Every request, `robots.txt` and sitemaps
   included, goes through `Engine::send` and so through the gate as source `crawler` (an automated source: out of
   scope is refused, never prompted). Links are also checked against the scope before they are queued, so an
   out-of-scope link is listed in the report and not requested; the gate stays the guarantee. Redirects are not
@@ -416,7 +416,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
   the tester turns that on, since a form can change data; `GET` forms are sent with the values the page gives
   them. `robots.txt` is obeyed by default (what it hides is still listed) and its patterns are matched in linear
   time. The HTML, robots and sitemap readers take untrusted input and have a fuzz target (`crawl_html`). Extra
-  headers (such as a session cookie) are refused if they hold a line break.
+  headers (such as a session cookie) are refused if they hold a line break. The API: starting and stopping a crawl
+  need the tester role, listing and reading results the viewer role; start and stop are audited (start URLs, depth,
+  page limit, and whether `POST` forms were on). The API caps `max_pages` at 20,000, runs at most 2 crawls at once and
+  keeps the last 8 in memory only (nothing is added to the project file); the pages it fetched are recorded as flows
+  with source `crawler`, which is how they reach the history and the site map. Page rows, forms and links are
+  target content and are shown only as text in the UI. `POST` forms are sent only when the request sets
+  `submit_post_forms` (an explicit checkbox in the panel, a flag in the CLI).
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

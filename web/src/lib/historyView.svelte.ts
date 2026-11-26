@@ -28,6 +28,8 @@ class HistoryView {
   anchorId = $state<number | null>(null);
   /** The flow the detail panel loads. Trails `selectedId` while the user is still moving through the list. */
   openId = $state<number | null>(null);
+  /** Scanner evidence to highlight in the open flow's messages (set when an issue is opened from the Issues panel). */
+  evidence = $state.raw<{ flowId: number; ranges: { part: 'request' | 'response'; start: number; end: number }[] } | null>(null);
   detailTab = $state<DetailTab>('messages');
   /** Flows deleted for good, for the list to drop. `removedTick` changes on each deletion. */
   removedIds = $state.raw<number[]>([]);

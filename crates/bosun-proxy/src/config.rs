@@ -215,6 +215,10 @@ pub struct ListenerSpec {
     #[serde(default)]
     #[schema(value_type = Vec<String>)]
     pub allow_clients: Vec<IpNet>,
+    /// At most this many connections open on this listener at once; more are closed at accept (existing ones keep
+    /// running). Unset: only the proxy-wide connection limit applies.
+    #[serde(default)]
+    pub max_connections: Option<usize>,
 }
 
 impl ListenerSpec {
@@ -230,6 +234,9 @@ impl ListenerSpec {
             && (a.username.is_empty() || a.password.len() < 12)
         {
             return Err("auth needs a username and a password of at least 12 characters".into());
+        }
+        if self.max_connections == Some(0) {
+            return Err("max_connections must be at least 1 (leave it unset for no per-listener cap)".into());
         }
         if self.tls_passthrough.len() > 1000 || self.allow_clients.len() > 1000 {
             return Err("too many pass-through hosts or client networks".into());
@@ -247,6 +254,7 @@ impl ProxyConfig {
             tls_passthrough: self.tls_passthrough.clone(),
             auth: self.auth.clone(),
             allow_clients: self.allow_clients.clone(),
+            max_connections: None,
         }
     }
 }

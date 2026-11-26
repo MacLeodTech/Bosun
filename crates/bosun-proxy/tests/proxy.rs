@@ -1217,3 +1217,40 @@ async fn permessage_deflate_messages_are_recorded_inflated() {
         vec!["compressed hello compressed hello", "compressed hello again"]
     );
 }
+
+#[tokio::test]
+async fn listener_connection_cap_applies_per_listener_and_changes_live() {
+    let h = start(ProxyConfig::default(), &[]).await;
+    let spec = |addr: &str, max| bosun_proxy::ListenerSpec {
+        addr: addr.parse().unwrap(),
+        invisible: false,
+        tls_passthrough: vec![],
+        auth: None,
+        allow_clients: vec![],
+        max_connections: max,
+    };
+    let info = h.proxy.add_listener(spec("127.0.0.1:0", Some(1))).await.unwrap();
+    let capped = info.spec.addr;
+    let first = TcpStream::connect(capped).await.unwrap();
+    // Let the accept loop register the first connection before the second arrives.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut second = TcpStream::connect(capped).await.unwrap();
+    let mut b = [0u8; 1];
+    let r = tokio::time::timeout(Duration::from_secs(2), second.read(&mut b)).await;
+    assert!(matches!(r, Ok(Ok(0) | Err(_))), "the second connection is closed");
+    // Raise the cap live: a second connection now stays open.
+    h.proxy.update_listener(info.id, spec(&capped.to_string(), Some(2))).await.unwrap();
+    let mut third = TcpStream::connect(capped).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), third.read(&mut b))
+            .await
+            .is_err(),
+        "a connection under the raised cap stays open"
+    );
+    drop(first);
+    assert!(
+        h.proxy.update_listener(info.id, spec(&capped.to_string(), Some(0))).await.is_err(),
+        "zero is refused"
+    );
+}

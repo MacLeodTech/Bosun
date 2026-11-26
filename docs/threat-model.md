@@ -242,7 +242,9 @@ This document says what is protected, from whom, and how. Code comments refer ba
   cap, new connections are closed at once and existing ones keep working. Keep the caps well under half the
   process's open-file limit: a proxied connection also holds an upstream socket. Refused proxy connections are
   counted (`connections_refused` in `/proxy` stats): they never become flows, so a load test that opens more than
-  the cap will see fewer flows in History than requests sent.
+  the cap will see fewer flows in History than requests sent. Each proxy listener may also set `max_connections`
+  (changed live, audited with the other listener options): past it that listener closes new connections, so one
+  exposed listener cannot use up the shared cap; refusals there are not counted in `connections_refused`.
 - *History queries.* The query language (`docs/query-language.md`) is parsed in Rust and compiled to an SQL
   condition that uses bound parameters only: no query text is ever part of the statement. Length, term count and
   nesting are capped, a query that runs over five seconds is interrupted, and the result size is capped like any

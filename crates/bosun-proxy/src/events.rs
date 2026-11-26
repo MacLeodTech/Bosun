@@ -45,6 +45,8 @@ pub enum ProxyEvent {
         name: Option<String>,
         temporary: bool,
     },
+    /// The passive scanner found something, or caught up with the history: look at the issues again.
+    IssuesChanged,
     /// An Intruder attack started, moved on or ended.
     IntruderState {
         attack_id: i64,

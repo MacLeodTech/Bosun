@@ -7,6 +7,7 @@
   import { contentTypeOf, detectLang, highlight, splitText, MAX_HIGHLIGHT } from '../lib/highlight';
   import { pretty } from '../lib/pretty';
   import { parseRequest, toCurl } from '../lib/export';
+  import { marks, type Range } from '../lib/evidence';
   import CodeView from './CodeView.svelte';
   import MessageEditor from './MessageEditor.svelte';
 
@@ -23,6 +24,7 @@
     role,
     scheme = '',
     onFilterHeader,
+    evidence = [],
   }: {
     raw: string | null;
     decodedBody?: string | null;
@@ -43,6 +45,8 @@
     scheme?: string;
     /** Called with a header's name and value to filter the history by it. */
     onFilterHeader?: (name: string, value: string) => void;
+    /** Byte ranges of the stored message to highlight (the passive scanner's evidence). */
+    evidence?: Range[];
   } = $props();
 
   let localView = $state<MessageViewMode>('raw');
@@ -78,6 +82,10 @@
     // The blank line between head and body is shown; an empty body adds nothing after it.
     return split.sep ? (body ? [...head, [], ...highlight(body, lang)] : [...head, []]) : head;
   });
+  // Evidence positions are into the stored bytes, so they only line up with the raw text as stored.
+  const evidenceMarks = $derived(
+    evidence.length && view === 'raw' && !(decoded && showDecoded && !editable) ? marks(bytes, text.text, text.mode === 'utf8', evidence) : [],
+  );
   const shownText = $derived(view === 'pretty' && prettyBody ? `${split.head}\r\n\r\n${prettyBody}` : text.text);
 
   const headers = $derived(
@@ -163,7 +171,7 @@
       <MessageEditor text={draft} mode={draftMode} label={title || 'Message'} onchange={edited} />
     {:else}
       {#if oversize}<div class="small muted pad">Large message: shown without colour.</div>{/if}
-      <CodeView bind:this={code} {lines} wrap={prefs.wrap} label={title || 'Message'} />
+      <CodeView bind:this={code} {lines} wrap={prefs.wrap} label={title || 'Message'} marks={evidenceMarks} />
     {/if}
   {:else if view === 'headers'}
     <div class="scroll">

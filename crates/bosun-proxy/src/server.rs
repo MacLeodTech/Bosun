@@ -224,10 +224,32 @@ pub(crate) struct ListenerRt {
     addr: SocketAddr,
     opts: RwLock<Arc<ListenerOpts>>,
     accepted: AtomicU64,
+    /// Connections open now, against `max_connections`.
+    open: Arc<std::sync::atomic::AtomicUsize>,
     task: Mutex<Option<tokio::task::AbortHandle>>,
 }
 
+/// Holds one slot of a listener's connection cap until the connection ends.
+struct OpenGuard(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for OpenGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 impl ListenerRt {
+    /// A slot for a new connection, or `None` when the listener's `max_connections` is reached.
+    fn try_open(&self) -> Option<OpenGuard> {
+        use std::sync::atomic::Ordering::AcqRel;
+        let max = self.opts().spec.max_connections.unwrap_or(usize::MAX);
+        if self.open.fetch_add(1, AcqRel) >= max {
+            self.open.fetch_sub(1, AcqRel);
+            return None;
+        }
+        Some(OpenGuard(self.open.clone()))
+    }
+
     fn opts(&self) -> Arc<ListenerOpts> {
         self.opts.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -510,6 +532,7 @@ impl Proxy {
             addr,
             opts: RwLock::new(Arc::new(opts)),
             accepted: AtomicU64::new(0),
+            open: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             task: Mutex::new(None),
         });
         l.all.push(rt.clone());
@@ -675,10 +698,14 @@ async fn accept_loop(
                 let Ok((stream, peer)) = accepted else { continue };
                 // Over the limit: close at once; connections already open are unaffected.
                 let Some(permit) = shared.limit.try_acquire() else { continue };
+                let Some(slot) = rt.try_open() else {
+                    tracing::debug!(%peer, listener = %rt.addr, "listener connection cap reached; closing");
+                    continue;
+                };
                 rt.accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let (shared, rt) = (shared.clone(), rt.clone());
                 tokio::spawn(async move {
-                    let _permit = permit;
+                    let (_permit, _slot) = (permit, slot);
                     shared.accept(stream, peer, rt).await
                 });
             }

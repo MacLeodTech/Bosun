@@ -77,13 +77,19 @@
 
   onMount(() => {
     load();
-    // New findings arrive as the scanner works, so look again every few seconds.
-    const t = setInterval(load, 5000);
+    // The scanner says when it found something or caught up; look again then (not on every event of a burst).
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const off = session.on((e) => {
       if (e.type === 'reload') load();
+      else if (e.type === 'issues_changed' && !timer) {
+        timer = setTimeout(() => {
+          timer = undefined;
+          load();
+        }, 400);
+      }
     });
     return () => {
-      clearInterval(t);
+      clearTimeout(timer);
       off();
     };
   });
@@ -132,6 +138,7 @@
   function open(i: Issue) {
     if (i.flow_id == null) return;
     historyView.select([i.flow_id], i.flow_id);
+    historyView.evidence = { flowId: i.flow_id, ranges: i.evidence };
     historyView.openId = i.flow_id;
     workspace.reveal('flow', 'issues');
   }

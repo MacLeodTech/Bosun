@@ -10348,6 +10348,14 @@
             "type": "boolean",
             "description": "Accept origin-form requests (`GET /path` with a Host header) as if they were proxied."
           },
+          "max_connections": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "At most this many connections open on this listener at once; more are closed at accept (existing ones keep\nrunning). Unset: only the proxy-wide connection limit applies.",
+            "minimum": 0
+          },
           "tls_passthrough": {
             "type": "array",
             "items": {
@@ -11601,6 +11609,21 @@
                 "type": "string",
                 "enum": [
                   "project_switched"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The passive scanner found something, or caught up with the history: look at the issues again.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "issues_changed"
                 ]
               }
             }

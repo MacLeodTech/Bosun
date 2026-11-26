@@ -22,6 +22,8 @@ const MAX_BLOB: u64 = 128 * 1024 * 1024;
 const MAX_WS_PAYLOAD: u64 = 4 * 1024 * 1024;
 /// How much decoded text per flow goes into the search index.
 const INDEX_TEXT_LIMIT: usize = 64 * 1024;
+/// The longest a history query may run.
+const QUERY_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// A finished flow, ready to be written.
 #[derive(Debug, Clone)]
@@ -76,6 +78,9 @@ pub struct FlowFilter {
     /// Only flows with an id above this (for polling for new ones).
     pub after_id: Option<FlowId>,
     pub limit: Option<u32>,
+    /// A parsed history query (see [`crate::query`]), combined with the fields above by `and`.
+    #[serde(default)]
+    pub query: Option<crate::query::Expr>,
 }
 
 /// A host and the paths seen on it, for the site map.
@@ -598,6 +603,18 @@ impl Project {
                 args.push(V::Text(format!("%.{}", e.to_ascii_lowercase())));
             }
         }
+        if let Some(q) = &f.query {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+            let (cond, params) = crate::query::compile(q, now);
+            sql.push_str(" AND ");
+            sql.push_str(&cond);
+            args.extend(params.into_iter().map(|p| match p {
+                crate::query::Param::Text(t) => V::Text(t),
+                crate::query::Param::Int(i) => V::Integer(i),
+            }));
+        }
         if let Some(b) = f.before_id {
             sql.push_str(" AND id < ?");
             args.push(V::Integer(b));
@@ -608,10 +625,27 @@ impl Project {
         }
         sql.push_str(" ORDER BY id DESC LIMIT ?");
         args.push(V::Integer(f.limit.unwrap_or(200).clamp(1, 5000).into()));
-        let conn = self.db.read()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(args), summary_from_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        let mut conn = self.db.read()?;
+        // A query may not hold the connection for long: past the deadline SQLite stops it with an error.
+        let deadline = std::time::Instant::now() + QUERY_TIME;
+        conn.progress_handler(20_000, Some(move || std::time::Instant::now() > deadline))?;
+        let rows = conn.prepare(&sql).and_then(|mut stmt| {
+            stmt.query_map(params_from_iter(args), summary_from_row)
+                .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+        });
+        let _ = conn.progress_handler(20_000, None::<fn() -> bool>);
+        match rows {
+            Ok(r) => Ok(r),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::OperationInterrupted =>
+            {
+                Err(StoreError::Conflict(format!(
+                    "the query took longer than {} seconds; narrow it down",
+                    QUERY_TIME.as_secs()
+                )))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Summaries for specific flows, in id order.
@@ -1650,5 +1684,104 @@ mod tests {
         assert!(err.to_string().contains(&std::process::id().to_string()), "{err}");
         drop(first);
         Project::open(&path).unwrap();
+    }
+
+    /// Run a query line against a project and return the matching paths, newest first.
+    fn ask(p: &Project, q: &str) -> Vec<String> {
+        let parsed = crate::query::parse(q);
+        assert!(parsed.errors.is_empty(), "{q}: {:?}", parsed.errors);
+        let list = p
+            .list_flows(&FlowFilter {
+                query: parsed.expr,
+                ..Default::default()
+            })
+            .unwrap();
+        list.into_iter().map(|f| f.path).collect()
+    }
+
+    #[test]
+    fn the_query_language_runs_against_the_store() {
+        let p = Project::open_in_memory().unwrap();
+        let mut a = flow(&p, "a.in.test", "/login", 200, "<p>welcome back</p>");
+        a.request = b"GET /login HTTP/1.1\r\nHost: a.in.test\r\nX-Api-Key: k-777\r\n\r\n".to_vec();
+        let b = flow(&p, "b.out.test", "/img/logo.png", 404, "nope");
+        let mut c = flow(&p, "a.in.test", "/admin", 302, "moved");
+        c.method = "POST".into();
+        c.started_ms = 10_000_000_000_000;
+        let mut d = flow(&p, "c.in.test", "/pending", 0, "");
+        d.status = None; // no response yet
+        d.response = None;
+        p.write_batch(&[a.clone(), b.clone(), c.clone(), d.clone()], &[])
+            .unwrap();
+        p.set_annotations(a.id, Some(&["Interesting".to_string()]), Some("check this"))
+            .unwrap();
+
+        assert_eq!(ask(&p, ""), ["/pending", "/admin", "/img/logo.png", "/login"]);
+        assert_eq!(ask(&p, "host:a.in.test"), ["/admin", "/login"]);
+        assert_eq!(
+            ask(&p, "host:b.out.test,c.in.test"),
+            ["/pending", "/img/logo.png"]
+        );
+        assert_eq!(ask(&p, "method:post"), ["/admin"]);
+        assert_eq!(ask(&p, "status:4xx or status:302"), ["/admin", "/img/logo.png"]);
+        assert_eq!(ask(&p, "status:>=300"), ["/admin", "/img/logo.png"]);
+        assert_eq!(ask(&p, "scope:out"), ["/img/logo.png"]);
+        assert_eq!(ask(&p, "-ext:png"), ["/pending", "/admin", "/login"]);
+        assert_eq!(ask(&p, "ext:png"), ["/img/logo.png"]);
+        // NOT keeps flows that have no status at all.
+        assert_eq!(ask(&p, "not status:4xx"), ["/pending", "/admin", "/login"]);
+        assert_eq!(ask(&p, "-(host:a.in.test or host:b.out.test)"), ["/pending"]);
+        assert_eq!(ask(&p, "welcome"), ["/login"]);
+        assert_eq!(ask(&p, "login or moved"), ["/admin", "/login"]);
+        assert_eq!(ask(&p, "header:x-api-key"), ["/login"]);
+        assert_eq!(ask(&p, "header:x-api-key=k-777"), ["/login"]);
+        assert!(ask(&p, "header:x-api-key=other").is_empty());
+        assert_eq!(ask(&p, "tag:interesting"), ["/login"]);
+        assert_eq!(ask(&p, "has:note"), ["/login"]);
+        assert_eq!(ask(&p, "note:check"), ["/login"]);
+        assert_eq!(ask(&p, "has:response"), ["/admin", "/img/logo.png", "/login"]);
+        assert_eq!(ask(&p, "size:>10"), ["/admin", "/img/logo.png", "/login"]);
+        assert!(ask(&p, "size:>1m").is_empty());
+        assert_eq!(ask(&p, "source:proxy port:443 scheme:https mime:html").len(), 3);
+        assert_eq!(ask(&p, "path:/img"), ["/img/logo.png"]);
+        // Time: `c` started far in the future, the rest at the start of 1970.
+        assert_eq!(ask(&p, "since:1d"), ["/admin"]);
+        assert_eq!(
+            ask(&p, "until:2000-01-01"),
+            ["/pending", "/img/logo.png", "/login"]
+        );
+        // Combined with the plain fields.
+        let parsed = crate::query::parse("host:a.in.test");
+        let list = p
+            .list_flows(&FlowFilter {
+                query: parsed.expr,
+                methods: Some(vec!["GET".into()]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn hostile_query_text_cannot_change_the_statement() {
+        let p = Project::open_in_memory().unwrap();
+        let a = flow(&p, "a.in.test", "/one", 200, "x");
+        p.write_batch(std::slice::from_ref(&a), &[]).unwrap();
+        for q in [
+            "host:\"a'; DROP TABLE flows; --\"",
+            "\"') OR 1=1 --\"",
+            "tag:\"x') OR ('1'='1\"",
+            "header:\"x%_\\\"",
+            "note:%",
+        ] {
+            let parsed = crate::query::parse(q);
+            p.list_flows(&FlowFilter {
+                query: parsed.expr,
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        assert_eq!(p.flow_count().unwrap(), 1);
+        assert_eq!(ask(&p, "note:%"), Vec::<String>::new());
     }
 }

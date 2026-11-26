@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{Caller, check_password_policy, check_username, hash_password, random_token};
 use crate::security::{empty, reject};
-use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SCOPE};
+use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SAVED_FILTERS, SETTING_SCOPE};
 
 type R = Result<Response, Response>;
 
@@ -77,6 +77,8 @@ pub struct FlowQuery {
     before: Option<FlowId>,
     after: Option<FlowId>,
     limit: Option<u32>,
+    /// A history query (see `docs/query-language.md`), combined with the fields above by `and`.
+    q: Option<String>,
 }
 
 fn csv(s: Option<String>) -> Option<Vec<String>> {
@@ -90,7 +92,18 @@ fn csv(s: Option<String>) -> Option<Vec<String>> {
 
 pub async fn list_flows(State(st): State<AppState>, caller: Caller, Query(q): Query<FlowQuery>) -> R {
     caller.require(Role::Viewer)?;
+    let query = match q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(text) => {
+            let parsed = bosun_store::query::parse(text);
+            if let Some(e) = parsed.errors.first() {
+                return Err(reject(StatusCode::BAD_REQUEST, &format!("query: {}", e.message)));
+            }
+            parsed.expr
+        }
+        None => None,
+    };
     let filter = FlowFilter {
+        query,
         text: q.text,
         host: q.host,
         methods: csv(q.methods),
@@ -104,8 +117,97 @@ pub async fn list_flows(State(st): State<AppState>, caller: Caller, Query(q): Qu
         limit: q.limit,
     };
     let p = st.project();
-    let flows = blocking(move || p.list_flows(&filter)).await?.map_err(internal)?;
+    let flows = blocking(move || p.list_flows(&filter))
+        .await?
+        .map_err(|e| match e {
+            // Only the time limit is a Conflict here: say so rather than "internal error".
+            bosun_store::StoreError::Conflict(m) => reject(StatusCode::BAD_REQUEST, &m),
+            e => internal(e),
+        })?;
     Ok(Json(flows).into_response())
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct QueryCheckParams {
+    q: Option<String>,
+}
+
+/// What a history query means: each recognised term with its place in the text, and every mistake. Nothing is
+/// run. A front end uses this for chips and messages while the person types.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct QueryCheck {
+    pub terms: Vec<bosun_store::query::TermSpan>,
+    pub errors: Vec<bosun_store::query::QueryError>,
+}
+
+pub async fn check_flow_query(caller: Caller, Query(p): Query<QueryCheckParams>) -> R {
+    caller.require(Role::Viewer)?;
+    let parsed = bosun_store::query::parse(p.q.as_deref().unwrap_or(""));
+    Ok(Json(QueryCheck {
+        terms: parsed.terms,
+        errors: parsed.errors,
+    })
+    .into_response())
+}
+
+/// A history query kept under a name, for the whole project.
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SavedFilter {
+    pub name: String,
+    pub query: String,
+}
+
+const MAX_SAVED_FILTERS: usize = 50;
+const MAX_FILTER_NAME: usize = 60;
+
+pub async fn get_saved_filters(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    let p = st.project();
+    let list: Option<Vec<SavedFilter>> = blocking(move || p.setting(SETTING_SAVED_FILTERS))
+        .await?
+        .map_err(internal)?;
+    Ok(Json(list.unwrap_or_default()).into_response())
+}
+
+/// Replace the saved filters. Each query must be valid, so a saved filter always runs.
+pub async fn put_saved_filters(
+    State(st): State<AppState>,
+    caller: Caller,
+    Json(list): Json<Vec<SavedFilter>>,
+) -> R {
+    caller.require(Role::Tester)?;
+    if list.len() > MAX_SAVED_FILTERS {
+        return Err(reject(StatusCode::BAD_REQUEST, "too many saved filters"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for f in &list {
+        let name = f.name.trim();
+        if name.is_empty() || name.chars().count() > MAX_FILTER_NAME || name.chars().any(char::is_control) {
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                "a filter name is 1 to 60 characters, without control characters",
+            ));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(reject(StatusCode::BAD_REQUEST, "two filters have the same name"));
+        }
+        if let Some(e) = bosun_store::query::parse(&f.query).errors.first() {
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                &format!("filter \"{name}\": {}", e.message),
+            ));
+        }
+    }
+    let list: Vec<SavedFilter> = list
+        .into_iter()
+        .map(|f| SavedFilter {
+            name: f.name.trim().to_string(),
+            query: f.query,
+        })
+        .collect();
+    let _settings = st.inner.projects.settings_guard().await;
+    save_setting(&st, SETTING_SAVED_FILTERS, list.clone()).await?;
+    Ok(Json(list).into_response())
 }
 
 /// A flow without its bodies: summary, each message's header block and size. The bodies come from the

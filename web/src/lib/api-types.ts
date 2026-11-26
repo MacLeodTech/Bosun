@@ -260,6 +260,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/flows/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Check a history query without running it: the recognised terms with their positions, and every mistake. Needs the viewer role or above. */
+        get: operations["check_flow_query"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/flows/{id}": {
         parameters: {
             query?: never;
@@ -617,6 +634,24 @@ export interface paths {
         get: operations["get_rules"];
         /** @description Replace the rules (audited). Needs the tester role or above. */
         put: operations["put_rules"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/saved-filters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The project's saved history filters. Needs the viewer role or above. */
+        get: operations["get_saved_filters"];
+        /** @description Replace the saved filters. Every query must be valid. Needs the tester role or above. */
+        put: operations["put_saved_filters"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1219,6 +1254,11 @@ export interface components {
         };
         /** @description Resource counters (see [`Proxy::stats`]). */
         ProxyStats: {
+            /**
+             * Format: int64
+             * @description Connections closed at once because the proxy was at its connection limit.
+             */
+            connections_refused: number;
             intercept_queued_bytes: number;
             /** Format: int64 */
             intercept_refused: number;
@@ -1234,6 +1274,19 @@ export interface components {
             recorder_records_lost: number;
             /** Format: int64 */
             recorder_write_failures: number;
+        };
+        /**
+         * @description What a history query means: each recognised term with its place in the text, and every mistake. Nothing is
+         *     run. A front end uses this for chips and messages while the person types.
+         */
+        QueryCheck: {
+            errors: components["schemas"]["QueryError"][];
+            terms: components["schemas"]["TermSpan"][];
+        };
+        QueryError: {
+            end: number;
+            message: string;
+            start: number;
         };
         RenameProject: {
             name: string;
@@ -1253,6 +1306,11 @@ export interface components {
         };
         /** @enum {string} */
         RuleTarget: "request_first_line" | "request_header" | "request_body" | "response_first_line" | "response_header" | "response_body";
+        /** @description A history query kept under a name, for the whole project. */
+        SavedFilter: {
+            name: string;
+            query: string;
+        };
         /** @enum {string} */
         Scheme: "http" | "https";
         /** @description One include or exclude rule, as the user writes it. */
@@ -1427,6 +1485,16 @@ export interface components {
             next?: number;
             /** @description One object per tab (target, request text, options). Responses are not stored. */
             tabs: unknown[];
+        };
+        /** @description A recognised term, for showing as a chip: where it is in the query and what it says. */
+        TermSpan: {
+            end: number;
+            /** @description `host`, `method`, `status`, `text`, ... */
+            key: string;
+            /** @description The term as written, including a leading `-`. */
+            label: string;
+            /** @description Byte offsets into the query. */
+            start: number;
         };
         TicketBody: {
             /** @description The single-use ticket an embedded engine printed for its parent. */
@@ -2360,6 +2428,8 @@ export interface operations {
                 before?: number;
                 after?: number;
                 limit?: number;
+                /** @description A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400. */
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -2434,6 +2504,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    check_flow_query: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueryCheck"];
                 };
             };
             /** @description Bad request */
@@ -4121,6 +4249,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MatchRule"][];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_saved_filters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedFilter"][];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_saved_filters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedFilter"][];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedFilter"][];
                 };
             };
             /** @description Bad request */

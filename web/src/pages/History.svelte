@@ -47,12 +47,13 @@
   let bar = $state<{ focus(): void } | undefined>();
   let root = $state<HTMLElement | undefined>();
   const waiting = $derived(held.length + unmatched);
-  const simpleFilter = $derived(!filter.text);
+  const simpleFilter = $derived(!filter.text && !filter.serverOnly);
   const activeIndex = $derived(v.selectedId === null ? -1 : shown.findIndex((f) => f.id === v.selectedId));
   const canEdit = $derived(session.can('tester'));
 
   function params(extra: Record<string, number | undefined> = {}) {
-    return qs({ text: filter.text, host: filter.host, methods: filter.methods, status_min: filter.statusMin, status_max: filter.statusMax, in_scope_only: filter.inScopeOnly, hide_ext: filter.hideExt, limit: 500, ...extra });
+    // The whole line goes to the server, which owns the grammar (docs/query-language.md).
+    return qs({ q: v.query.trim() || undefined, limit: 500, ...extra });
   }
 
   async function reload() {

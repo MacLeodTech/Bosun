@@ -134,6 +134,93 @@ async fn sessions_tokens_and_accounts() {
 }
 
 #[tokio::test]
+async fn history_queries_run_on_the_server_and_mistakes_are_explained() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/a.css", "Content-Type: text/css\r\n", b"body{}", None);
+    let b = recorded(&s, "/login", "Content-Type: text/plain\r\n", b"hello world", None);
+    let ask = |q: &str| {
+        let c = c.clone();
+        let q = q.to_string();
+        async move {
+            c.flows(&FlowQuery {
+                q: Some(q),
+                ..Default::default()
+            })
+            .await
+            .map(|v| v.into_iter().map(|f| f.id).collect::<Vec<_>>())
+        }
+    };
+    assert_eq!(ask("host:a.test -ext:css").await.unwrap(), vec![b]);
+    assert_eq!(ask("hello or body").await.unwrap(), vec![b, a]);
+    assert_eq!(ask("not hello").await.unwrap(), vec![a]);
+    assert_eq!(ask("size:>1k").await.unwrap(), Vec::<i64>::new());
+    // The query adds to the plain filters.
+    let both = c
+        .flows(&FlowQuery {
+            q: Some("host:a.test".into()),
+            hide_ext: Some("css".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(both.len(), 1);
+    // A mistake is a 400 that says what is wrong; the check endpoint lists them all without running anything.
+    let err = ask("status:banana").await.unwrap_err().to_string();
+    assert!(err.contains("status:"), "{err}");
+    let chk = c
+        .check_flow_query(r#"host:a.test status:banana "two words" (open"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        chk.terms.iter().map(|t| t.key.as_str()).collect::<Vec<_>>(),
+        ["host", "text", "text"]
+    );
+    assert_eq!(chk.errors.len(), 2);
+    assert!(chk.errors[0].start < chk.errors[0].end);
+    // Viewers may ask; anonymous callers may not.
+    assert!(
+        Client::new(url(&s))
+            .unwrap()
+            .check_flow_query("x")
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}
+
+#[tokio::test]
+async fn saved_filters_are_kept_per_project_and_must_be_valid() {
+    use bosun_client::SavedFilter;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    assert!(c.saved_filters().await.unwrap().is_empty());
+    let f = |n: &str, q: &str| SavedFilter {
+        name: n.into(),
+        query: q.into(),
+    };
+    let list = vec![f("  api  ", "host:api.test or tag:x"), f("errors", "status:5xx")];
+    let back = c.put_saved_filters(&list).await.unwrap();
+    assert_eq!(back[0].name, "api", "names are trimmed");
+    assert_eq!(c.saved_filters().await.unwrap(), back);
+    // A filter that would not run is refused, and so are duplicates, empty names and too many.
+    for bad in [
+        vec![f("x", "status:banana")],
+        vec![f("x", "a"), f("x", "b")],
+        vec![f("  ", "a")],
+        vec![f("bad\nname", "a")],
+        (0..51).map(|i| f(&format!("n{i}"), "a")).collect(),
+    ] {
+        assert!(c.put_saved_filters(&bad).await.is_err());
+    }
+    assert_eq!(
+        c.saved_filters().await.unwrap(),
+        back,
+        "a refused write changes nothing"
+    );
+}
+
+#[tokio::test]
 async fn history_bodies_annotations_and_sitemap() {
     let s = stack(true).await;
     let c = admin(&s).await;
@@ -546,6 +633,9 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/auth/sso", "sso_config"),
         ("post", "/auth/password", "change_password"),
         ("get", "/flows", "flows"),
+        ("get", "/flows/query", "check_flow_query"),
+        ("get", "/saved-filters", "saved_filters"),
+        ("put", "/saved-filters", "put_saved_filters"),
         ("delete", "/flows", "delete_flows"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),

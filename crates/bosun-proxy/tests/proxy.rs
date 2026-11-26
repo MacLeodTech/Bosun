@@ -599,6 +599,7 @@ async fn connections_over_the_cap_are_refused_while_existing_ones_keep_working()
         matches!(got, Ok(0) | Err(_)),
         "the third connection gets nothing: {got:?}"
     );
+    assert_eq!(h.proxy.stats().connections_refused, 1, "the refusal is counted");
     // Existing connections are unaffected: read the rest of the first response off `a`, then reuse it.
     drop(third);
     let mut sink = vec![0u8; 8192];

@@ -14,9 +14,11 @@ export interface FlowFilter {
   inScopeOnly: boolean;
   /** Comma-separated extensions to hide, lower case. */
   hideExt: string;
+  /** The line uses something only the server understands (or, not, groups, tag:, header: ...): the live tail can't match it here. */
+  serverOnly: boolean;
 }
 
-export type ChipKey = 'host' | 'method' | 'status' | 'scope' | 'ext' | 'text';
+export type ChipKey = 'host' | 'method' | 'status' | 'scope' | 'ext' | 'text' | 'other';
 export interface Chip { key: ChipKey; label: string; start: number; end: number }
 export interface Parsed { filter: FlowFilter; chips: Chip[]; errors: string[] }
 
@@ -48,6 +50,9 @@ function tokenize(q: string): Tok[] {
   return out;
 }
 
+/** Words and terms the server's query language has and this parser does not: operators, groups and the newer keys. */
+const SERVER_ONLY = /^(?:or|and|not)$|^-?\(|\)$|^-?(?:header|tag|mime|path|note|port|scheme|size|since|until|has|source):/i;
+
 const KEYS: Record<string, ChipKey> = { host: 'host', h: 'host', method: 'method', m: 'method', status: 'status', s: 'status', scope: 'scope', ext: 'ext' };
 
 function parseStatus(v: string): [number | undefined, number | undefined] | null {
@@ -67,7 +72,7 @@ function parseStatus(v: string): [number | undefined, number | undefined] | null
 
 export function parseQuery(query: string): Parsed {
   const q = query.slice(0, MAX_QUERY);
-  const filter: FlowFilter = { text: '', host: '', methods: '', inScopeOnly: false, hideExt: '' };
+  const filter: FlowFilter = { text: '', host: '', methods: '', inScopeOnly: false, hideExt: '', serverOnly: false };
   const chips: Chip[] = [];
   const errors: string[] = [];
   const words: string[] = [];
@@ -75,6 +80,11 @@ export function parseQuery(query: string): Parsed {
     const m = /^(-?)([A-Za-z]+):(.*)$/.exec(t.text);
     const key = m ? KEYS[m[2]!.toLowerCase()] : undefined;
     if (!m || !key) {
+      if (SERVER_ONLY.test(t.text)) {
+        filter.serverOnly = true;
+        chips.push({ key: 'other', label: t.raw, start: t.start, end: t.end });
+        continue;
+      }
       words.push(t.text);
       chips.push({ key: 'text', label: t.text, start: t.start, end: t.end });
       continue;
@@ -103,8 +113,11 @@ export function parseQuery(query: string): Parsed {
         chips.push(chip());
       }
     } else if (key === 'scope') {
-      if (val.toLowerCase() !== 'in') errors.push(`scope: only "scope:in" is supported (in "${t.raw}")`);
-      else {
+      if (val.toLowerCase() !== 'in') {
+        // `scope:out` is the server's; whether it is valid is for the server to say.
+        filter.serverOnly = true;
+        chips.push(chip());
+      } else {
         filter.inScopeOnly = true;
         chips.push(chip());
       }

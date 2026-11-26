@@ -284,38 +284,67 @@ mod tests {
         }
     }
 
+    /// The writer is stuck (a slow disk). The caller is never held up; what does not fit is counted, and what
+    /// was accepted is written once the writer is free. Deterministic: the test waits until the writer is
+    /// stuck inside its first write, so how fast the pushes run cannot change what happens.
     #[test]
-    fn a_stalled_writer_never_blocks_the_caller_and_bodies_are_dropped() {
+    fn a_stalled_writer_never_blocks_the_caller_and_every_drop_is_counted() {
         let (events, _) = crate::events::EventBus::channel(4);
         let gate = Arc::new(Mutex::new(()));
         let held = gate.lock().unwrap();
         let written = Arc::new(Mutex::new(Vec::<usize>::new()));
+        let (stuck_tx, stuck_rx) = mpsc::channel::<()>();
         let (g, w) = (gate.clone(), written.clone());
         let rec = Recorder::spawn(
             4,
-            MemoryBudget::new(1 << 20),
+            MemoryBudget::new(64 << 20),
             events,
             None,
             Box::new(move |flows, _| {
+                let _ = stuck_tx.send(());
                 let _wait = g.lock().unwrap(); // stalls until the test lets go
                 w.lock().unwrap().extend(flows.iter().map(|f| f.request.len()));
                 Ok(())
             }),
         );
+        rec.flow(flow(0, 20_000));
+        stuck_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the writer picked up the first flow");
         let t = std::time::Instant::now();
-        for i in 0..200 {
+        for i in 1..200 {
             rec.flow(flow(i, 20_000));
         }
-        assert!(t.elapsed() < Duration::from_secs(2), "recording must not block");
-        let dropped = rec.stats().bodies_dropped.load(Ordering::Relaxed);
-        assert!(dropped > 0, "some bodies must have been dropped");
+        assert!(t.elapsed() < Duration::from_secs(5), "recording must not block");
+        let dropped = rec.stats().records_dropped.load(Ordering::Relaxed);
+        // One in the writer's hands, four in the queue; the other 195 did not fit.
+        assert_eq!(dropped, 195);
         drop(held);
         rec.flush();
-        let written = written.lock().unwrap();
-        assert!(
-            written.iter().any(|&n| n < 100),
-            "the dropped ones were written as heads only: {written:?}"
+        assert_eq!(written.lock().unwrap().len() as u64 + dropped, 200);
+    }
+
+    #[test]
+    fn flows_that_do_not_fit_the_memory_budget_are_written_as_heads_only() {
+        let (events, _) = crate::events::EventBus::channel(4);
+        let written = Arc::new(Mutex::new(Vec::<usize>::new()));
+        let w = written.clone();
+        let rec = Recorder::spawn(
+            64,
+            MemoryBudget::new(1000),
+            events,
+            None,
+            Box::new(move |flows, _| {
+                w.lock().unwrap().extend(flows.iter().map(|f| f.request.len()));
+                Ok(())
+            }),
         );
+        rec.flow(flow(1, 50_000));
+        rec.flush();
+        assert_eq!(rec.stats().bodies_dropped.load(Ordering::Relaxed), 1);
+        let written = written.lock().unwrap();
+        assert_eq!(written.len(), 1);
+        assert!(written[0] < 100, "only the head was written: {written:?}");
     }
 
     #[test]
@@ -385,5 +414,77 @@ mod tests {
         rec.flush();
         assert_eq!(rec.stats().write_failures.load(Ordering::Relaxed), 0);
         assert!(rx.try_recv().is_err());
+    }
+}
+
+#[cfg(test)]
+mod load {
+    use super::*;
+    use bosun_store::Project;
+
+    fn flow(id: i64) -> NewFlow {
+        let req = b"GET /x HTTP/1.1\r\nHost: h\r\n\r\n".to_vec();
+        NewFlow {
+            id,
+            source: bosun_model::FlowSource::Proxy,
+            started_ms: id,
+            duration_ms: Some(1),
+            scheme: bosun_model::Scheme::Http,
+            host: "h".into(),
+            port: 80,
+            method: "GET".into(),
+            path: format!("/x/{id}"),
+            http_version: "HTTP/1.1".into(),
+            status: Some(200),
+            in_scope: true,
+            edited: false,
+            error: None,
+            request: req,
+            original_request: None,
+            response: Some(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello".to_vec()),
+            original_response: None,
+            response_truncated: false,
+        }
+    }
+
+    /// A steady 7,000 flows a second (the rate at which flows seemed to go missing) into a real project file:
+    /// every one is stored and nothing is dropped. The writer is not the bottleneck; the proxy's connection
+    /// limit is, and that is counted separately (`connections_refused`).
+    #[test]
+    fn a_steady_seven_thousand_a_second_is_all_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Arc::new(Project::open(&dir.path().join("p.bosun")).unwrap());
+        let (events, _rx) = crate::events::EventBus::channel(1024);
+        let rec = Recorder::start(project.clone(), events, MemoryBudget::new(256 << 20));
+        let (rate, n) = (7000.0_f64, 14_000_i64);
+        let t = std::time::Instant::now();
+        for i in 0..n {
+            let due = Duration::from_secs_f64(i as f64 / rate);
+            while t.elapsed() < due {
+                std::hint::spin_loop();
+            }
+            rec.flow(flow(i + 1));
+        }
+        rec.flush();
+        let s = rec.stats();
+        assert_eq!(s.records_dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(s.bodies_dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(project.flow_count().unwrap(), n);
+    }
+
+    /// An instantaneous burst past the queue is dropped, and every drop is counted: stored + dropped = sent.
+    #[test]
+    fn a_burst_past_the_queue_is_counted_not_silent() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Arc::new(Project::open(&dir.path().join("p.bosun")).unwrap());
+        let (events, _rx) = crate::events::EventBus::channel(1024);
+        let rec = Recorder::start(project.clone(), events, MemoryBudget::new(256 << 20));
+        let n = 50_000_i64;
+        for i in 0..n {
+            rec.flow(flow(i + 1));
+        }
+        rec.flush();
+        let dropped = rec.stats().records_dropped.load(Ordering::Relaxed) as i64;
+        assert_eq!(project.flow_count().unwrap() + dropped, n);
     }
 }

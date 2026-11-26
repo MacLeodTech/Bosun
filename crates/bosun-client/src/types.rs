@@ -120,6 +120,9 @@ pub struct FlowQuery {
     pub after: Option<FlowId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// A history query, such as `host:example.com status:4xx -ext:png login`. A mistake in it is an error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
 }
 
 /// One stored message: its header block and sizes. The body comes from [`Client::flow_body`](crate::Client::flow_body).
@@ -292,6 +295,7 @@ pub struct ProxyStats {
     pub memory_budget: usize,
     pub memory_used: usize,
     pub memory_refused: u64,
+    pub connections_refused: u64,
     pub recorder_bodies_dropped: u64,
     pub recorder_records_dropped: u64,
     pub recorder_write_failures: u64,
@@ -393,4 +397,34 @@ pub struct ProjectList {
 pub struct BackupInfo {
     pub path: String,
     pub size_bytes: u64,
+}
+
+/// A term of a history query that the server recognised.
+#[derive(Debug, Clone, Deserialize)]
+pub struct QueryTerm {
+    pub key: String,
+    pub label: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct QueryProblem {
+    pub message: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// The result of `check_flow_query`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct QueryCheck {
+    pub terms: Vec<QueryTerm>,
+    pub errors: Vec<QueryProblem>,
+}
+
+/// A history query kept under a name for the whole project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedFilter {
+    pub name: String,
+    pub query: String,
 }

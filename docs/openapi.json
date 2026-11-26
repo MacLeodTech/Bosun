@@ -1025,6 +1025,15 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1106,6 +1115,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/query": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "Check a history query without running it: the recognised terms with their positions, and every mistake. Needs the viewer role or above.",
+        "operationId": "check_flow_query",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryCheck"
                 }
               }
             }
@@ -3117,6 +3197,145 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/MatchRule"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/saved-filters": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "The project's saved history filters. Needs the viewer role or above.",
+        "operationId": "get_saved_filters",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedFilter"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "history"
+        ],
+        "description": "Replace the saved filters. Every query must be valid. Needs the tester role or above.",
+        "operationId": "put_saved_filters",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SavedFilter"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedFilter"
                   }
                 }
               }
@@ -5633,6 +5852,7 @@
           "memory_budget",
           "memory_used",
           "memory_refused",
+          "connections_refused",
           "recorder_bodies_dropped",
           "recorder_records_dropped",
           "recorder_write_failures",
@@ -5641,6 +5861,12 @@
           "intercept_queued_bytes"
         ],
         "properties": {
+          "connections_refused": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections closed at once because the proxy was at its connection limit.",
+            "minimum": 0
+          },
           "intercept_queued_bytes": {
             "type": "integer",
             "minimum": 0
@@ -5681,6 +5907,49 @@
           "recorder_write_failures": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "QueryCheck": {
+        "type": "object",
+        "description": "What a history query means: each recognised term with its place in the text, and every mistake. Nothing is\nrun. A front end uses this for chips and messages while the person types.",
+        "required": [
+          "terms",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryError"
+            }
+          },
+          "terms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TermSpan"
+            }
+          }
+        }
+      },
+      "QueryError": {
+        "type": "object",
+        "required": [
+          "message",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer",
             "minimum": 0
           }
         }
@@ -5750,6 +6019,22 @@
           "response_header",
           "response_body"
         ]
+      },
+      "SavedFilter": {
+        "type": "object",
+        "description": "A history query kept under a name, for the whole project.",
+        "required": [
+          "name",
+          "query"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          }
+        }
       },
       "Scheme": {
         "type": "string",
@@ -6251,6 +6536,35 @@
             "type": "array",
             "items": {},
             "description": "One object per tab (target, request text, options). Responses are not stored."
+          }
+        }
+      },
+      "TermSpan": {
+        "type": "object",
+        "description": "A recognised term, for showing as a chip: where it is in the query and what it says.",
+        "required": [
+          "key",
+          "label",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "key": {
+            "type": "string",
+            "description": "`host`, `method`, `status`, `text`, ..."
+          },
+          "label": {
+            "type": "string",
+            "description": "The term as written, including a leading `-`."
+          },
+          "start": {
+            "type": "integer",
+            "description": "Byte offsets into the query.",
+            "minimum": 0
           }
         }
       },

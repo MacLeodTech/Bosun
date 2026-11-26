@@ -312,8 +312,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Out-of-scope traffic from tools.* Every request from Repeater, Intruder, the scanner, the crawler and plugins
   goes through one gate (`bosun-scope`) that refuses out-of-scope targets and honours a global stop switch. The
   proxy itself is exempt: it forwards what the user's own browser asks for.
-- *Imports never send.* The importers only produce request definitions; they open no connection (not even to
-  fetch a `$ref`, a server URL or an introspection result). Items are saved as Repeater tabs, and a tab is sent
+- *Imports send nothing of their own.* The importers only produce request definitions; they open no connection
+  (not even to fetch a `$ref` or a server URL). The one fetch is explicit: a GraphQL import with `introspection_url`
+  POSTs the standard introspection query to that URL through the Repeater's engine, so the scope gate (scope, kill
+  switch, rate limit, protected networks, the Repeater's out-of-scope setting) decides first; an out-of-scope
+  endpoint gets 403 and no connection. The answer is parsed like a pasted file, never rendered, and the import is
+  audited with the URL. HAR and Burp responses are stored as flows (source `import`) only when `store_responses` is
+  set: they are target-controlled bytes like any recorded response, shown only in the sandboxed viewers, and nothing
+  is sent. Items are saved as Repeater tabs, and a tab is sent
   only when a tester sends it, through the same scope gate as any Repeater request. Imported items are validated
   (absolute http/https URL, method token, no control characters in header names or values, framing headers
   dropped) so a crafted file cannot smuggle a second request or header. The reply lists the hosts involved so the

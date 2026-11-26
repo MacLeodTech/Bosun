@@ -24,6 +24,8 @@ pub enum FlowSource {
     Scanner,
     Crawler,
     Plugin,
+    /// Recorded in a HAR or Burp file and imported: nothing was sent.
+    Import,
 }
 
 impl FlowSource {
@@ -35,6 +37,7 @@ impl FlowSource {
             Self::Scanner => "scanner",
             Self::Crawler => "crawler",
             Self::Plugin => "plugin",
+            Self::Import => "import",
         }
     }
 
@@ -46,6 +49,7 @@ impl FlowSource {
             "scanner" => Self::Scanner,
             "crawler" => Self::Crawler,
             "plugin" => Self::Plugin,
+            "import" => Self::Import,
             _ => return None,
         })
     }

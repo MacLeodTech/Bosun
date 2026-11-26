@@ -3,6 +3,8 @@
   // The server does the crawling (`/crawl/crawls`): every request goes through the scope gate and is recorded in the
   // history (source `crawler`), so the pages also show up in the site map. POST forms are sent only when ticked.
   // Everything from the target is shown as text.
+  // Progress arrives as `crawl_*` events on the event stream; a slow poll stays on as a fallback in case the stream
+  // is down. The page list is fetched incrementally (`from`), so an event only says "there is more".
   import { onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
@@ -28,21 +30,32 @@
   const fail = (e: unknown) => { error = e instanceof Error ? e.message : String(e); };
   const running = $derived(status?.state === 'running');
 
+  let polling = false;
+  let again = false;
+  const stopTimer = () => { clearInterval(timer); timer = undefined; };
+
   async function poll(id: number) {
+    // One fetch at a time; an event that arrives meanwhile asks for another.
+    if (polling) { again = true; return; }
+    polling = true;
     try {
       const d = await api.get<Detail>(`/crawl/crawls/${id}?from=${pages.length}`);
       pages = pages.concat(d.results);
       status = { ...d, results: [] };
-      if (d.state !== 'running') {
-        clearInterval(timer);
-        timer = undefined;
-      }
+      if (d.state !== 'running') stopTimer();
     } catch (e) {
-      clearInterval(timer);
-      timer = undefined;
+      stopTimer();
       fail(e);
+    } finally {
+      polling = false;
+      if (again) { again = false; if (status?.state === 'running') void poll(id); }
     }
   }
+
+  const off = session.on((e) => {
+    if (e.type === 'reload' && status) void poll(status.id);
+    else if ((e.type === 'crawl_progress' || e.type === 'crawl_done') && status && e.id === status.id) void poll(e.id);
+  });
 
   async function start() {
     error = '';
@@ -52,7 +65,8 @@
       const i = await api.post<{ id: number }>('/crawl/crawls', {
         start: [url.trim()], max_depth: depth, max_pages: maxPages, respect_robots: robots, use_sitemap: sitemap, submit_post_forms: postForms,
       });
-      timer = setInterval(() => void poll(i.id), 400);
+      status = { id: i.id, state: 'running' } as Detail;
+      timer = setInterval(() => void poll(i.id), 5000);
       await poll(i.id);
     } catch (e) {
       fail(e);
@@ -64,7 +78,7 @@
     try { await api.post(`/crawl/crawls/${status.id}/stop`); } catch (e) { fail(e); }
   }
 
-  onDestroy(() => clearInterval(timer));
+  onDestroy(() => { stopTimer(); off(); });
 </script>
 
 <div class="toolbar">

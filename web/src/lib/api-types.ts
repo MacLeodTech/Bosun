@@ -388,7 +388,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description The crawls of this run of the server, newest first, with live counts. */
+        /** @description The crawls of this run of the server, newest first, with live counts. Progress is also sent on the event stream (crawl_started, crawl_progress, crawl_done). */
         get: operations["crawl_list"];
         put?: never;
         /** @description Start a spider crawl from one or more URLs: it follows links, frames, redirects, GET forms, robots.txt and sitemaps, up to a depth and a page limit. Every request goes through the scope gate (a link outside the scope is listed in out_of_scope, never requested) and is recorded as a flow with source crawler, so the pages appear in the history and site map. POST forms are sent only with submit_post_forms. Two crawls run at once. Needs the tester role or above; audited. */
@@ -631,7 +631,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Import request definitions from an OpenAPI or Swagger file, a GraphQL introspection result, a Postman collection, a HAR file, a list of URLs or a Burp XML export, and save them as Repeater tabs. The file is only parsed: nothing is sent, and a tab is sent later through the Repeater, which passes the scope gate. Files over 32 MiB, YAML aliases, XML entities and deeply nested input are refused. The reply lists the hosts the requests go to. The import is audited. Needs the tester role or above. */
+        /** @description Import request definitions from an OpenAPI or Swagger file, a GraphQL introspection result, a Postman collection, a HAR file, a list of URLs or a Burp XML export, and save them as Repeater tabs. The file is only parsed: nothing is sent, and a tab is sent later through the Repeater, which passes the scope gate. The one exception is a GraphQL import with introspection_url, which POSTs the introspection query to that endpoint through the same gate (an out-of-scope endpoint is refused with 403) and records the fetch as a Repeater flow. HAR and Burp responses are stored as flows (source import, nothing sent) only when store_responses is set. Files over 32 MiB, YAML aliases, XML entities and deeply nested input are refused. The reply lists the hosts the requests go to. The import is audited. Needs the tester role or above. */
         post: operations["import_requests"];
         delete?: never;
         options?: never;
@@ -2082,7 +2082,7 @@ export interface components {
          *     filtered and so nothing a tool sends is hidden from the user.
          * @enum {string}
          */
-        FlowSource: "proxy" | "repeater" | "intruder" | "scanner" | "crawler" | "plugin";
+        FlowSource: "proxy" | "repeater" | "intruder" | "scanner" | "crawler" | "plugin" | "import";
         /** @description A flow as listed in history: everything needed for the table, without bodies. */
         FlowSummary: {
             /** Format: int64 */
@@ -2153,11 +2153,19 @@ export interface components {
         ImportBody: {
             /** @description The server or endpoint to use when the file has none: required for GraphQL, overrides an OpenAPI server. */
             base_url?: string | null;
-            /** @description The file's text (at most 32 MiB). */
-            content: string;
+            /** @description The file's text (at most 32 MiB). Not needed with `introspection_url`. */
+            content?: string;
             /** @description Parse and report, but save nothing. */
             dry_run?: boolean;
             format: components["schemas"]["Format"];
+            /**
+             * @description GraphQL only: fetch the introspection result live by POSTing the introspection query to this endpoint
+             *     URL (it is also the base URL). The request goes through the scope gate like any Repeater request; an
+             *     out-of-scope endpoint is refused. `content` is ignored.
+             */
+            introspection_url?: string | null;
+            /** @description HAR and Burp: also store the recorded responses as flows (source `import`). Nothing is sent. */
+            store_responses?: boolean;
         };
         ImportReply: {
             /**
@@ -2187,6 +2195,11 @@ export interface components {
             parsed: number;
             /** @description One line per request: method and URL. */
             requests: string[];
+            /**
+             * Format: int32
+             * @description Recorded responses stored as flows (0 unless `store_responses`).
+             */
+            responses_stored: number;
         };
         InterceptItem: components["schemas"]["InterceptSummary"] & {
             /**
@@ -2691,6 +2704,32 @@ export interface components {
             total: number;
             /** @enum {string} */
             type: "intruder_state";
+        } | {
+            /** Format: int64 */
+            id: number;
+            start: string[];
+            /** @enum {string} */
+            type: "crawl_started";
+        } | {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            pages: number;
+            /** Format: int64 */
+            requests: number;
+            /** @enum {string} */
+            type: "crawl_progress";
+        } | {
+            error?: string | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            pages: number;
+            /** Format: int64 */
+            requests: number;
+            state: string;
+            /** @enum {string} */
+            type: "crawl_done";
         } | {
             /** Format: int64 */
             attack_id: number;

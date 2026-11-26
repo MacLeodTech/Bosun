@@ -730,3 +730,13 @@ Delivered before the phase plan, as checked off in the milestone lists.
 - [x] Get CI green: SAST + SCA, Container image and Desktop shell have not passed yet → **WP-34**
 - [x] Set up branch protection and required checks once CI is green → **WP-34**
 - [x] Review the Dependabot PRs: TypeScript 7 is not applied (`svelte-check` cannot load it), the rest are merged → **WP-34**
+
+### Scanner checks, `bosun scan` and Map rules (branch `wp-43`, 2026-11-26)
+
+- **WP-55 (part):** ten new active checks (boolean and time SQLi, stored XSS (destructive, opt-in), SSTI, command
+  injection, path traversal, open redirect, CRLF, CORS, Host header), each with a testbed target and a safe twin.
+  `scan_checks` reports `destructive`.
+- **WP-57 (part):** `bosun scan URL` with import, in-process or remote engine, `--fail-on` exit codes, SARIF and JSON
+  output, `scan_started/progress/done` events, and `docs/ci.md` recipes.
+- **WP-76:** Map Local (inside a chosen directory, no traversal or symlink escape), Map Remote (through `Gate::check`)
+  and throttle rules; `GET/PUT /map-rules`, audited; a Match & replace panel form. Saving Map Local rules needs admin.

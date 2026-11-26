@@ -207,7 +207,6 @@ valid in the "Depends on" column.
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
 | [ ] | WP-33 | Protocol gaps (only header case left) | 4 | S | |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
-| [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
 | [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
 | [ ] | WP-50 | `bosun-checks`: more ZAP ports and library entries | 5 | S | WP-49 |
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
@@ -216,9 +215,9 @@ valid in the "Depends on" column.
 | [ ] | WP-68 | Encrypted credential vault | 6 | M | WP-20, WP-29 |
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
 | [ ] | WP-54 | Active scan engine and the testbed | 6 | L | WP-40, WP-49, WP-50 |
-| [ ] | WP-55 | Core active checks | 6 | L | WP-54 |
+| [ ] | WP-55 | Core active checks (rest: XXE, upload, JWT, deserialization, prototype pollution, GraphQL, auth/session, TLS) | 6 | M | WP-54 |
 | [ ] | WP-56 | `bosun-auth` and the authorisation matrix | 6 | L | WP-54, WP-68 |
-| [ ] | WP-57 | `bosun scan` for CI | 6 | M | WP-25, WP-26, WP-51, WP-54 |
+| [ ] | WP-57 | `bosun scan` (rest: consume `scan_*` events in the client, drive a `--no-ui` engine, scope SARIF to the scan, container recipes untested in CI) | 6 | S | WP-25, WP-26, WP-51, WP-54 |
 | [ ] | WP-72 | Scanner benchmarks against ZAP | 6 | M | WP-55 |
 | [ ] | WP-81 | Content and parameter discovery | 6 | M | WP-47, WP-52 |
 | [ ] | WP-82 | Technology fingerprint and known-vulnerable components | 6 | M | WP-49, WP-69 |
@@ -639,15 +638,6 @@ From `docs/competitive-analysis.md` (2026-11-25), which compares Bosun with Burp
 others. Every package here follows the platform contracts above. Packages that decode or parse untrusted input get a
 fuzz target; ones that send traffic go through the gate.
 
-#### WP-76 Map Local, Map Remote and throttling · Phase 4 · M
-
-- **Do:**
-  - Rules that answer a matching request from a local file (Map Local) or send it to another host (Map Remote),
-    next to match-and-replace, with an audit entry on change.
-  - Throttle and latency simulation per host or rule.
-  - Map Remote's new target goes through `Gate::check`; Map Local reads only from a directory the user picked, with
-    no path traversal (tested).
-- **Done when:** tests cover each rule type, the path-traversal case, and an out-of-scope Map Remote target being refused.
 
 #### WP-78 Proxy modes: reverse proxy, WireGuard or local capture, TLS key log · Phase 9 · L
 

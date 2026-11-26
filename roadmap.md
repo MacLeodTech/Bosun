@@ -207,6 +207,7 @@ valid in the "Depends on" column.
 | [ ] | WP-70 | Docs site | 3 | M | WP-13 |
 | [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
 | [ ] | WP-47 | Intruder (rest) | 4 | M | WP-40, WP-41 |
+| [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
 | [ ] | WP-28 | Proxy hot path | 4 | M | WP-05 |
 | [ ] | WP-32 | CA management | 4 | M | |
@@ -382,20 +383,10 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** CI builds and smoke-tests the image under Docker and rootless Podman, and the Quadlet unit starts,
   passes its health check and restarts on failure in a test VM or runner.
 
-#### WP-26 CLI: client commands · Phase 3 · L
+#### WP-26 CLI: client commands: what is left · Phase 3 · S
 
-- **Why:** a CLI for a running engine (local or a server), not just local administration.
-- **Do:**
-  - Built on `bosun-client`.
-  - `bosun login --server URL` with named profiles in the config directory; the token is kept in the OS keychain,
-    or in a 0600 file when there is no keychain.
-  - `history list|search|show|export` (HAR and ndjson), `scope get|set|add`, `rules get|set|import`,
-    `intercept on|off|queue|forward|drop`, `ca export`, `status`, `events --follow`.
-  - Output as tables, `--json` or `--ndjson`; meaningful exit codes; `--quiet`.
-  - Later packages add `scan` (M5). `repeater send` is done.
-- **Progress (2026-11-25):** `login` (a token in a 0600 profiles file), `status` and `repeater send` exist. The rest
-  of the list, and the OS keychain, are open.
-- **Done when:** integration tests run each command against an engine started in the test.
+- **Do:** keep the token in the OS keychain (today a 0600 profiles file). `scan` arrives with M5.
+- **Done when:** the keychain is used where one exists, with the file as the fallback.
 
 ### WP-27 to WP-33: performance and depth
 

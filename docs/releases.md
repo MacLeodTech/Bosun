@@ -9,6 +9,11 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-26 CLI client commands, first part** (`wp-43`, 2026-11-26). `history list|search|show|export` (HAR 1.2 and
+  ndjson), `scope get|set|add`, `rules get|set|import`, `intercept on|off|status|queue|forward|drop`, `events
+  [--follow]`, `ca export --server/--profile`, and `--json`, `--ndjson` and `--quiet` output; `history search` exits 4
+  when nothing matches. An integration test runs each command against a live engine. Left: the OS keychain.
+
 - **WP-47 Intruder, first part, and the rest of WP-43** (`wp-43`, 2026-11-26). The `bosun-intruder` crate: sniper, battering
   ram, pitchfork and cluster bomb; payload sources list, numbers (decimal or hex), brute force, null payloads and case
   changes; processing (prefix, suffix, encode and hash through `bosun-codec`, regex replace, skip rules); a pool

@@ -9,6 +9,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-26 keychain and Intruder CLI** (`wp-43`, 2026-11-26). `bosun login` stores the token in the OS keychain (`keyring` 3, vendored), falling back to the 0600 file; `BOSUN_KEYCHAIN=off` forces the file. Intruder gains `dates`, `char_substitution` and `builtin` sources, and `bosun intruder run PLAN.json [--format csv|json] [-o file] [--exact]` (formula-safe CSV).
 - **WP-52 Spider engine** (`wp-43`, 2026-11-26). New crate `bosun-crawl`: follows links, frames, resources, redirects and GET forms; reads robots.txt and sitemaps; bounded by depth, pages and concurrency. Every request goes through `Engine::send`, so the gate decides. POST forms are listed, not sent, unless enabled. Fuzz target `crawl_html`. No API, CLI or UI yet.
 - **WP-28 Proxy hot path** (`wp-43`, 2026-11-26). `new_flow` no longer re-parses (method, path, version and status are
   passed through); bodies stay `Bytes`; a request that isn't recorded, held or touched by a rule isn't serialised; request

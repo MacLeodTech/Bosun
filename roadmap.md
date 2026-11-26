@@ -188,7 +188,7 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-23, WP-25, WP-28, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-23, WP-25, WP-26, WP-28, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
@@ -196,7 +196,6 @@ valid in the "Depends on" column.
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
-| [ ] | WP-26 | CLI: client commands | 3 | L | WP-14 |
 | [ ] | WP-20 | Data key in the OS keychain | 3 | M | |
 | [ ] | WP-21 | Browser provisioning | 3 | M | WP-01 |
 | [ ] | WP-18 | Windows desktop app (WinUI 3) | 3 | L | WP-09, WP-13, WP-15 |
@@ -474,11 +473,10 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 #### WP-47 Intruder: what is left · Phase 4 · M
 
-- **Do:** the attack engine, API, panel and "Send to Intruder" are done (see `docs/releases.md`). Left:
-  - Payload sources: dates, character substitution, recursive grep, the results of earlier attacks, and bundled
-    wordlists with SecLists support (today a list is typed or loaded from a file in the browser).
-  - A server-side export (the panel exports CSV and JSON in the browser), a `bosun intruder` command (WP-26) and the
-    query bar's reuse for Intruder results (WP-75).
+- **Do:** the engine, API, panel, "Send to Intruder", the dates, character-substitution and built-in sources and
+  `bosun intruder run` are done (see `docs/releases.md`). Left:
+  - Payload sources: recursive grep, the results of earlier attacks, SecLists support, and UI forms for the new sources.
+  - A server-side export and the query bar's reuse for Intruder results (WP-75).
   - A full preview of a plan (it shows the first few requests).
 - **Done when:** tests cover each new source; the CLI runs an attack from a file.
 

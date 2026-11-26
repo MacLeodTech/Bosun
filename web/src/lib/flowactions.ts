@@ -6,6 +6,7 @@ import { bytesToText, flowUrl } from './bytes';
 import { buildCurl } from './curl';
 import { concat, loadPart, type PartName } from './flowbody';
 import { historyView as v } from './historyView.svelte';
+import { inbox } from './inbox.svelte';
 import { toasts } from './toasts.svelte';
 import { withText } from './query';
 import { workspace } from './workspace.svelte';
@@ -154,6 +155,50 @@ export async function changeTags(ids: number[], add: string[], remove: string[])
   try {
     await api.post('/flows/tags', { ids, add, remove });
     v.tagged(ids, add, remove);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+/** The text of one message's body, for the Decoder or the Comparer. */
+async function bodyText(id: number, part: 'request' | 'response'): Promise<string | null> {
+  const t = await messageText(await fetchMeta(id), part);
+  if (!t) {
+    say(`This flow has no ${part}.`);
+    return null;
+  }
+  if (!t.complete) say(`The ${part} is large: only its first part was sent.`);
+  const b = bytesToText(t.body);
+  // A body with nothing in it (a GET, say) is the headers' business: send the whole message instead.
+  return b.text || t.text;
+}
+
+/** Put a message body in the Decoder's input. The caller opens the panel. */
+export async function sendToDecoder(id: number, part: 'request' | 'response'): Promise<boolean> {
+  try {
+    const text = await bodyText(id, part);
+    if (text === null) return false;
+    inbox.toDecoder(text);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+/** Put a message in one side of the Comparer. The caller opens the panel. */
+export async function sendToComparer(id: number, part: 'request' | 'response', side: 'a' | 'b'): Promise<boolean> {
+  try {
+    // The whole message, headers and body, since comparing two requests usually means comparing their headers.
+    const t = await messageText(await fetchMeta(id), part);
+    if (!t) {
+      say(`This flow has no ${part}.`);
+      return false;
+    }
+    if (!t.complete) say(`The ${part} is large: only its first part was sent.`);
+    inbox.toComparer(side, t.text);
     return true;
   } catch (e) {
     fail(e);

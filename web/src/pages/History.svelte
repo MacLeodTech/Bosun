@@ -233,6 +233,9 @@
     };
     return tidyMenu([
       { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'),
+      c('flow.decoder.request', 'Decoder: request'), c('flow.decoder.response', 'Decoder: response'),
+      c('flow.comparer.request.a', 'Comparer: request as A'), c('flow.comparer.request.b', 'Comparer: request as B'),
+      c('flow.comparer.response.a', 'Comparer: response as A'), c('flow.comparer.response.b', 'Comparer: response as B'),
       { kind: 'sep' }, { kind: 'heading', label: 'Copy' },
       c('flow.copy-url', 'URL'), c('flow.copy-curl', 'as cURL'), c('flow.copy-request', 'Request'), c('flow.copy-response', 'Response'),
       ...(canEdit ? [{ kind: 'sep' } as MenuItem, { kind: 'heading', label: 'Highlight' } as MenuItem, ...HL_COLORS.map((c): MenuItem => ({ label: c[0]!.toUpperCase() + c.slice(1), run: () => void highlight(c) })), { label: 'No highlight', run: () => void highlight(null) } as MenuItem, { label: 'Add a tag…', run: () => { tagging = true; setTimeout(() => tagBox?.focus(), 0); } } as MenuItem] : []),

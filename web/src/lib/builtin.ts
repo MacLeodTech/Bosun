@@ -3,7 +3,7 @@
 
 import { api } from './api';
 import { commands, type Command } from './commands.svelte';
-import { copyAsCurl, copyMessage, copyUrls, deleteFlows, scopeHosts, sendToRepeater } from './flowactions';
+import { copyAsCurl, copyMessage, copyUrls, deleteFlows, scopeHosts, sendToComparer, sendToDecoder, sendToRepeater } from './flowactions';
 import { panels } from './panels';
 import { session } from './session.svelte';
 import { shell } from './shell.svelte';
@@ -104,6 +104,26 @@ export function registerBuiltins(): () => void {
         workspace.open('repeater');
       },
     },
+    ...(['request', 'response'] as const).map((part): Command => ({
+      id: `flow.decoder.${part}`,
+      title: `Send ${part} to Decoder`,
+      group: 'Request',
+      when: (c) => c.focus !== null,
+      run: async (c) => {
+        if (await sendToDecoder(c.focus!, part)) workspace.open('decoder');
+      },
+    })),
+    ...(['request', 'response'] as const).flatMap((part) =>
+      (['a', 'b'] as const).map((side): Command => ({
+        id: `flow.comparer.${part}.${side}`,
+        title: `Send ${part} to Comparer as ${side.toUpperCase()}`,
+        group: 'Request',
+        when: (c) => c.focus !== null,
+        run: async (c) => {
+          if (await sendToComparer(c.focus!, part, side)) workspace.open('comparer');
+        },
+      })),
+    ),
     { id: 'flow.copy-url', title: 'Copy URL', group: 'Request', when: hasFlows, run: (c) => copyUrls(c.flows) },
     { id: 'flow.copy-curl', title: 'Copy as cURL', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyAsCurl(c.focus!) },
     { id: 'flow.copy-request', title: 'Copy request', group: 'Request', when: (c) => c.focus !== null, run: (c) => copyMessage(c.focus!, 'request') },

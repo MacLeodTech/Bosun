@@ -2,6 +2,7 @@
   // The Decoder: turn a text or a message body through a chain of encoders and decoders. The work is done by the
   // server (`/decoder/apply`, `/decoder/smart`); nothing here is rendered as HTML, only shown as text.
   import { api } from '../lib/api';
+  import { inbox } from '../lib/inbox.svelte';
   import { b64ToBytes, bytesToB64, bytesToText, fmtSize, hexDump, textToBytes } from '../lib/bytes';
   import type { components } from '../lib/api-types';
 
@@ -42,6 +43,15 @@
   let busy = $state(false);
   let hex = $state(false);
   let seq = 0;
+
+  // "Send to Decoder" puts text here; take it once.
+  $effect(() => {
+    const m = inbox.decoder;
+    if (!m) return;
+    inbox.decoder = null;
+    input = m.text;
+    reply = null;
+  });
 
   const inputBytes = () => textToBytes(input, 'utf8');
 

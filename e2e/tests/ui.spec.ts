@@ -790,6 +790,29 @@ test('context menu: a row offers its actions, Escape closes it, and Send to Repe
   await expect(rp.getByLabel('Request')).toContainText('GET /hello-history');
 });
 
+test('send to: a response body goes to the Decoder, and a request and a response to the two sides of the Comparer', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  const r = page.locator('.row', { hasText: '/hello-history' });
+  const menu = page.getByRole('menu', { name: 'Request actions' });
+
+  await r.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Decoder: response', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Decoder' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel('Decoder input')).toHaveValue('hello from /hello-history');
+
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await r.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Comparer: request as A', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await r.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Comparer: response as B', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Comparer' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel('Left side')).toHaveValue(/^GET \/hello-history/);
+  await expect(page.getByLabel('Right side')).toHaveValue(/^HTTP\/1\.1 200/);
+});
+
 test('shortcuts: Ctrl+R sends to the Repeater without reloading, and ? lists every shortcut and any conflict', async () => {
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();

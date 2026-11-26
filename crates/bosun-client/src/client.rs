@@ -525,6 +525,16 @@ impl Client {
         self.json(self.req(Method::PUT, "/intercept").json(s)).await
     }
 
+    pub async fn response_filter(&self) -> Result<ResponseFilter> {
+        self.json(self.req(Method::GET, "/intercept/response-filter"))
+            .await
+    }
+
+    pub async fn put_response_filter(&self, f: &ResponseFilter) -> Result<ResponseFilter> {
+        self.json(self.req(Method::PUT, "/intercept/response-filter").json(f))
+            .await
+    }
+
     pub async fn intercept_queue(&self) -> Result<Vec<InterceptSummary>> {
         self.json(self.req(Method::GET, "/intercept/queue")).await
     }

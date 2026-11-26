@@ -159,7 +159,7 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - An append-only audit log (database triggers refuse UPDATE and DELETE) records sign-ins, account, token, scope,
   rule, kill-switch, role, session-revocation, login-ticket, second-factor (enrolment, enable, disable, recovery
   codes used or replaced, failed codes, the require-everyone policy, admin and CLI resets), project (create, open, close, rename, delete, export,
-  backup, import and refused imports) and intercept changes (settings, drop, edited forward, forward-all),
+  backup, import and refused imports) and intercept changes (settings, response filter, drop, edited forward, forward-all),
   with the user and remote address. Admins can read it in the UI.
 
 ### Information disclosure

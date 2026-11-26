@@ -18,7 +18,7 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use bosun_proxy::{InterceptSettings, ProxyEvent, RuleSpec};
+use bosun_proxy::{InterceptSettings, ProxyEvent, ResponseFilter, RuleSpec};
 use bosun_scope::{Scope, ScopeSpec};
 use bosun_store::{Project, ProjectLock, Role, StoreError};
 use futures_util::StreamExt;
@@ -27,7 +27,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::auth::Caller;
 use crate::security::{empty, reject};
-use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SCOPE};
+use crate::{AppState, SETTING_INTERCEPT, SETTING_RESPONSE_FILTER, SETTING_RULES, SETTING_SCOPE};
 
 type R = Result<Response, Response>;
 
@@ -737,6 +737,7 @@ struct Loaded {
     scope: Scope,
     rules: Vec<RuleSpec>,
     intercept: Option<InterceptSettings>,
+    response_filter: ResponseFilter,
     notes: Vec<&'static str>,
 }
 
@@ -764,10 +765,17 @@ fn load_settings(p: &Project) -> Loaded {
         }
     };
     let intercept = p.setting::<InterceptSettings>(SETTING_INTERCEPT).ok().flatten();
+    let response_filter = p
+        .setting::<ResponseFilter>(SETTING_RESPONSE_FILTER)
+        .ok()
+        .flatten()
+        .filter(|f| f.validate().is_ok())
+        .unwrap_or_default();
     Loaded {
         scope,
         rules,
         intercept,
+        response_filter,
         notes,
     }
 }
@@ -831,6 +839,10 @@ async fn switch_to(st: &AppState, caller: &Caller, target: Option<&str>) -> Resu
         .set_repeater_policy(bosun_scope::OutOfScopePolicy::Refuse);
     st.inner.repeater.close_idle();
     let rules_ok = st.inner.proxy.set_rules(loaded.rules).is_ok();
+    st.inner
+        .proxy
+        .intercept()
+        .set_response_filter(loaded.response_filter);
     // Interception never comes back on by itself; the in-scope choice is kept.
     st.inner.proxy.intercept().set(InterceptSettings {
         requests: false,

@@ -5,10 +5,23 @@
   import { session } from '../lib/session.svelte';
   import { usePanel } from '../lib/panelctx';
   import type { InterceptItem, InterceptSettings, InterceptSummary } from '../lib/types';
+  import type { components } from '../lib/api-types';
   import MessageView from '../components/MessageView.svelte';
 
   const panel = usePanel();
   let settings = $state<InterceptSettings>({ requests: false, responses: false, in_scope_only: true });
+  type ResponseFilter = components['schemas']['ResponseFilter'];
+  let filter = $state<ResponseFilter>({ statuses: [], mime_contains: [], only_if_request_held: false });
+  const list = (v: string) => v.split(',').map((x) => x.trim()).filter(Boolean);
+
+  async function saveFilter(next: ResponseFilter) {
+    try {
+      filter = await api.put<ResponseFilter>('/intercept/response-filter', next);
+      error = '';
+    } catch (e) {
+      error = String(e);
+    }
+  }
   let queue = $state<InterceptSummary[]>([]);
   let current = $state<InterceptItem | null>(null);
   let edited: string | null = null;
@@ -77,6 +90,7 @@
 
   onMount(() => {
     api.get<InterceptSettings>('/intercept').then((s) => (settings = s));
+    api.get<ResponseFilter>('/intercept/response-filter').then((f) => (filter = f));
     refresh();
     return session.on((e) => {
       if (e.type === 'reload') {
@@ -103,6 +117,16 @@
   <label><input type="checkbox" checked={settings.in_scope_only} disabled={!canEdit} onchange={(e) => save({ ...settings, in_scope_only: e.currentTarget.checked })} /> Only in-scope</label>
   <label>Auto-forward after <input type="number" min="0" max="3600" class="num" value={settings.timeout_secs ?? 0} disabled={!canEdit} onchange={(e) => save({ ...settings, timeout_secs: Number(e.currentTarget.value) || null })} /> s (0 = hold)</label>
 </div>
+{#if settings.responses}
+  <div class="toolbar" aria-label="Response filter">
+    <span class="muted">Hold only responses where</span>
+    <label>status <input class="txt" placeholder="5xx, 404" aria-label="Status filter" value={(filter.statuses ?? []).join(', ')} disabled={!canEdit} onchange={(e) => saveFilter({ ...filter, statuses: list(e.currentTarget.value) })} /></label>
+    <label>MIME <input class="txt" placeholder="json, html" aria-label="MIME filter" value={(filter.mime_contains ?? []).join(', ')} disabled={!canEdit} onchange={(e) => saveFilter({ ...filter, mime_contains: list(e.currentTarget.value) })} /></label>
+    <label>header has <input class="txt" aria-label="Header filter" value={filter.header_contains ?? ''} disabled={!canEdit} onchange={(e) => saveFilter({ ...filter, header_contains: e.currentTarget.value || null })} /></label>
+    <label>body has <input class="txt" aria-label="Body filter" value={filter.body_contains ?? ''} disabled={!canEdit} onchange={(e) => saveFilter({ ...filter, body_contains: e.currentTarget.value || null })} /></label>
+    <label><input type="checkbox" checked={filter.only_if_request_held} disabled={!canEdit} onchange={(e) => saveFilter({ ...filter, only_if_request_held: e.currentTarget.checked })} /> request was held</label>
+  </div>
+{/if}
 {#if error}<p class="error">{error}</p>{/if}
 <div class="split">
   <ul class="list">
@@ -137,6 +161,7 @@
   .list button { width: 100%; text-align: left; border-radius: 0; background: transparent; font-family: var(--font-mono); font-size: var(--fs-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pane { min-height: 0; display: flex; flex-direction: column; }
   .pad { padding: 1rem; }
+  .txt { width: 9rem; }
   .list button:hover:not(:disabled) { background: var(--surface-2); border-color: transparent; }
   .list button.active { background: var(--surface-sel); }
 </style>

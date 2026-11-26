@@ -177,6 +177,30 @@ test('intercept: dropping a request answers the client with an error', async () 
   await setIntercept(false);
 });
 
+test('intercept: a response filter holds only the matching responses', async () => {
+  await page.getByRole('navigation').getByRole('button', { name: 'Intercept' }).click();
+  const box = page.getByLabel('Intercept responses');
+  const saved = page.waitForResponse((r) => r.request().method() === 'PUT' && /\/intercept$/.test(r.url()));
+  await box.setChecked(true);
+  expect((await saved).ok()).toBe(true);
+  const filterSaved = page.waitForResponse((r) => r.request().method() === 'PUT' && /response-filter$/.test(r.url()));
+  await page.getByLabel('MIME filter').fill('json');
+  await page.getByLabel('MIME filter').press('Tab');
+  expect((await filterSaved).ok()).toBe(true);
+
+  // Plain text is not held; JSON is.
+  const plain = await viaProxy(PROXY_PORT, `${TARGET}/not-held`);
+  expect(plain.status).toBe(200);
+  const pending = viaProxy(PROXY_PORT, `${TARGET}/hits`);
+  await expect(page.locator('.list li button', { hasText: '/hits' })).toBeVisible();
+  await page.getByRole('button', { name: 'Forward', exact: true }).click();
+  expect((await pending).status).toBe(200);
+
+  const off = page.waitForResponse((r) => r.request().method() === 'PUT' && /\/intercept$/.test(r.url()));
+  await box.setChecked(false);
+  await off;
+});
+
 test('repeater: send by hand, again with a change, diff the two, and the sends are recorded', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'Repeater' }).click();

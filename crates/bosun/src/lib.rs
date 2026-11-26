@@ -182,6 +182,11 @@ impl Engine {
         {
             tracing::warn!(error = %e, "the saved match-and-replace rules are invalid; starting without them");
         }
+        if let Some(f) = project.setting::<bosun_proxy::ResponseFilter>(bosun_api::SETTING_RESPONSE_FILTER)?
+            && f.validate().is_ok()
+        {
+            proxy.intercept().set_response_filter(f);
+        }
         if let Some(s) = project.setting::<InterceptSettings>(bosun_api::SETTING_INTERCEPT)? {
             // Never come back up holding traffic: interception starts off, the in-scope choice is kept.
             proxy.intercept().set(InterceptSettings {

@@ -23,6 +23,7 @@
 
   const INBOX = 'bosun.repeater.inbox';
   const INBOX_EVENT = 'bosun:repeater-inbox';
+  const RELOAD_EVENT = 'bosun:repeater-reload';
   const canSend = $derived(session.can('tester'));
 
   let tabs = $state<Tab[]>([]);
@@ -63,10 +64,11 @@
   onMount(() => {
     // The panel stays mounted in the background, so requests sent from History arrive as an event, not a mount.
     window.addEventListener(INBOX_EVENT, takeInbox);
+    window.addEventListener(RELOAD_EVENT, start);
     start();
     // Another project is open: its tabs replace these.
     const off = session.on((e) => { if (e.type === 'reload') start(); });
-    return () => { window.removeEventListener(INBOX_EVENT, takeInbox); off(); clearTimeout(saveTimer); };
+    return () => { window.removeEventListener(INBOX_EVENT, takeInbox); window.removeEventListener(RELOAD_EVENT, start); off(); clearTimeout(saveTimer); };
   });
 
   async function start() {

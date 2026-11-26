@@ -12,6 +12,7 @@ import Findings from '../pages/Findings.svelte';
 import Issues from '../pages/Issues.svelte';
 import Analysis from '../pages/Analysis.svelte';
 import Organizer from '../pages/Organizer.svelte';
+import Import from '../pages/Import.svelte';
 import Rules from '../pages/Rules.svelte';
 import Target from '../pages/Target.svelte';
 import Projects from '../pages/Projects.svelte';
@@ -34,6 +35,7 @@ export const panels: PanelDef[] = [
   { id: 'repeater', title: 'Repeater', component: Repeater },
   { id: 'intruder', title: 'Intruder', component: Intruder },
   { id: 'organizer', title: 'Organizer', component: Organizer },
+  { id: 'import', title: 'Import', component: Import },
   { id: 'issues', title: 'Issues', component: Issues },
   { id: 'findings', title: 'Findings', component: Findings },
   { id: 'analysis', title: 'Host analysis', component: Analysis },

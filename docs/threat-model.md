@@ -289,7 +289,9 @@ This document says what is protected, from whom, and how. Code comments refer ba
   "billion laughs"); the XML reader never resolves entities: a DOCTYPE that declares one is refused, and so is any
   reference beyond the five predefined and numeric ones (no XXE, no entity expansion). `$ref` is followed only
   inside the same document and to a bounded depth; nothing is fetched. Every parser has a fuzz target
-  (`import_formats`).
+  (`import_formats`). The UI's Import panel shows the pasted text, the hosts and the request lines only as text
+  (never as HTML) and previews with a dry run first; the hosts are listed so the scope can be checked before a tab
+  is sent, which still passes `Gate::check`.
 
 ### Elevation of privilege
 

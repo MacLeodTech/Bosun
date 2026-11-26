@@ -1424,3 +1424,29 @@ test('issues: the saved HTML report runs no script and keeps no secrets', async 
   expect(violations).toEqual([]);
   await viewer.close();
 });
+
+test('import: a file from the UI becomes Repeater tabs without a reload', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Import' }).click();
+  const ip = page.getByRole('tabpanel', { name: 'Import', exact: true });
+  await ip.getByLabel('Import format').selectOption('urls');
+  await ip.getByLabel('Import file').setInputFiles({
+    name: 'urls.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(`${TARGET}/imp-one\n${TARGET}/imp-two\n`),
+  });
+  await ip.getByRole('button', { name: 'Preview' }).click();
+  const prev = ip.getByRole('region', { name: 'Import preview' });
+  await expect(prev).toContainText('2 requests found');
+  await expect(prev).toContainText(`127.0.0.1:${TARGET_PORT}`);
+  await expect(prev).toContainText('Check the scope');
+  await ip.getByRole('button', { name: 'Import', exact: true }).click();
+  await expect(ip.getByRole('status')).toContainText('Imported 2 of 2');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  // The imported tabs are the last two, named by host.
+  await rp.locator('.tabs button').last().click();
+  await expect(rp.getByLabel('Request')).toContainText("GET /imp-two ");
+  await rp.locator('.tabs button').nth(-2).click();
+  await expect(rp.getByLabel('Request')).toContainText("GET /imp-one ");
+});

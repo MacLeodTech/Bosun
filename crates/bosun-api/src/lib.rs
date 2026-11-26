@@ -17,6 +17,7 @@ pub mod openapi;
 pub mod projects;
 pub mod repeater;
 pub mod security;
+pub mod sequencer;
 pub mod sso;
 pub mod web;
 
@@ -193,6 +194,8 @@ pub struct Inner {
     pub loop_guard: LoopGuard,
     pub sso: Option<sso::Sso>,
     pub tickets: auth::Tickets,
+    /// Live captures of the Sequencer.
+    pub captures: sequencer::Captures,
 }
 
 pub struct Deps {
@@ -336,6 +339,7 @@ impl AppState {
             loop_guard,
             sso,
             tickets: auth::Tickets::default(),
+            captures: sequencer::Captures::default(),
         };
         Ok((
             Self {
@@ -425,6 +429,10 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/repeater/ws", post(repeater::ws_send))
         .route("/repeater/tabs", get(repeater::get_tabs).put(repeater::put_tabs))
+        .route("/sequencer/analyze", post(sequencer::analyze))
+        .route("/sequencer/capture", post(sequencer::start_capture))
+        .route("/sequencer/capture/{id}", get(sequencer::capture_status))
+        .route("/sequencer/capture/{id}/stop", post(sequencer::stop_capture))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

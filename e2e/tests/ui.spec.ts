@@ -1125,3 +1125,48 @@ test('keyboard only: panes, tabs, the palette and the history list can be driven
   await expect(page.getByRole('menu', { name: 'Layout' })).toBeHidden();
   await expect(layoutBtn).toBeFocused();
 });
+
+test('sequencer: a live capture of random cookies is rated well, a counter is not random, and manual load works', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Sequencer' }).click();
+  const sp = page.getByRole('tabpanel', { name: 'Sequencer', exact: true });
+  await sp.getByLabel('Scheme').selectOption('http');
+  await sp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await sp.getByLabel('Port').fill(String(TARGET_PORT));
+  await sp.getByLabel('Name or pattern').fill('seqid');
+  await sp.getByLabel('Count', { exact: true }).fill('60');
+
+  await sp.getByLabel('Request').fill('GET /seq-random HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await sp.getByRole('button', { name: 'Start capture' }).click();
+  await expect(sp.getByRole('status')).toContainText('Done: sent 60 of 60, 60 tokens');
+  await expect(sp.locator('[data-verdict]')).toHaveAttribute('data-verdict', 'excellent');
+  await expect(sp.getByRole('table', { name: 'Positions' }).locator('tbody tr')).toHaveCount(32);
+
+  await sp.getByLabel('Request').fill('GET /seq-counter HTTP/1.1\nHost: 127.0.0.1\n\n');
+  await sp.getByRole('button', { name: 'Start capture' }).click();
+  await expect(sp.getByRole('status')).toContainText('Done: sent 60 of 60');
+  await expect(sp.locator('[data-verdict]')).toHaveAttribute('data-verdict', 'not_random');
+  await expect(sp.getByText('they count up')).toBeVisible();
+
+  // The export is the result as JSON.
+  const dl = page.waitForEvent('download');
+  await sp.getByRole('button', { name: 'Export JSON' }).click();
+  expect((await dl).suggestedFilename()).toBe('bosun-sequencer.json');
+
+  // Manual load: a counter typed in; and the stop switch ends a slow capture.
+  await sp.getByRole('button', { name: 'Manual load' }).click();
+  await sp.getByLabel('Tokens').fill(Array.from({ length: 40 }, (_, i) => String(1000 + i)).join('\n'));
+  await sp.getByRole('button', { name: 'Analyse', exact: true }).click();
+  await expect(sp.locator('[data-verdict]')).toHaveAttribute('data-verdict', 'not_random');
+  await sp.getByRole('button', { name: 'Live capture' }).click();
+  await sp.getByLabel('Pause').fill('200');
+  await sp.getByLabel('Count', { exact: true }).fill('500');
+  await sp.getByRole('button', { name: 'Start capture' }).click();
+  await expect(sp.getByRole('status')).toContainText('Capturing');
+  await sp.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(sp.getByRole('status')).toContainText('Stopped');
+
+  // The requests are in the history as the Repeater's.
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/seq-counter' }).first()).toBeVisible();
+});

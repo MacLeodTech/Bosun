@@ -6,6 +6,7 @@ import Intercept from '../pages/Intercept.svelte';
 import Repeater from '../pages/Repeater.svelte';
 import Decoder from '../pages/Decoder.svelte';
 import Comparer from '../pages/Comparer.svelte';
+import Sequencer from '../pages/Sequencer.svelte';
 import Findings from '../pages/Findings.svelte';
 import Organizer from '../pages/Organizer.svelte';
 import Rules from '../pages/Rules.svelte';
@@ -32,6 +33,7 @@ export const panels: PanelDef[] = [
   { id: 'findings', title: 'Findings', component: Findings },
   { id: 'decoder', title: 'Decoder', component: Decoder },
   { id: 'comparer', title: 'Comparer', component: Comparer },
+  { id: 'sequencer', title: 'Sequencer', component: Sequencer },
   { id: 'rules', title: 'Match & replace', component: Rules },
   { id: 'target', title: 'Target', component: Target },
   { id: 'projects', title: 'Projects', component: Projects },

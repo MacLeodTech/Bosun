@@ -502,6 +502,35 @@ impl Client {
         .await
     }
 
+    /// Analyse how random a set of tokens is (20 to 10000). Returns the `Analysis` of the API: statistics, FIPS 140-2
+    /// results, an entropy estimate and a `verdict` (`excellent`, `good`, `poor`, `not_random`).
+    pub async fn sequencer_analyze(&self, tokens: &[String]) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/sequencer/analyze")
+                .json(&json!({ "tokens": tokens })),
+        )
+        .await
+    }
+
+    /// Start a live capture. `body` is the `CaptureBody` of the API: target, base64 request, `source` (header,
+    /// cookie or regex), `count` and optionally `delay_ms`. Returns `{ "id": n }`.
+    pub async fn sequencer_capture(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/sequencer/capture").json(body))
+            .await
+    }
+
+    /// The progress of a capture, with its tokens from index `from` on.
+    pub async fn sequencer_capture_status(&self, id: u64, from: usize) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/sequencer/capture/{id}?from={from}")))
+            .await
+    }
+
+    /// Stop a capture after the request in flight.
+    pub async fn sequencer_capture_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/sequencer/capture/{id}/stop")))
+            .await
+    }
+
     /// Compare two base64 inputs; `level` is `words` or `bytes`.
     pub async fn comparer_diff(&self, a_b64: &str, b_b64: &str, level: &str) -> Result<serde_json::Value> {
         self.json(

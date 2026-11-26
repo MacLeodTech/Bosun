@@ -266,6 +266,20 @@ This document says what is protected, from whom, and how. Code comments refer ba
   stored as the flow's messages. A connection lasts one call and is closed before it returns. Tabs are saved in the project (`/repeater/tabs`, viewer to read, tester to write: at most 100 tabs and 8 MiB,
   each an object; responses are not stored). A request can hold credentials, but so does every flow in the same file,
   and the project file is already the place those live, with its permissions, export and backup rules.
+- *The Sequencer API (`/sequencer/analyze`, `/sequencer/capture`, `/sequencer/capture/{id}`, `.../stop`).* The
+  analysis is pure computation on strings (`bosun-sequencer`, no I/O): viewer role, at most 10,000 tokens of 1,024
+  characters and 4 MiB in all, FIPS blocks capped at eight, run off the async threads, covered by property tests and
+  the `sequencer` fuzz target (which also feeds the token extractor hostile responses and patterns). A live capture
+  needs the tester role and is a series of requests sent by the Repeater's engine, so each one goes through the
+  gate with the Repeater's policy (scope, kill switch, per-host rate limit: a rate-limit refusal is waited out a
+  second at a time, any other refusal ends the capture as failed), is recorded as a flow with source `repeater`,
+  and the capture is audited (target, count) as is its stop. The number of requests is capped (5,000), so is the
+  request (1 MiB) and the pause (10 s); at most two captures run at once and eight are kept in memory (not in the
+  project; they are gone on restart); a stop switch ends one after the request in flight, and ten failures in a row
+  end it. A body pattern is a regular expression run by the `regex` crate (no backtracking; 512 characters, compiled
+  size capped) over the response, and an extracted token is cut at 1,024 characters. Tokens are session secrets: they
+  stay in the server's memory and the page, are not written to the project, and are exported only when the user
+  saves the result (which holds per-position statistics, not the tokens).
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

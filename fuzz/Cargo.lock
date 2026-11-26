@@ -169,6 +169,7 @@ dependencies = [
  "bosun-model",
  "bosun-proxy",
  "bosun-scope",
+ "bosun-sequencer",
  "bosun-store",
  "libfuzzer-sys",
 ]
@@ -237,6 +238,16 @@ name = "bosun-scope"
 version = "0.1.0"
 dependencies = [
  "bosun-model",
+ "regex",
+ "serde",
+ "thiserror",
+ "utoipa",
+]
+
+[[package]]
+name = "bosun-sequencer"
+version = "0.1.0"
+dependencies = [
  "regex",
  "serde",
  "thiserror",

@@ -37,6 +37,34 @@ export function startTarget(port: number): Promise<http.Server> {
       res.writeHead(200, { 'content-type': 'text/plain' }).end(`hello from ${url.pathname}`);
     }
   });
+  // `/ws` answers the upgrade and echoes each small text frame back as "echo: <text>" (a test stand-in, not a
+  // full WebSocket server: payloads under 126 bytes, masked as clients send them).
+  server.on('upgrade', (req, socket) => {
+    seen.push({ path: new URL(req.url ?? '/', 'http://target.invalid').pathname, headers: req.headers });
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: test\r\n\r\n');
+    let buf = Buffer.alloc(0);
+    socket.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 2) {
+        const len = buf[1]! & 0x7f;
+        const masked = (buf[1]! & 0x80) !== 0;
+        const head = 2 + (masked ? 4 : 0);
+        if (len >= 126 || buf.length < head + len) return;
+        const opcode = buf[0]! & 0x0f;
+        const payload = Buffer.from(buf.subarray(head, head + len));
+        if (masked) for (let i = 0; i < len; i++) payload[i] = payload[i]! ^ buf[2 + (i % 4)]!;
+        buf = buf.subarray(head + len);
+        if (opcode === 0x1) {
+          const out = Buffer.from('echo: ' + payload.toString());
+          socket.write(Buffer.concat([Buffer.from([0x81, out.length]), out]));
+        } else if (opcode === 0x8) {
+          socket.end(Buffer.from([0x88, 0]));
+          return;
+        }
+      }
+    });
+    socket.on('error', () => {});
+  });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => resolve(server));

@@ -270,6 +270,33 @@ test('message editor: CodeMirror runs under the unchanged CSP, pretty-prints, ed
   expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)).toEqual([]);
 });
 
+test('repeater: a WebSocket tab sends frames, shows what came back, and the frames are recorded', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByRole('button', { name: '+', exact: true }).click();
+  await rp.getByLabel('Kind').selectOption('ws');
+  await rp.getByLabel('Scheme').selectOption('http');
+  await rp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await rp.getByLabel('Port').fill(String(TARGET_PORT));
+  const editor = rp.getByLabel('Request', { exact: true });
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('GET /ws HTTP/1.1\nHost: 127.0.0.1\nUpgrade: websocket\nConnection: Upgrade\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\nSec-WebSocket-Version: 13\n\n');
+  await rp.getByRole('button', { name: 'Add frame' }).click();
+  await rp.getByLabel('Frame 1 payload').fill('ping-pong');
+  await rp.getByLabel('Listen time').fill('500');
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  const log = rp.getByRole('log', { name: 'WebSocket frames' });
+  await expect(log).toContainText('echo: ping-pong');
+  await expect(log).toContainText('→');
+  await expect(log).toContainText('←');
+  await expect(rp.locator('b', { hasText: '101' })).toBeVisible();
+  // It is in the history as a Repeater flow, with its messages.
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/ws' }).first()).toBeVisible();
+});
+
 test('repeater: the tabs are saved in the project, not just in the page', async () => {
   const nav = page.getByRole('navigation');
   await nav.getByRole('button', { name: 'Repeater' }).click();

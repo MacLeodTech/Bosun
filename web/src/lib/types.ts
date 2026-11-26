@@ -74,3 +74,6 @@ agree<Same<keyof ProjectList, keyof Schemas['ProjectList']>>();
 export type RepeaterSendResult = components['schemas']['SendResult'];
 export type RepeaterSendBody = components['schemas']['SendBody'];
 export type RepeaterSendReply = components['schemas']['SendReply'];
+export type RepeaterWsBody = components['schemas']['WsBody'];
+export type RepeaterWsReply = components['schemas']['WsReply'];
+export type RepeaterWsFrame = components['schemas']['WsFrameOut'];

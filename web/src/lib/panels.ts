@@ -11,6 +11,7 @@ import Sequencer from '../pages/Sequencer.svelte';
 import Spider from '../pages/Spider.svelte';
 import Findings from '../pages/Findings.svelte';
 import Issues from '../pages/Issues.svelte';
+import Checks from '../pages/Checks.svelte';
 import Analysis from '../pages/Analysis.svelte';
 import Organizer from '../pages/Organizer.svelte';
 import Import from '../pages/Import.svelte';
@@ -38,6 +39,7 @@ export const panels: PanelDef[] = [
   { id: 'organizer', title: 'Organizer', component: Organizer },
   { id: 'import', title: 'Import', component: Import },
   { id: 'issues', title: 'Issues', component: Issues },
+  { id: 'checks', title: 'Checks', component: Checks },
   { id: 'findings', title: 'Findings', component: Findings },
   { id: 'analysis', title: 'Host analysis', component: Analysis },
   { id: 'decoder', title: 'Decoder', component: Decoder },

@@ -1133,6 +1133,378 @@
         }
       }
     },
+    "/checks": {
+      "get": {
+        "tags": [
+          "checks"
+        ],
+        "description": "The project's custom passive checks. Needs the viewer role or above.",
+        "operationId": "list_checks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "checks"
+        ],
+        "description": "Add a custom passive check written in the YAML check language. The text is validated with the check loader (size and pattern limits, a `passive` section, an id that is not a built-in's); a new check applies to new traffic at once and to recorded traffic after a rescan. Needs the tester role or above; audited.",
+        "operationId": "add_check",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a valid check; the message says what is wrong",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The id is taken, or the project holds the most checks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/checks/validate": {
+      "post": {
+        "tags": [
+          "checks"
+        ],
+        "description": "Check a custom check's YAML without storing it. Always 200: `valid` and, when false, `error`. Needs the tester role or above.",
+        "operationId": "validate_check",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckValidation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/checks/{id}": {
+      "put": {
+        "tags": [
+          "checks"
+        ],
+        "description": "Replace a custom check's YAML (validated like a new one). Needs the tester role or above; audited.",
+        "operationId": "replace_check",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Check row id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a valid check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The id is taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "checks"
+        ],
+        "description": "Delete a custom check. Issues it already found stay. Needs the tester role or above; audited.",
+        "operationId": "delete_check",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Check row id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "checks"
+        ],
+        "description": "Switch a custom check on or off. Needs the tester role or above; audited.",
+        "operationId": "set_check_enabled",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Check row id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckEnabled"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Changed"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/comparer/diff": {
       "post": {
         "tags": [
@@ -8308,6 +8680,117 @@
           }
         }
       },
+      "CheckBody": {
+        "type": "object",
+        "required": [
+          "yaml"
+        ],
+        "properties": {
+          "yaml": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckEnabled": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CheckList": {
+        "type": "object",
+        "required": [
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckView"
+            }
+          }
+        }
+      },
+      "CheckValidation": {
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "properties": {
+          "check_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What is wrong, when it is not valid."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CheckView": {
+        "type": "object",
+        "description": "A stored check with the fields read out of its YAML.",
+        "required": [
+          "id",
+          "check_id",
+          "name",
+          "severity",
+          "enabled",
+          "yaml",
+          "created_ms",
+          "updated_ms"
+        ],
+        "properties": {
+          "check_id": {
+            "type": "string",
+            "description": "The `id` in the YAML: the rule name on the issues it finds."
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "description": "info, low, medium or high; empty when the stored text no longer loads."
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "yaml": {
+            "type": "string"
+          }
+        }
+      },
       "Confidence": {
         "type": "string",
         "enum": [
@@ -12892,6 +13375,9 @@
     },
     {
       "name": "issues"
+    },
+    {
+      "name": "checks"
     },
     {
       "name": "sequencer"

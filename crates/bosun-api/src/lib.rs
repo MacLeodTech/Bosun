@@ -8,13 +8,14 @@
 
 pub mod auth;
 pub mod browser;
+pub mod checks;
 pub mod child;
 pub mod codec;
 pub mod engage;
-pub mod imports;
 pub mod events;
 pub mod handlers;
 pub mod crawl;
+pub mod imports;
 pub mod intruder;
 pub mod issues;
 pub mod listeners;
@@ -493,6 +494,14 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/intruder/attacks/{id}/results", get(intruder::results))
         .route("/intruder/attacks/{id}/stop", post(intruder::stop))
+        .route("/checks", get(checks::list).post(checks::add))
+        .route("/checks/validate", post(checks::validate_only))
+        .route(
+            "/checks/{id}",
+            axum::routing::put(checks::replace)
+                .patch(checks::set_enabled)
+                .delete(checks::delete),
+        )
         .route("/issues", get(issues::list))
         .route("/issues/report", get(issues::report))
         .route("/issues/rescan", post(issues::rescan))

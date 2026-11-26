@@ -11,6 +11,7 @@ pub mod project;
 pub mod query;
 
 pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, SessionInfo, TokenScope, TotpRow, User};
+pub use project::checks::{MAX_CHECKS, StoredCheck};
 pub use project::intruder::{MAX_ATTACKS, NewAttack, StoredAttack, StoredRow};
 pub use project::issues::{
     Confidence, Evidence, EvidencePart, Issue, IssueFilter, IssueStatus, MAX_ISSUES, NewIssue, Severity,

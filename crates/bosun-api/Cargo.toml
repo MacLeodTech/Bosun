@@ -13,6 +13,7 @@ bosun-model.workspace = true
 bosun-ca.workspace = true
 bosun-store.workspace = true
 bosun-scan.workspace = true
+bosun-checks.workspace = true
 bosun-report.workspace = true
 bosun-scope.workspace = true
 bosun-proxy.workspace = true

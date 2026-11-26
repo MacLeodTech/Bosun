@@ -41,6 +41,7 @@ pub const CODE_RULES: &[&str] = &[
     "vulnerable-js-library",
     "jwt-alg-none",
     "jwt-no-expiry",
+    "jwt-weak-secret",
     "jwt-sensitive-claim",
     "cacheable-sensitive-response",
     "open-redirect-hint",
@@ -112,6 +113,18 @@ const JWT_EXP: Code = Code {
     remediation: "Give tokens a short `exp` and refresh them.",
     cwe: &[613],
     owasp: &["A07:2021 Identification and Authentication Failures"],
+};
+const JWT_WEAK: Code = Code {
+    rule: "jwt-weak-secret",
+    title: "JWT signed with a guessable secret",
+    severity: Severity::High,
+    confidence: Confidence::Certain,
+    remediation: "Sign tokens with a random secret of at least 256 bits (or an asymmetric key), rotate the secret that was guessed, and treat every token signed with it as forgeable.",
+    cwe: &[521, 347],
+    owasp: &[
+        "A02:2021 Cryptographic Failures",
+        "A07:2021 Identification and Authentication Failures",
+    ],
 };
 const JWT_CLAIM: Code = Code {
     rule: "jwt-sensitive-claim",
@@ -401,6 +414,65 @@ fn vulnerable_js(c: &mut Ctx<'_>, html: bool) {
     }
 }
 
+/// Secrets that tokens are commonly signed with in examples, tutorials and defaults. Small on purpose: this is a
+/// check for the worst case, not a cracker.
+const WEAK_SECRETS: &[&str] = &[
+    "",
+    "secret",
+    "Secret",
+    "secretkey",
+    "secret-key",
+    "secret_key",
+    "mysecret",
+    "my-secret",
+    "my_secret",
+    "mysecretkey",
+    "jwtsecret",
+    "jwt-secret",
+    "jwt_secret",
+    "jwt",
+    "key",
+    "password",
+    "passw0rd",
+    "123456",
+    "12345678",
+    "changeme",
+    "admin",
+    "test",
+    "testing",
+    "default",
+    "supersecret",
+    "super-secret",
+    "your-256-bit-secret",
+    "your-secret",
+    "your_secret_key",
+    "s3cr3t",
+    "shhhhh",
+    "HS256-secret",
+];
+
+/// Whether `token`'s HMAC signature (HS256, HS384 or HS512) verifies with one of [`WEAK_SECRETS`].
+fn weak_secret(alg: &str, signing_input: &str, sig: &[u8]) -> bool {
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::{Sha256, Sha384, Sha512};
+    macro_rules! check {
+        ($h:ty) => {
+            WEAK_SECRETS.iter().any(|s| {
+                <Hmac<$h> as KeyInit>::new_from_slice(s.as_bytes()).is_ok_and(|mut m| {
+                    m.update(signing_input.as_bytes());
+                    m.verify_slice(sig).is_ok()
+                })
+            })
+        };
+    }
+    match alg {
+        "HS256" => check!(Sha256),
+        "HS384" => check!(Sha384),
+        "HS512" => check!(Sha512),
+        _ => false,
+    }
+}
+
 fn jwt(c: &mut Ctx<'_>) {
     let mut found: Vec<(EvidencePart, usize, usize)> = Vec::new();
     let qbody = c.qh.body.min(c.flow.request.len());
@@ -433,6 +505,18 @@ fn jwt(c: &mut Ctx<'_>) {
         };
         let evidence = vec![ev(part, s, e)];
         let alg = h.get("alg").and_then(|a| a.as_str()).unwrap_or("");
+        if let Some((signing, sig)) = text.rsplit_once('.')
+            && let Ok(sig) = URL_SAFE_NO_PAD.decode(sig)
+            && !sig.is_empty()
+            && weak_secret(alg, signing, &sig)
+        {
+            c.emit(
+                &JWT_WEAK,
+                &key,
+                format!("A `{alg}` token in the message is signed with a secret from a list of common ones."),
+                evidence.clone(),
+            );
+        }
         if alg.eq_ignore_ascii_case("none") {
             c.emit(
                 &JWT_NONE,
@@ -596,6 +680,11 @@ fn open_redirect(c: &mut Ctx<'_>) {
 
 /// Run every check in this crate on one flow. Flows without a response give nothing.
 pub fn scan_flow(flow: &FlowDetail, now_ms: i64) -> Vec<NewIssue> {
+    scan_flow_with(flow, now_ms, &[])
+}
+
+/// [`scan_flow`], and the project's own (custom) passive checks too.
+pub fn scan_flow_with(flow: &FlowDetail, now_ms: i64, custom: &[Compiled]) -> Vec<NewIssue> {
     let Some(resp) = flow.response.as_deref() else {
         return Vec::new();
     };
@@ -622,7 +711,7 @@ pub fn scan_flow(flow: &FlowDetail, now_ms: i64) -> Vec<NewIssue> {
         status,
         interaction: None,
     };
-    for check in builtin() {
+    for check in builtin().iter().chain(custom) {
         let Some(hit) = check.eval_passive(&msg) else {
             continue;
         };
@@ -702,6 +791,19 @@ mod tests {
         format!("{}.{}.sig", URL_SAFE_NO_PAD.encode(h), URL_SAFE_NO_PAD.encode(p))
     }
 
+    /// A token with a real HS256 signature made with `secret`.
+    fn signed_jwt(secret: &str, p: &str) -> String {
+        use hmac::{Hmac, KeyInit, Mac};
+        let input = format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256"}"#),
+            URL_SAFE_NO_PAD.encode(p)
+        );
+        let mut m = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(secret.as_bytes()).unwrap();
+        m.update(input.as_bytes());
+        format!("{input}.{}", URL_SAFE_NO_PAD.encode(m.finalize().into_bytes()))
+    }
+
     /// One positive and one negative fixture for every check. `positive` must give at least the id; `negative`
     /// must not give it.
     fn fixtures() -> Vec<(&'static str, FlowDetail, FlowDetail)> {
@@ -760,6 +862,26 @@ mod tests {
                 "jwt-no-expiry",
                 flow(200, "", "/api", "", &format!("{{\"token\":\"{tok_exp}\"}}")),
                 flow(200, "", "/api", "", &format!("{{\"token\":\"{tok_ok}\"}}")),
+            ),
+            (
+                "jwt-weak-secret",
+                flow(
+                    200,
+                    &auth(&signed_jwt("secret", r#"{"sub":"a","exp":9999999999}"#)),
+                    "/api",
+                    "",
+                    "x",
+                ),
+                flow(
+                    200,
+                    &auth(&signed_jwt(
+                        "q8Zr2vLw0xN5mT1hYb7uKc4sPd9eJg3A",
+                        r#"{"sub":"a","exp":9999999999}"#,
+                    )),
+                    "/api",
+                    "",
+                    "x",
+                ),
             ),
             (
                 "jwt-sensitive-claim",

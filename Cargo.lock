@@ -604,6 +604,7 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bosun-ca",
+ "bosun-checks",
  "bosun-client",
  "bosun-codec",
  "bosun-crawl",
@@ -677,10 +678,12 @@ dependencies = [
  "base64 0.23.1",
  "bosun-model",
  "bosun-store",
+ "hmac 0.13.0",
  "regex",
  "serde",
  "serde-saphyr",
  "serde_json",
+ "sha2 0.11.1",
 ]
 
 [[package]]

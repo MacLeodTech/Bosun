@@ -6,6 +6,7 @@ use reqwest::{Method, RequestBuilder, StatusCode, Url, cookie::Jar};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
+use crate::checks::*;
 use crate::error::{Error, Result};
 use crate::events::{EventStream, Position};
 use crate::issues::*;
@@ -976,6 +977,51 @@ impl Client {
                 .query(&[("before", before), ("limit", limit.map(i64::from))]),
         )
         .await
+    }
+
+    // --- custom checks ---------------------------------------------------------------------------------------
+
+    pub async fn checks(&self) -> Result<Vec<CustomCheck>> {
+        Ok(self
+            .json::<CustomCheckList>(self.req(Method::GET, "/checks"))
+            .await?
+            .checks)
+    }
+
+    /// Add a custom passive check (YAML). A 400 error carries what is wrong with it.
+    pub async fn add_check(&self, yaml: &str) -> Result<CustomCheck> {
+        self.json(self.req(Method::POST, "/checks").json(&json!({ "yaml": yaml })))
+            .await
+    }
+
+    /// Validate without storing.
+    pub async fn validate_check(&self, yaml: &str) -> Result<CheckValidation> {
+        self.json(
+            self.req(Method::POST, "/checks/validate")
+                .json(&json!({ "yaml": yaml })),
+        )
+        .await
+    }
+
+    pub async fn replace_check(&self, id: i64, yaml: &str) -> Result<CustomCheck> {
+        self.json(
+            self.req(Method::PUT, &format!("/checks/{id}"))
+                .json(&json!({ "yaml": yaml })),
+        )
+        .await
+    }
+
+    pub async fn set_check_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/checks/{id}"))
+                .json(&json!({ "enabled": enabled })),
+        )
+        .await
+    }
+
+    pub async fn delete_check(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/checks/{id}")))
+            .await
     }
 
     // --- issues (passive scanner) --------------------------------------------------------------------------

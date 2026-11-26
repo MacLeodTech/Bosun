@@ -41,6 +41,33 @@ const NOSNIFF: Spec = Spec {
     cwe: &[693],
     owasp: &[MISCONFIG],
 };
+const REFERRER_MISSING: Spec = Spec {
+    rule: "referrer-policy-missing",
+    title: "Referrer-Policy header missing",
+    severity: Severity::Info,
+    confidence: Confidence::Certain,
+    remediation: "Send `Referrer-Policy: strict-origin-when-cross-origin` (or stricter) so full URLs, which may carry tokens, are not sent to other sites.",
+    cwe: &[200],
+    owasp: &[MISCONFIG],
+};
+const REFERRER_WEAK: Spec = Spec {
+    rule: "referrer-policy-weak",
+    title: "Referrer-Policy sends full URLs to other sites",
+    severity: Severity::Low,
+    confidence: Confidence::Certain,
+    remediation: "Replace `unsafe-url` with `strict-origin-when-cross-origin`, `same-origin` or `no-referrer`.",
+    cwe: &[200],
+    owasp: &[MISCONFIG],
+};
+const PERMISSIONS_MISSING: Spec = Spec {
+    rule: "permissions-policy-missing",
+    title: "Permissions-Policy header missing",
+    severity: Severity::Info,
+    confidence: Confidence::Certain,
+    remediation: "Send a `Permissions-Policy` that switches off the browser features the site does not use, for example `camera=(), microphone=(), geolocation=()`.",
+    cwe: &[693],
+    owasp: &[MISCONFIG],
+};
 const FRAMING: Spec = Spec {
     rule: "framing-unprotected",
     title: "Page can be framed by other sites (clickjacking)",
@@ -145,6 +172,9 @@ const DIR_LISTING: Spec = Spec {
 pub const RULES: &[&str] = &[
     HSTS.rule,
     NOSNIFF.rule,
+    REFERRER_MISSING.rule,
+    REFERRER_WEAK.rule,
+    PERMISSIONS_MISSING.rule,
     FRAMING.rule,
     CSP_MISSING.rule,
     CSP_WEAK.rule,
@@ -258,6 +288,11 @@ fn csp_directive<'a>(csp: &'a str, name: &str) -> Option<&'a str> {
 
 /// Read one flow and report what the rules find. Flows without a response give nothing.
 pub fn scan_flow(flow: &FlowDetail, now_ms: i64) -> Vec<NewIssue> {
+    scan_flow_with(flow, now_ms, &[])
+}
+
+/// [`scan_flow`], plus the project's custom passive checks.
+pub fn scan_flow_with(flow: &FlowDetail, now_ms: i64, custom: &[bosun_checks::Compiled]) -> Vec<NewIssue> {
     let Some(resp) = flow.response.as_deref() else {
         return Vec::new();
     };
@@ -310,6 +345,34 @@ pub fn scan_flow(flow: &FlowDetail, now_ms: i64) -> Vec<NewIssue> {
                 &FRAMING,
                 "",
                 "An HTML page with neither `X-Frame-Options` nor a CSP `frame-ancestors` directive.".into(),
+                vec![],
+            );
+        }
+        match c
+            .rh
+            .get("referrer-policy")
+            .map(|h| (h.value.to_ascii_lowercase(), response_range(h)))
+        {
+            None => c.emit(
+                &REFERRER_MISSING,
+                "",
+                "An HTML page without a Referrer-Policy header.".into(),
+                vec![],
+            ),
+            // The last token a browser understands wins; `unsafe-url` there sends the full URL everywhere.
+            Some((v, ev)) if v.split(',').next_back().is_some_and(|t| t.trim() == "unsafe-url") => c.emit(
+                &REFERRER_WEAK,
+                "",
+                "The Referrer-Policy is `unsafe-url`.".into(),
+                ev,
+            ),
+            Some(_) => {}
+        }
+        if c.rh.get("permissions-policy").is_none() && c.rh.get("feature-policy").is_none() {
+            c.emit(
+                &PERMISSIONS_MISSING,
+                "",
+                "An HTML page without a Permissions-Policy header.".into(),
                 vec![],
             );
         }
@@ -490,7 +553,7 @@ pub fn scan_flow(flow: &FlowDetail, now_ms: i64) -> Vec<NewIssue> {
         }
     }
     let mut out = c.out;
-    out.extend(bosun_checks::scan_flow(flow, now_ms));
+    out.extend(bosun_checks::scan_flow_with(flow, now_ms, custom));
     out
 }
 
@@ -537,7 +600,7 @@ mod tests {
 
     const HARDENED: &str = "Strict-Transport-Security: max-age=1\r\nX-Content-Type-Options: nosniff\r\n\
         Content-Security-Policy: default-src 'self'; frame-ancestors 'none'\r\nContent-Type: text/html\r\n\
-        Cache-Control: no-store\r\n";
+        Cache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nPermissions-Policy: camera=()\r\n";
 
     fn rules(f: &FlowDetail) -> Vec<&'static str> {
         let mut v: Vec<_> = scan_flow(f, 5)
@@ -569,7 +632,9 @@ mod tests {
                 "csp-missing",
                 "framing-unprotected",
                 "hsts-missing",
-                "nosniff-missing"
+                "nosniff-missing",
+                "permissions-policy-missing",
+                "referrer-policy-missing"
             ]
         );
         // HSTS only matters over HTTPS; plain HTTP does not owe it.
@@ -582,6 +647,30 @@ mod tests {
     }
 
     #[test]
+    fn referrer_and_permissions_policy() {
+        // Positive: missing, and `unsafe-url`. Negative: a safe value, and the hardened fixture (no findings).
+        let base = HARDENED
+            .replace("Referrer-Policy: no-referrer\r\n", "")
+            .replace("Permissions-Policy: camera=()\r\n", "");
+        assert_eq!(
+            rules(&flow(Scheme::Https, "", &base, "x")),
+            ["permissions-policy-missing", "referrer-policy-missing"]
+        );
+        let weak = format!("{base}Referrer-Policy: unsafe-url\r\nPermissions-Policy: camera=()\r\n");
+        let f = flow(Scheme::Https, "", &weak, "x");
+        let got = scan_flow(&f, 5);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].rule, "referrer-policy-weak");
+        assert_eq!(got[0].evidence.len(), 1);
+        let ok =
+            format!("{base}Referrer-Policy: no-referrer, strict-origin\r\nPermissions-Policy: camera=()\r\n");
+        assert!(rules(&flow(Scheme::Https, "", &ok, "x")).is_empty());
+        // Only pages are judged: an image or JSON response owes neither.
+        let json = base.replace("text/html", "application/json");
+        assert!(rules(&flow(Scheme::Https, "", &json, "{}")).is_empty());
+    }
+
+    #[test]
     fn x_frame_options_satisfies_framing() {
         let h = format!("{HARDENED}X-Frame-Options: DENY\r\n").replace("; frame-ancestors 'none'", "");
         assert!(rules(&flow(Scheme::Https, "", &h, "x")).is_empty());
@@ -590,7 +679,8 @@ mod tests {
     #[test]
     fn weak_csp_points_at_the_header() {
         let h = "Strict-Transport-Security: max-age=1\r\nX-Content-Type-Options: nosniff\r\nContent-Type: text/html\r\n\
-                 Content-Security-Policy: script-src 'self' 'unsafe-inline' *; frame-ancestors 'none'\r\n";
+                 Content-Security-Policy: script-src 'self' 'unsafe-inline' *; frame-ancestors 'none'\r\n\
+                 Referrer-Policy: no-referrer\r\nPermissions-Policy: camera=()\r\n";
         let f = flow(Scheme::Https, "", h, "x");
         let got = scan_flow(&f, 5);
         assert_eq!(got.len(), 1);

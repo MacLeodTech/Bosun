@@ -13,6 +13,7 @@
 //! an API token ([`ClientBuilder::token`]), or a username and password ([`Client::login`]) which keeps the session
 //! cookie and sends the CSRF token for you.
 
+mod checks;
 mod client;
 mod error;
 mod events;

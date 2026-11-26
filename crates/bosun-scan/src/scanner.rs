@@ -9,7 +9,8 @@ use std::time::Duration;
 use bosun_model::now_ms;
 use bosun_store::Project;
 
-use crate::rules::scan_flow;
+use crate::rules::scan_flow_with;
+use bosun_checks::Compiled;
 
 /// Flows read per transaction.
 const BATCH: usize = 32;
@@ -50,10 +51,46 @@ impl Drop for Scanner {
     }
 }
 
+/// The project's enabled custom checks, compiled once and rebuilt when any of them changes. A check that no
+/// longer compiles is skipped (the API validates before storing, so this is a file edited by hand).
+#[derive(Default)]
+struct Custom {
+    stamp: Option<(i64, i64, i64)>,
+    checks: Vec<Compiled>,
+}
+
+impl Custom {
+    fn get(&mut self, p: &Project) -> &[Compiled] {
+        match p.checks_stamp() {
+            Ok(s) if self.stamp != Some(s) => {
+                match p.checks_enabled() {
+                    Ok(rows) => {
+                        self.checks = rows
+                        .iter()
+                        .filter_map(|(id, yaml)| {
+                            bosun_checks::lang::parse(yaml)
+                                .map_err(|e| tracing::warn!(check = %id, error = %e.0, "skipping a custom check"))
+                                .ok()
+                                .filter(Compiled::is_passive)
+                        })
+                        .collect();
+                        self.stamp = Some(s);
+                    }
+                    Err(e) => tracing::warn!(error = %e, "cannot read the custom checks"),
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "cannot read the custom checks"),
+        }
+        &self.checks
+    }
+}
+
 fn run(project: &Weak<Project>, stop: &AtomicBool) {
+    let mut custom = Custom::default();
     while !stop.load(Ordering::Relaxed) {
         let Some(p) = project.upgrade() else { return };
-        match step(&p) {
+        match step(&p, &mut custom) {
             Ok(0) => {
                 drop(p);
                 thread::park_timeout(IDLE);
@@ -72,18 +109,21 @@ fn run(project: &Weak<Project>, stop: &AtomicBool) {
 }
 
 /// Read one batch. Returns how many flows it covered.
-fn step(p: &Project) -> Result<usize, bosun_store::StoreError> {
+fn step(p: &Project, custom: &mut Custom) -> Result<usize, bosun_store::StoreError> {
     let ids = p.scan_pending(BATCH)?;
     let now = now_ms();
+    let custom = custom.get(p);
     let mut found = Vec::new();
     for id in &ids {
         // A flow that cannot be read (deleted meanwhile, damaged) or that trips a rule is skipped, not retried
         // forever.
         match p.get_flow(*id) {
-            Ok(Some(f)) => match std::panic::catch_unwind(AssertUnwindSafe(|| scan_flow(&f, now))) {
-                Ok(v) => found.extend(v),
-                Err(_) => tracing::error!(flow = id, "a passive rule panicked"),
-            },
+            Ok(Some(f)) => {
+                match std::panic::catch_unwind(AssertUnwindSafe(|| scan_flow_with(&f, now, custom))) {
+                    Ok(v) => found.extend(v),
+                    Err(_) => tracing::error!(flow = id, "a passive rule panicked"),
+                }
+            }
             Ok(None) => {}
             Err(e) => tracing::warn!(flow = id, error = %e, "cannot read a flow to scan it"),
         }
@@ -190,6 +230,47 @@ mod tests {
                 .any(|i| i.status == bosun_store::IssueStatus::FalsePositive)
         );
         assert_eq!(p.scan_backlog().unwrap(), 0);
+    }
+
+    #[test]
+    fn custom_checks_run_and_follow_edits() {
+        let yaml = |word: &str| {
+            format!(
+                "version: 1\nid: mine\ninfo:\n  name: Mine\n  severity: low\npassive:\n  matchers:\n    - type: word\n      part: body\n      words: [\"{word}\"]\n"
+            )
+        };
+        let p = Arc::new(Project::open_in_memory().unwrap());
+        p.write_batch(&[flow(&p, "a.test", "/x")], &[]).unwrap(); // the body is "x"
+        let _s = Scanner::start(&p);
+        wait_until_read(&p);
+        assert!(
+            p.issues(&IssueFilter::default())
+                .unwrap()
+                .iter()
+                .all(|i| i.rule != "mine")
+        );
+        let id = p.check_add("mine", &yaml("x"), 1).unwrap();
+        p.write_batch(&[flow(&p, "b.test", "/x")], &[]).unwrap();
+        wait_until_read(&p);
+        let found = |p: &Project| {
+            p.issues(&IssueFilter::default())
+                .unwrap()
+                .iter()
+                .filter(|i| i.rule == "mine")
+                .map(|i| i.host.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found(&p), ["b.test"]);
+        // Edited so it no longer matches, then switched off: nothing new either way.
+        assert!(p.check_update(id, "mine", &yaml("nothing like it"), 2).unwrap());
+        p.write_batch(&[flow(&p, "c.test", "/x")], &[]).unwrap();
+        wait_until_read(&p);
+        assert_eq!(found(&p), ["b.test"]);
+        assert!(p.check_update(id, "mine", &yaml("x"), 3).unwrap());
+        assert!(p.check_set_enabled(id, false, 4).unwrap());
+        p.write_batch(&[flow(&p, "d.test", "/x")], &[]).unwrap();
+        wait_until_read(&p);
+        assert_eq!(found(&p), ["b.test"]);
     }
 
     #[test]

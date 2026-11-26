@@ -158,6 +158,7 @@ pub struct OrganizerItem {
     pub flow: FlowSummary,
 }
 
+pub mod checks;
 pub mod intruder;
 pub mod issues;
 
@@ -400,6 +401,22 @@ const MIGRATIONS: &[migrate::Migration] = &[
                 last_seen_ms INTEGER NOT NULL
             );
             CREATE INDEX issues_by_flow ON issues(flow_id);
+        "#,
+    },
+    migrate::Migration {
+        version: 7,
+        rebuild: false,
+        what: "custom passive checks (YAML) kept per project",
+        sql: r#"
+            CREATE TABLE checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                check_id TEXT NOT NULL UNIQUE,
+                yaml TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                rev INTEGER NOT NULL,
+                created_ms INTEGER NOT NULL,
+                updated_ms INTEGER NOT NULL
+            );
         "#,
     },
 ];

@@ -385,17 +385,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** CI builds and smoke-tests the image under Docker and rootless Podman, and the Quadlet unit starts,
   passes its health check and restarts on failure in a test VM or runner.
 
-#### WP-25 CLI: local admin commands · Phase 3 · M
-
-- **Do:**
-  - `user role`, `user delete`, `user sessions [--revoke]`, `token create|list|revoke`.
-  - `project list|export|import|backup` (built on WP-16).
-  - Hidden password input when stdin is a terminal (`rpassword`), still read from stdin for scripts.
-  - `serve --no-ui` for recording only.
-  - Shell completions (`clap_complete`) and man pages (`clap_mangen`).
-  - `--json` output for `list` commands.
-- **Done when:** each command has a test (CLI tests with `assert_cmd` against a temporary data directory).
-
 #### WP-26 CLI: client commands · Phase 3 · L
 
 - **Why:** a CLI for a running engine (local or a server), not just local administration.

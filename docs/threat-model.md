@@ -201,6 +201,15 @@ This document says what is protected, from whom, and how. Code comments refer ba
   and are not audited because they change no scope, rule, account or token.
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
 
+- *Hostile import files (WP-60).* `POST /import` reads OpenAPI/Swagger (JSON or YAML), GraphQL introspection,
+  Postman, HAR, URL lists and Burp XML, all attacker-controlled when the file comes from a target or a third
+  party. Input is capped at 32 MiB, at most 2000 requests come out of one import, bodies are cut at 1 MiB, and
+  JSON/XML nesting is limited. YAML anchors and aliases are refused before parsing (no alias expansion, so no
+  "billion laughs"); the XML reader never resolves entities: a DOCTYPE that declares one is refused, and so is any
+  reference beyond the five predefined and numeric ones (no XXE, no entity expansion). `$ref` is followed only
+  inside the same document and to a bounded depth; nothing is fetched. Every parser has a fuzz target
+  (`import_formats`).
+
 ### Elevation of privilege
 
 - Roles: viewer (read), tester (change proxy settings, scope, intercept), admin (accounts, audit). Every handler
@@ -208,6 +217,12 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Out-of-scope traffic from tools.* Every request from Repeater, Intruder, the scanner, the crawler and plugins
   goes through one gate (`bosun-scope`) that refuses out-of-scope targets and honours a global stop switch. The
   proxy itself is exempt: it forwards what the user's own browser asks for.
+- *Imports never send.* The importers only produce request definitions; they open no connection (not even to
+  fetch a `$ref`, a server URL or an introspection result). Items are saved as Repeater tabs, and a tab is sent
+  only when a tester sends it, through the same scope gate as any Repeater request. Imported items are validated
+  (absolute http/https URL, method token, no control characters in header names or values, framing headers
+  dropped) so a crafted file cannot smuggle a second request or header. The reply lists the hosts involved so the
+  scope can be checked first. The import needs the tester role and writes an audit entry (`import.requests`).
 - *A scoped name pointed at the machine Bosun runs on (SSRF, DNS rebinding).* The gate resolves the name itself and
   returns the addresses the tool must connect to; tools never resolve again. It refuses loopback, link-local (which
   includes `169.254.169.254` and the IPv6 metadata address), unspecified and multicast addresses, IPv4-mapped IPv6

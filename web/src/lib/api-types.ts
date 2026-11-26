@@ -380,6 +380,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Import request definitions from an OpenAPI or Swagger file, a GraphQL introspection result, a Postman collection, a HAR file, a list of URLs or a Burp XML export, and save them as Repeater tabs. The file is only parsed: nothing is sent, and a tab is sent later through the Repeater, which passes the scope gate. Files over 32 MiB, YAML aliases, XML entities and deeply nested input are refused. The reply lists the hosts the requests go to. The import is audited. Needs the tester role or above. */
+        post: operations["import_requests"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/intercept": {
         parameters: {
             query?: never;
@@ -684,7 +701,7 @@ export interface paths {
         };
         /** @description The Repeater's tabs as saved in the open project (requests and options; responses are not stored). */
         get: operations["get_repeater_tabs"];
-        /** @description Replace the Repeater's saved tabs (at most 100). Needs the tester role or above. */
+        /** @description Replace the Repeater's saved tabs (at most 500). Needs the tester role or above. */
         put: operations["put_repeater_tabs"];
         post?: never;
         delete?: never;
@@ -1194,9 +1211,49 @@ export interface components {
             status?: number | null;
             tags: string[];
         };
+        /** @enum {string} */
+        Format: "openapi" | "graphql" | "postman" | "har" | "urls" | "burp";
         Forwarded: {
             /** Format: int64 */
             forwarded: number;
+        };
+        ImportBody: {
+            /** @description The server or endpoint to use when the file has none: required for GraphQL, overrides an OpenAPI server. */
+            base_url?: string | null;
+            /** @description The file's text (at most 32 MiB). */
+            content: string;
+            /** @description Parse and report, but save nothing. */
+            dry_run?: boolean;
+            format: components["schemas"]["Format"];
+        };
+        ImportReply: {
+            /**
+             * Format: int32
+             * @description Requests saved as Repeater tabs (0 for a dry run).
+             */
+            added: number;
+            /**
+             * Format: int32
+             * @description Requests dropped by the per-import limit (2000).
+             */
+            dropped: number;
+            format: components["schemas"]["Format"];
+            /** @description The hosts (`host:port`) the requests go to, so the scope can be checked before anything is sent. */
+            hosts: string[];
+            /**
+             * Format: int32
+             * @description Requests left out because the Repeater already holds the most tabs it can.
+             */
+            not_added: number;
+            /** @description Why entries were skipped. */
+            notes: string[];
+            /**
+             * Format: int32
+             * @description Requests found in the file.
+             */
+            parsed: number;
+            /** @description One line per request: method and URL. */
+            requests: string[];
         };
         InterceptItem: components["schemas"]["InterceptSummary"] & {
             /**
@@ -3161,6 +3218,75 @@ export interface operations {
             };
             /** @description No such item */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    import_requests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The file could not be imported */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

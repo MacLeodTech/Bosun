@@ -241,6 +241,49 @@ pub fn wire(raw: Vec<u8>, exact: bool) -> Vec<u8> {
     out
 }
 
+pub struct ImportArgs {
+    pub format: String,
+    pub file: Option<PathBuf>,
+    pub base_url: Option<String>,
+    pub dry_run: bool,
+    pub json_out: bool,
+}
+
+/// `import`: parse a file on the engine and save its requests as Repeater tabs. Nothing is sent.
+pub async fn import(server: Option<&str>, profile: Option<&str>, a: ImportArgs) -> Result<ExitCode> {
+    let mut raw = Vec::new();
+    match &a.file {
+        Some(p) if p.as_os_str() != "-" => {
+            raw = std::fs::read(p).with_context(|| format!("could not read {}", p.display()))?
+        }
+        _ => {
+            std::io::stdin().lock().read_to_end(&mut raw)?;
+        }
+    }
+    let content = String::from_utf8(raw).context("the file is not UTF-8 text")?;
+    let (url, token) = resolve(server, profile)?;
+    let reply = client(&url, token)?
+        .import_requests(&json!({
+            "format": a.format, "content": content, "base_url": a.base_url, "dry_run": a.dry_run,
+        }))
+        .await?;
+    if a.json_out {
+        println!("{reply}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    for n in reply["notes"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        eprintln!("skipped: {n}");
+    }
+    let hosts: Vec<&str> = reply["hosts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    println!(
+        "{} found, {} saved as Repeater tabs, {} not saved (tab limit), {} dropped (import limit){}",
+        reply["parsed"], reply["added"], reply["not_added"], reply["dropped"],
+        if a.dry_run { " (dry run)" } else { "" }
+    );
+    println!("hosts (check your scope before sending): {}", hosts.join(", "));
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Exit codes: 0 a response arrived, 3 the scope gate refused, 4 nothing came back.
 pub async fn repeater_send(server: Option<&str>, profile: Option<&str>, a: SendArgs) -> Result<ExitCode> {
     let (scheme, host, port) = parse_target(&a.target)?;

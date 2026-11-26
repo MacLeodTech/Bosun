@@ -475,6 +475,13 @@ impl Client {
         self.json(self.req(Method::GET, "/proxy")).await
     }
 
+    /// Import request definitions (OpenAPI, GraphQL introspection, Postman, HAR, URL list or Burp XML) as Repeater
+    /// tabs. `body` is the `ImportBody` of the API: `format`, `content`, and optionally `base_url` and `dry_run`.
+    /// Nothing is sent; the reply lists what was found and the hosts involved.
+    pub async fn import_requests(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/import").json(body)).await
+    }
+
     /// Send a raw request through the Repeater. `body` is the `SendBody` of the API (see `docs/openapi.json`):
     /// target, base64 request, and optionally protocol, count and mode. Returns the reply with one result per send.
     pub async fn repeater_send(&self, body: &serde_json::Value) -> Result<serde_json::Value> {

@@ -15,6 +15,7 @@ bosun-store = { path = "../crates/bosun-store" }
 bosun-proxy = { path = "../crates/bosun-proxy" }
 bosun-http = { path = "../crates/bosun-http" }
 bosun-codec = { path = "../crates/bosun-codec" }
+bosun-import = { path = "../crates/bosun-import" }
 
 # Not part of the main workspace: it needs nightly and is built only by `cargo fuzz`.
 [workspace]
@@ -85,6 +86,13 @@ bench = false
 [[bin]]
 name = "engage"
 path = "fuzz_targets/engage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_formats"
+path = "fuzz_targets/import_formats.rs"
 test = false
 doc = false
 bench = false

@@ -80,6 +80,25 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Import requests from an OpenAPI, GraphQL introspection, Postman, HAR, URL list or Burp XML file as Repeater
+    /// tabs. Nothing is sent: tabs are sent later from the Repeater, through the scope gate.
+    Import {
+        /// openapi, graphql, postman, har, urls or burp.
+        #[arg(value_parser = ["openapi", "graphql", "postman", "har", "urls", "burp"])]
+        format: String,
+        /// The file; `-` or omitted reads stdin.
+        file: Option<PathBuf>,
+        #[command(flatten)]
+        conn: Conn,
+        /// The server or endpoint to use when the file has none (required for graphql).
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Show what would be imported without saving it.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// The Repeater: send a request again.
     Repeater {
         #[command(subcommand)]
@@ -314,6 +333,26 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 conn.server.as_deref(),
                 conn.profile.as_deref(),
                 json,
+            ));
+        }
+        Cmd::Import {
+            format,
+            file,
+            conn,
+            base_url,
+            dry_run,
+            json,
+        } => {
+            return tokio::runtime::Runtime::new()?.block_on(client_cmd::import(
+                conn.server.as_deref(),
+                conn.profile.as_deref(),
+                client_cmd::ImportArgs {
+                    format,
+                    file,
+                    base_url,
+                    dry_run,
+                    json_out: json,
+                },
             ));
         }
         Cmd::Repeater {

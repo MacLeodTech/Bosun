@@ -150,6 +150,8 @@ pub struct OrganizerItem {
     pub flow: FlowSummary,
 }
 
+pub mod intruder;
+
 /// The most items the Organizer lists, and the longest note.
 pub const MAX_ORGANIZER_ITEMS: usize = 5_000;
 pub const MAX_ORGANIZER_NOTE: usize = 10_000;
@@ -308,6 +310,47 @@ const MIGRATIONS: &[migrate::Migration] = &[
                 added_ms INTEGER NOT NULL,
                 updated_ms INTEGER NOT NULL
             );
+        "#,
+    },
+    migrate::Migration {
+        version: 4,
+        rebuild: false,
+        what: "the Intruder: attacks and their results",
+        // Results refer to the flow that was recorded for the request by id only (as the organizer does).
+        sql: r#"
+            CREATE TABLE intruder_attacks (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_ms INTEGER NOT NULL,
+                finished_ms INTEGER,
+                state TEXT NOT NULL,
+                scheme TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                request BLOB NOT NULL,
+                config TEXT NOT NULL,
+                total INTEGER NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                skipped INTEGER NOT NULL DEFAULT 0,
+                errors INTEGER NOT NULL DEFAULT 0,
+                error TEXT
+            );
+            CREATE TABLE intruder_results (
+                attack_id INTEGER NOT NULL,
+                idx INTEGER NOT NULL,
+                position INTEGER,
+                payloads TEXT NOT NULL,
+                status INTEGER,
+                length INTEGER NOT NULL,
+                time_ms INTEGER NOT NULL,
+                flow_id INTEGER,
+                error TEXT,
+                matches TEXT NOT NULL,
+                extracts TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                PRIMARY KEY (attack_id, idx)
+            ) WITHOUT ROWID;
         "#,
     },
 ];
@@ -585,6 +628,11 @@ impl Project {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "secure_delete", "ON")?;
         migrate::run(&mut conn, MIGRATIONS)?;
+        // An attack that was running when the engine died is not running now.
+        conn.execute(
+            "UPDATE intruder_attacks SET state = 'interrupted' WHERE state = 'running'",
+            [],
+        )?;
         let max: Option<i64> = conn.query_row("SELECT max(id) FROM flows", [], |r| r.get(0))?;
         Ok(Self {
             db: Db::new(conn, path, harden),

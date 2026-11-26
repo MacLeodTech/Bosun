@@ -58,7 +58,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   `wp-43` branch (WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
   merge `main` into the next branch and regenerate `docs/openapi.json` and `web/src/lib/api-types.ts` if they conflict.
 - **Next, in order** (see the phase plan below):
-  1. **Phase 3, track A (M2):** only "Send to Intruder" is left of WP-43, and it waits for WP-47. WP-38 is the M1 follow-up.
+  1. **Phase 3, track A (M2):** WP-38 is the M1 follow-up. Intruder is in; its leftovers are under WP-47.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
      release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
      is built with Tauri for now; WP-18 (WinUI 3) is still planned.
@@ -188,13 +188,12 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-39, WP-42, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-25, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
-| [ ] | WP-43 | History, Organizer, Logger and "send to" (rest) | 3 | S | WP-35, WP-41 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
 | [ ] | WP-23 | Server mode in the engine | 3 | M | WP-03 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
@@ -207,7 +206,7 @@ valid in the "Depends on" column.
 | [ ] | WP-69 | Release workflow | 3 | M | WP-09, WP-24 |
 | [ ] | WP-70 | Docs site | 3 | M | WP-13 |
 | [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
-| [ ] | WP-47 | Intruder | 4 | L | WP-40, WP-41 |
+| [ ] | WP-47 | Intruder (rest) | 4 | M | WP-40, WP-41 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
 | [ ] | WP-28 | Proxy hot path | 4 | M | WP-05 |
 | [ ] | WP-32 | CA management | 4 | M | |
@@ -515,13 +514,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   received), and `bosun repeater send` sends a raw request file (with `bosun login` and `bosun status` from WP-26 as
   its base). WP-41 is complete.
 
-#### WP-43 History, Organizer, Logger and "send to": what is left · Phase 3 · S
-
-- **Do:** "Send to Intruder" from every message view and the History menu. It needs the Intruder panel, so it waits for WP-47. A separate Logger panel only if panels become
-  multi-instance (History already shows every source through the Source column and `source:`). The query bar's reuse
-  for Intruder results is in WP-47.
-- **Done when:** a Playwright test sends a request to the Intruder.
-
 #### WP-46 Optional `legacy-tls` backend · Phase 4 · M
 
 - **Do:**
@@ -530,21 +522,17 @@ Open packages only; finished ones are in `docs/releases.md`.
   - A `cargo-deny` exception scoped to the feature; it is not in default builds or the published images.
 - **Done when:** a feature-gated test reaches a TLS 1.0 test server; default builds still contain no OpenSSL.
 
-### WP-47 and WP-48: M3 Intruder and Sequencer
+### WP-47: M3 Intruder (what is left)
 
-#### WP-47 Intruder · Phase 4 · L
+#### WP-47 Intruder: what is left · Phase 4 · M
 
-- **Do:**
-  - Attack types: sniper, battering ram, pitchfork, cluster bomb.
-  - Payload sources: lists, files, numbers, dates, brute-forcer, character substitution, case changes, null
-    payloads, recursive grep, the results of earlier attacks. Bundled wordlists and SecLists support.
-  - Payload processing: prefix and suffix, encode and decode, hash, regex replace, skip rules.
-  - Resource pools: concurrency, delays, throttling and retries, inside the gate's per-host rate limit (WP-10) and
-    the memory budget (WP-05).
-  - A results table with grep match, grep extract, status, length and timing; sorting, filtering and export.
-    Results are stored with a migration and streamed over the event stream.
-  - The stop switch halts attacks at once.
-- **Done when:** tests against a local server cover each attack type, the rate limit and the stop switch.
+- **Do:** the attack engine, API, panel and "Send to Intruder" are done (see `docs/releases.md`). Left:
+  - Payload sources: dates, character substitution, recursive grep, the results of earlier attacks, and bundled
+    wordlists with SecLists support (today a list is typed or loaded from a file in the browser).
+  - A server-side export (the panel exports CSV and JSON in the browser), a `bosun intruder` command (WP-26) and the
+    query bar's reuse for Intruder results (WP-75).
+  - A full preview of a plan (it shows the first few requests).
+- **Done when:** tests cover each new source; the CLI runs an attack from a file.
 
 ### WP-49 to WP-51: M4 passive scanning and reports
 
@@ -890,7 +878,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
   follow redirects (optional), response diff with the previous send, send groups (in order or in parallel,
   single-packet attack for race conditions) → **WP-41**
 - [ ] **Logger** as its own panel (History already lists every source) → **WP-43**
-- [ ] "Send to Intruder" (Repeater, Comparer and Decoder are done) → **WP-43**
 - [ ] Request editor with syntax highlighting (CodeMirror 6), a hex editor, and pretty-printing of JSON, XML and
   HTML (as text, never rendered) → **WP-44**
 - [ ] The scope gate enforced for every tool request (refuse out-of-scope, a per-host rate limit, the stop switch),

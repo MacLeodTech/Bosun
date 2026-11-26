@@ -9,6 +9,17 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-47 Intruder, first part, and the rest of WP-43** (`wp-43`, 2026-11-26). The `bosun-intruder` crate: sniper, battering
+  ram, pitchfork and cluster bomb; payload sources list, numbers (decimal or hex), brute force, null payloads and case
+  changes; processing (prefix, suffix, encode and hash through `bosun-codec`, regex replace, skip rules); a pool
+  with concurrency, delay, retries and a stop switch, sending through the Repeater's engine so the gate, the per-host
+  rate limit and the memory budget apply (a request the limit holds back is retried for up to 60 s). Limits: 1M
+  requests, 20 positions, 200k list items, three attacks at once. Results go to the project (migration 4 of the
+  project file) and over the event stream; an attack found running at open is marked interrupted. API under
+  `/intruder/*` (tester to run, viewer to read; start, stop and delete audited), the Intruder panel (position markers,
+  grep match and extract, sorting, filter, CSV and JSON export) and the `intruder_plan` fuzz target. "Send to
+  Intruder" is in the History menu and the Repeater, which finishes WP-43. Left: see WP-47 in the roadmap.
+
 - **WP-48 Sequencer** (`wp-43`, 2026-11-26). The `bosun-sequencer` crate (pure, bounded, fuzzed): FIPS 140-2 monobit, poker,
   runs and long-run tests, character-level and bit-level analysis, an entropy estimate, counter and repeat
   detection and a verdict (excellent, good, poor, not random; under 100 tokens is marked unreliable). Token

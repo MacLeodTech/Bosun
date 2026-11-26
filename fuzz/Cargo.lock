@@ -166,12 +166,14 @@ version = "0.0.0"
 dependencies = [
  "bosun-codec",
  "bosun-http",
+ "bosun-intruder",
  "bosun-model",
  "bosun-proxy",
  "bosun-scope",
  "bosun-sequencer",
  "bosun-store",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]
@@ -190,6 +192,21 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "webpki-roots",
+]
+
+[[package]]
+name = "bosun-intruder"
+version = "0.1.0"
+dependencies = [
+ "bosun-codec",
+ "bosun-http",
+ "bosun-model",
+ "bosun-scope",
+ "regex",
+ "serde",
+ "thiserror",
+ "tokio",
+ "utoipa",
 ]
 
 [[package]]

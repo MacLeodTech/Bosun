@@ -233,7 +233,7 @@
       return { label: label ?? cmd.title, hint: cmd.keys ? format(cmd.keys) : undefined, run: () => void commands.run(id, ctx) };
     };
     return tidyMenu([
-      { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'),
+      { kind: 'heading', label: 'Send to' }, c('flow.repeater', 'Repeater'), c('flow.intruder', 'Intruder'),
       c('flow.organize', 'Organizer'),
       c('flow.decoder.request', 'Decoder: request'), c('flow.decoder.response', 'Decoder: response'),
       c('flow.comparer.request.a', 'Comparer: request as A'), c('flow.comparer.request.b', 'Comparer: request as B'),

@@ -586,6 +586,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/intruder/attacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The project's attacks, newest first, with live progress for running ones. */
+        get: operations["intruder_attacks"];
+        put?: never;
+        /** @description Start an attack: fill the marked positions of a request with payloads (sniper, battering ram, pitchfork or cluster bomb) and send every request through the scope gate (the target must be in scope; there is no out-of-scope setting), recorded as flows with source intruder. Results are stored in the project and sent on the event stream (intruder_result, intruder_state). Up to three attacks run at once. Needs the tester role or above; audited. */
+        post: operations["intruder_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/attacks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One attack, with its request (position markers included) and the configuration it was started with. */
+        get: operations["intruder_attack"];
+        put?: never;
+        post?: never;
+        /** @description Delete an attack and its results (the flows it recorded stay in history). A running attack is a 409. Needs the tester role or above; audited. */
+        delete: operations["intruder_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/attacks/{id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description An attack's results in request order, up to 5000 per page (?offset and ?limit). */
+        get: operations["intruder_results"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/attacks/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The stop switch: no further request is sent and the ones in flight are dropped, at once. `stopped` is false when the attack was not running. (The kill switch, PUT /tools/stop, ends every attack too.) Needs the tester role or above; audited. */
+        post: operations["intruder_stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intruder/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first few payloads come back. A problem is a 400 that says what. Needs the tester role or above. */
+        post: operations["intruder_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizer": {
         parameters: {
             query?: never;
@@ -1276,6 +1363,51 @@ export interface components {
             /** Format: int64 */
             user_id: number;
         };
+        AttackDetail: components["schemas"]["AttackInfo"] & {
+            /** @description The payload sets, options and grep rules it was started with. */
+            config: unknown;
+            /** @description The request with its position markers, base64. */
+            request: string;
+        };
+        AttackInfo: {
+            attack_type: string;
+            /** Format: int64 */
+            created_ms: number;
+            /**
+             * Format: int64
+             * @description Requests that finished.
+             */
+            done: number;
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description Requests that got no answer.
+             */
+            errors: number;
+            /** Format: int64 */
+            finished_ms?: number | null;
+            host: string;
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /** Format: int32 */
+            port: number;
+            scheme: string;
+            /**
+             * Format: int64
+             * @description Requests left out because a payload was skipped.
+             */
+            skipped: number;
+            /** @description `running`, `completed`, `stopped`, `failed` or `interrupted` (the engine ended while it ran). */
+            state: string;
+            /** Format: int64 */
+            total: number;
+        };
+        AttackList: {
+            attacks: components["schemas"]["AttackInfo"][];
+        };
+        /** @enum {string} */
+        AttackType: "sniper" | "battering_ram" | "pitchfork" | "cluster_bomb";
         AuditEntry: {
             action: string;
             detail: string;
@@ -1560,6 +1692,22 @@ export interface components {
             /** Format: int64 */
             forwarded: number;
         };
+        /** @description Pull a value out of the response: the first group of the regular expression, or the whole match without one. */
+        GrepExtract: {
+            pattern: string;
+        };
+        /** @description Mark a response as a match when this is found in it. */
+        GrepMatch: {
+            case_insensitive?: boolean;
+            pattern: string;
+            /** @description A regular expression rather than plain text. */
+            regex?: boolean;
+        };
+        /** @description The grep rules of an attack. */
+        Greps: {
+            extracts?: components["schemas"]["GrepExtract"][];
+            matches?: components["schemas"]["GrepMatch"][];
+        };
         HostAnalysis: components["schemas"]["TargetAnalysis"] & {
             /** @description The host has more recorded requests than were read; the newest were. */
             capped: boolean;
@@ -1642,11 +1790,53 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        /** @enum {string} */
+        NumberBase: "decimal" | "hex";
         /**
          * @description One step of a chain.
          * @enum {string}
          */
         Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "gzip_encode" | "deflate_encode" | "brotli_encode" | "zstd_encode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "md5" | "sha1" | "sha256" | "sha512";
+        /** @description The resource pool and the sending options. */
+        Options: {
+            /**
+             * Format: int32
+             * @description Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.
+             * @default 5
+             */
+            concurrency: number;
+            /**
+             * Format: int64
+             * @description The least time between the starts of two requests, milliseconds, whatever the concurrency.
+             * @default 0
+             */
+            delay_ms: number;
+            /**
+             * Format: int64
+             * @description Stop after this many requests (at most one million).
+             * @default null
+             */
+            max_requests: number | null;
+            /**
+             * Format: int32
+             * @description How often a request that could not be sent or got no answer is tried again (0 to 10).
+             * @default 0
+             */
+            retries: number;
+            /**
+             * Format: int64
+             * @description The longest one request may take, seconds (1 to 300).
+             * @default 30
+             */
+            timeout_secs: number;
+            /**
+             * @description Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.
+             * @default true
+             */
+            update_content_length: boolean;
+            /** @default false */
+            verify_tls: boolean;
+        };
         OrganizerAdd: {
             flow_ids: components["schemas"]["i64"][];
         };
@@ -1718,8 +1908,70 @@ export interface components {
             /** @description Also end the user's API tokens (default true). */
             revoke_tokens?: boolean | null;
         };
+        /** @description A source and the processing for what it yields. */
+        PayloadSet: {
+            processing?: components["schemas"]["Processing"][];
+            source: components["schemas"]["PayloadSource"];
+        };
+        /** @description A source of payloads. */
+        PayloadSource: {
+            items: string[];
+            /** @enum {string} */
+            type: "list";
+        } | {
+            base?: components["schemas"]["NumberBase"];
+            /** Format: int64 */
+            from: number;
+            /**
+             * Format: int32
+             * @description Pad with leading zeros to this many digits.
+             */
+            min_digits?: number;
+            /** Format: int64 */
+            step?: number;
+            /** Format: int64 */
+            to: number;
+            /** @enum {string} */
+            type: "numbers";
+        } | {
+            charset: string;
+            /** Format: int32 */
+            max_len: number;
+            /** Format: int32 */
+            min_len: number;
+            /** @enum {string} */
+            type: "brute_force";
+        } | {
+            /** Format: int64 */
+            count: number;
+            /** @enum {string} */
+            type: "null";
+        } | {
+            items: string[];
+            /** @enum {string} */
+            type: "case_changes";
+        };
         /** @enum {string} */
         Phase: "request" | "response";
+        PlanPreview: {
+            /**
+             * Format: int64
+             * @description The payloads of one request (one per position, or one for sniper and battering ram).
+             */
+            index: number;
+            payloads: string[];
+        };
+        PlanReply: {
+            /** Format: int32 */
+            positions: number;
+            /** @description The first few requests' payloads. */
+            preview: components["schemas"]["PlanPreview"][];
+            /**
+             * Format: int64
+             * @description Requests the attack would make (after the maximum, before skipped payloads are left out).
+             */
+            total: number;
+        };
         PositionStat: {
             /** @description How many of those bits are off one half by more than chance allows (|z| above 3.29). */
             biased_bits: number;
@@ -1739,6 +1991,29 @@ export interface components {
             top_char: string;
             /** Format: double */
             top_share: number;
+        };
+        /** @description A step applied to every payload, in order. */
+        Processing: {
+            /** @enum {string} */
+            type: "prefix";
+            value: string;
+        } | {
+            /** @enum {string} */
+            type: "suffix";
+            value: string;
+        } | {
+            op: components["schemas"]["Op"];
+            /** @enum {string} */
+            type: "encode";
+        } | {
+            pattern: string;
+            replacement: string;
+            /** @enum {string} */
+            type: "replace_regex";
+        } | {
+            pattern: string;
+            /** @enum {string} */
+            type: "skip_if_matches";
         };
         ProjectInfo: {
             current: boolean;
@@ -1798,6 +2073,45 @@ export interface components {
             temporary: boolean;
             /** @enum {string} */
             type: "project_switched";
+        } | {
+            /** Format: int64 */
+            attack_id: number;
+            /** Format: int64 */
+            done: number;
+            error?: string | null;
+            /** Format: int64 */
+            errors: number;
+            /** Format: int64 */
+            skipped: number;
+            /** @description `running`, `completed`, `stopped`, `failed` or `interrupted`. */
+            state: string;
+            /** Format: int64 */
+            total: number;
+            /** @enum {string} */
+            type: "intruder_state";
+        } | {
+            /** Format: int64 */
+            attack_id: number;
+            /** Format: int32 */
+            attempts: number;
+            error?: string | null;
+            extracts: (string | null)[];
+            /** Format: int64 */
+            flow_id?: number | null;
+            /** Format: int64 */
+            index: number;
+            /** Format: int64 */
+            length: number;
+            matches: boolean[];
+            payloads: string[];
+            /** Format: int32 */
+            position?: number | null;
+            /** Format: int32 */
+            status?: number | null;
+            /** Format: int64 */
+            time_ms: number;
+            /** @enum {string} */
+            type: "intruder_result";
         };
         ProxyInfo: {
             auth_required: boolean;
@@ -1858,6 +2172,9 @@ export interface components {
             /** @description Let the Repeater send to hosts outside the scope. Starts off, and goes back off when a project is opened. */
             allow_out_of_scope: boolean;
         };
+        ResultsReply: {
+            rows: components["schemas"]["Row"][];
+        };
         Revoked: {
             /** Format: int64 */
             revoked: number;
@@ -1866,6 +2183,45 @@ export interface components {
         Role: "viewer" | "tester" | "admin";
         RoleBody: {
             role: components["schemas"]["Role"];
+        };
+        /** @description The outcome of one request. */
+        Row: {
+            /**
+             * Format: int32
+             * @description How many tries it took (1 when the first worked).
+             */
+            attempts: number;
+            error?: string | null;
+            /** @description One entry per grep extract rule. */
+            extracts: (string | null)[];
+            /**
+             * Format: int64
+             * @description The recorded flow, when something was sent.
+             */
+            flow_id?: number | null;
+            /**
+             * Format: int64
+             * @description Which request of the attack (0-based).
+             */
+            index: number;
+            /**
+             * Format: int64
+             * @description Response size in bytes.
+             */
+            length: number;
+            /** @description One entry per grep match rule. */
+            matches: boolean[];
+            /** @description The payloads used, as text (bytes that are not UTF-8 are replaced). */
+            payloads: string[];
+            /**
+             * Format: int32
+             * @description The position that was attacked, for a sniper attack.
+             */
+            position?: number | null;
+            /** Format: int32 */
+            status?: number | null;
+            /** Format: int64 */
+            time_ms: number;
         };
         /** @enum {string} */
         RuleTarget: "request_first_line" | "request_header" | "request_body" | "response_first_line" | "response_header" | "response_body";
@@ -2012,6 +2368,24 @@ export interface components {
         SsoInfo: {
             sso?: components["schemas"]["SsoButton"] | null;
         };
+        StartBody: {
+            attack_type: components["schemas"]["AttackType"];
+            greps?: components["schemas"]["Greps"];
+            host: string;
+            /** @description A label for the attack (defaults to the host and attack type). */
+            name?: string | null;
+            options?: components["schemas"]["Options"];
+            /** @description One set for sniper and battering ram; one per position for pitchfork and cluster bomb. */
+            payload_sets: components["schemas"]["PayloadSet"][];
+            /** Format: int32 */
+            port: number;
+            /**
+             * @description The request, base64, with `§` around each position (`§value§`: the text between is what is sent when the
+             *     position is not being attacked).
+             */
+            request: string;
+            scheme: components["schemas"]["Scheme"];
+        };
         Status: {
             name: string;
             setup_required: boolean;
@@ -2038,6 +2412,10 @@ export interface components {
             truncated: boolean;
         };
         StopBody: {
+            stopped: boolean;
+        };
+        StopReply: {
+            /** @description False when the attack was not running. */
             stopped: boolean;
         };
         Stopped: {
@@ -4370,6 +4748,383 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_attacks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttackList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartBody"];
+            };
+        };
+        responses: {
+            /** @description The attack, running */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttackInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many attacks running or stored */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_attack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttackDetail"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The attack is running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_results: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultsReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attack id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such attack */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    intruder_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReply"];
+                };
             };
             /** @description Bad request */
             400: {

@@ -4,6 +4,7 @@ import History from '../pages/History.svelte';
 import FlowDetail from '../pages/FlowDetail.svelte';
 import Intercept from '../pages/Intercept.svelte';
 import Repeater from '../pages/Repeater.svelte';
+import Intruder from '../pages/Intruder.svelte';
 import Decoder from '../pages/Decoder.svelte';
 import Comparer from '../pages/Comparer.svelte';
 import Sequencer from '../pages/Sequencer.svelte';
@@ -30,6 +31,7 @@ export const panels: PanelDef[] = [
   { id: 'history', title: 'HTTP history', component: History },
   { id: 'flow', title: 'Request / response', component: FlowDetail },
   { id: 'repeater', title: 'Repeater', component: Repeater },
+  { id: 'intruder', title: 'Intruder', component: Intruder },
   { id: 'organizer', title: 'Organizer', component: Organizer },
   { id: 'findings', title: 'Findings', component: Findings },
   { id: 'analysis', title: 'Host analysis', component: Analysis },

@@ -820,6 +820,8 @@ async fn switch_to(st: &AppState, caller: &Caller, target: Option<&str>) -> Resu
     // Swap everything under the settings lock, so nothing is saved to one project and applied to another.
     let _w = mgr.settings.write().await;
     st.inner.proxy.intercept().drop_all();
+    // Attacks belong to the project they started in.
+    st.inner.intruder.stop_all();
     let (proxy, p) = (st.inner.proxy.clone(), new.clone());
     blocking(move || proxy.switch_project(p)).await?;
     st.inner.gate.set_scope(loaded.scope);

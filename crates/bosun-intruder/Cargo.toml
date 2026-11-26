@@ -1,0 +1,26 @@
+[package]
+name = "bosun-intruder"
+description = "The Intruder engine: attack plans, payload sources and processing, and the resource pool."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-scope.workspace = true
+bosun-http.workspace = true
+bosun-codec.workspace = true
+tokio.workspace = true
+regex.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+utoipa.workspace = true
+
+[dev-dependencies]
+bosun-proxy.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

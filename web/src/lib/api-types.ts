@@ -1250,6 +1250,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scan/checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The active checks the scanner has: id and what each looks for. */
+        get: operations["scan_checks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scan/scans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The scans of this run of the server, newest first, with live progress (units finished of planned, requests, findings). */
+        get: operations["scan_list"];
+        put?: never;
+        /** @description Start an active scan of the given requests: each query, form or JSON value, cookie and (by strength) the last path segment or a header is probed by the enabled checks (see scan_checks). Every request goes through the scope gate (a target outside the scope is listed in refused, never contacted), is rate limited by the gate and the scan's own delay, and is recorded as a flow with source scanner. Findings become issues. Two scans run at once. Needs the tester role or above; audited. */
+        post: operations["scan_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scan/scans/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One scan: its state, progress, the findings so far and, once it has ended, the refused targets. */
+        get: operations["scan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scan/scans/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description No request starts until the scan is resumed; requests in flight finish. `changed` is false when the scan had ended or was paused already. Needs the tester role or above; audited. */
+        post: operations["scan_pause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scan/scans/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Continue a paused scan where it stopped. `changed` is false when it was not paused. Needs the tester role or above; audited. */
+        post: operations["scan_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scan/scans/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The stop switch: no further request is sent. `changed` is false when the scan had ended. Needs the tester role or above; audited. */
+        post: operations["scan_stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scope": {
         parameters: {
             query?: never;
@@ -2911,6 +3014,99 @@ export interface components {
         SavedFilter: {
             name: string;
             query: string;
+        };
+        ScanCheck: {
+            description: string;
+            id: string;
+        };
+        ScanChecks: {
+            checks: components["schemas"]["ScanCheck"][];
+        };
+        ScanControlReply: {
+            /** @description False when the scan was not running (or, for resume, not paused). */
+            changed: boolean;
+        };
+        ScanDetail: components["schemas"]["ScanInfo"] & {
+            /** @description Targets the gate refused (outside the scope). Never contacted. Filled when the scan has ended. */
+            refused: string[];
+            results: components["schemas"]["ScanFinding"][];
+            /** @description The request cap ended the scan with work left. */
+            truncated: boolean;
+        };
+        ScanFinding: {
+            check: string;
+            confidence: string;
+            detail: string;
+            /**
+             * Format: int64
+             * @description The flow that proves it; the issue list shows the finding too.
+             */
+            flow_id: number;
+            payload: string;
+            point: string;
+            severity: string;
+            title: string;
+            url: string;
+        };
+        ScanInfo: {
+            /** Format: int64 */
+            created_ms: number;
+            error?: string | null;
+            findings: number;
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            requests: number;
+            state: components["schemas"]["ScanState"];
+            targets: number;
+            /** @description Units of work (a target and one insertion point) finished, and planned. */
+            units_done: number;
+            units_total: number;
+        };
+        ScanList: {
+            scans: components["schemas"]["ScanInfo"][];
+        };
+        ScanStartBody: {
+            /** @description Check ids (see the check list in the description); empty runs all. */
+            checks?: string[];
+            /**
+             * Format: int32
+             * @description Units of work in flight at once (1 to 32, default 4).
+             */
+            concurrency?: number | null;
+            /**
+             * Format: int64
+             * @description The least time between two request starts in one unit, milliseconds (at most 60000).
+             */
+            delay_ms?: number | null;
+            /** @description Extra headers for every request, each `Name: value`. */
+            headers?: string[];
+            /**
+             * Format: int64
+             * @description The most requests the scan may send (1 to 200000, default 5000).
+             */
+            max_requests?: number | null;
+            /** @description `low`, `medium` (default) or `high`: more insertion points and probes. */
+            strength?: string | null;
+            /** @description The requests to test (1 to 2000). */
+            targets: components["schemas"]["ScanTarget"][];
+            verify_tls?: boolean;
+        };
+        /** @enum {string} */
+        ScanState: "running" | "paused" | "done" | "stopped" | "failed";
+        ScanTarget: {
+            body?: string | null;
+            /**
+             * @description `application/x-www-form-urlencoded` (default with a body) or `application/json`: their values are
+             *     insertion points.
+             */
+            content_type?: string | null;
+            /** @description Each `Name: value`. A `Cookie` header makes its cookies insertion points. */
+            headers?: string[];
+            /** @description Default `GET`. */
+            method?: string | null;
+            /** @description Absolute `http` or `https` URL; its query values are insertion points. */
+            url: string;
         };
         /** @enum {string} */
         Scheme: "http" | "https";
@@ -8676,6 +8872,342 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    scan_checks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanChecks"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    scan_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    scan_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanStartBody"];
+            };
+        };
+        responses: {
+            /** @description The scan, running */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many scans running */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    scan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanDetail"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such scan */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    scan_pause: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanControlReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such scan */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    scan_resume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanControlReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such scan */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    scan_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanControlReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such scan */
             404: {
                 headers: {
                     [name: string]: unknown;

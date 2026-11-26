@@ -597,12 +597,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bosun-active"
+version = "0.1.0"
+dependencies = [
+ "bosun-crawl",
+ "bosun-http",
+ "bosun-model",
+ "bosun-proxy",
+ "bosun-scope",
+ "bosun-testbed",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "bosun-api"
 version = "0.1.0"
 dependencies = [
  "argon2",
  "axum",
  "base64 0.23.1",
+ "bosun-active",
  "bosun-ca",
  "bosun-checks",
  "bosun-client",
@@ -618,6 +635,7 @@ dependencies = [
  "bosun-scope",
  "bosun-sequencer",
  "bosun-store",
+ "bosun-testbed",
  "bytes",
  "cookie",
  "flate2",
@@ -918,6 +936,13 @@ dependencies = [
  "thiserror 2.0.21",
  "utoipa",
  "zstd",
+]
+
+[[package]]
+name = "bosun-testbed"
+version = "0.1.0"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]

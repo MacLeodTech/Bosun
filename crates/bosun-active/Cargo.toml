@@ -1,0 +1,25 @@
+[package]
+name = "bosun-active"
+description = "The active scan engine: insertion points, scan policies, a queue with pause and resume, and the Rust active checks. Every request goes through the scope gate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-http.workspace = true
+bosun-scope.workspace = true
+bosun-crawl.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bosun-proxy.workspace = true
+bosun-testbed = { path = "../bosun-testbed" }
+
+[lints]
+workspace = true

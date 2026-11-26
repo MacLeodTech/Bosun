@@ -22,6 +22,7 @@ pub mod listeners;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
+pub mod scan;
 pub mod security;
 pub mod sequencer;
 pub mod sso;
@@ -214,6 +215,8 @@ pub struct Inner {
     pub captures: sequencer::Captures,
     /// Crawls of the spider.
     pub crawls: crawl::Crawls,
+    /// Active scans.
+    pub scans: scan::Scans,
 }
 
 pub struct Deps {
@@ -367,6 +370,7 @@ impl AppState {
             totp_required,
             captures: sequencer::Captures::default(),
             crawls: crawl::Crawls::default(),
+            scans: scan::Scans::default(),
         };
         Ok((
             Self {
@@ -486,6 +490,12 @@ pub fn router(st: AppState) -> Router {
         .route("/crawl/crawls", get(crawl::list).post(crawl::start))
         .route("/crawl/crawls/{id}", get(crawl::get))
         .route("/crawl/crawls/{id}/stop", post(crawl::stop))
+        .route("/scan/checks", get(scan::checks))
+        .route("/scan/scans", get(scan::list).post(scan::start))
+        .route("/scan/scans/{id}", get(scan::get))
+        .route("/scan/scans/{id}/stop", post(scan::stop))
+        .route("/scan/scans/{id}/pause", post(scan::pause))
+        .route("/scan/scans/{id}/resume", post(scan::resume))
         .route("/intruder/plan", post(intruder::plan))
         .route("/intruder/attacks", get(intruder::list).post(intruder::start))
         .route(

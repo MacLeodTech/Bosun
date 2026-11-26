@@ -4,6 +4,7 @@
 //! decompression bomb or an absurd diff cannot use more memory than the caller allows.
 
 mod diff;
+pub mod engage;
 mod ops;
 
 pub use diff::{DiffKind, DiffLevel, DiffOp, DiffResult, diff};

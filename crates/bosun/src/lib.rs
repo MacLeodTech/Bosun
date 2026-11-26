@@ -261,6 +261,7 @@ impl Engine {
                 },
             )?;
             setup_code = code;
+            state.restore_proxy_settings().await;
             login_ticket = embedded.then(|| state.issue_login_ticket());
             tasks.push(tokio::spawn(bosun_api::serve(state, api_listener, wait(rx))));
         }
@@ -325,6 +326,7 @@ impl Engine {
     /// Stop accepting connections and write out pending history.
     pub async fn shutdown(self) {
         let _ = self.stop.send(true);
+        self.proxy.stop_added_listeners();
         for t in self.tasks {
             let _ = t.await;
         }

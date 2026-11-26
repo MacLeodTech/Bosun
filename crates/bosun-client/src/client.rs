@@ -575,6 +575,43 @@ impl Client {
         self.json(self.req(Method::POST, "/import").json(body)).await
     }
 
+    /// The proxy listeners (`ListenerInfo` in the OpenAPI description; passwords are never returned).
+    pub async fn list_listeners(&self) -> Result<Vec<serde_json::Value>> {
+        self.json(self.req(Method::GET, "/proxy/listeners")).await
+    }
+
+    /// Start another proxy listener. `spec` is the `ListenerSpec` of the API: `addr` and optionally `invisible`,
+    /// `tls_passthrough`, `auth` and `allow_clients`. Needs the admin role.
+    pub async fn add_listener(&self, spec: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/proxy/listeners").json(spec))
+            .await
+    }
+
+    /// Change a listener's options live. Needs the admin role.
+    pub async fn update_listener(&self, id: u32, spec: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::PUT, &format!("/proxy/listeners/{id}"))
+                .json(spec),
+        )
+        .await
+    }
+
+    /// Stop an added listener. Needs the admin role.
+    pub async fn remove_listener(&self, id: u32) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/proxy/listeners/{id}")))
+            .await
+    }
+
+    /// The live proxy settings and the names of the settings that need a restart.
+    pub async fn proxy_config(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/proxy/config")).await
+    }
+
+    /// Change the live proxy settings (all of `LiveSettings`). A setting that needs a restart is a 409.
+    pub async fn put_proxy_config(&self, live: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::PUT, "/proxy/config").json(live)).await
+    }
+
     /// Send a raw request through the Repeater. `body` is the `SendBody` of the API (see `docs/openapi.json`):
     /// target, base64 request, and optionally protocol, count and mode. Returns the reply with one result per send.
     pub async fn repeater_send(&self, body: &serde_json::Value) -> Result<serde_json::Value> {

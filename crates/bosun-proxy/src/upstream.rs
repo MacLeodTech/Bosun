@@ -32,9 +32,33 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug, Clone, Default)]
 pub struct LoopGuard {
     inner: Arc<Mutex<HashSet<SocketAddr>>>,
+    /// Our own listeners (the proxy's and the API's): never valid targets. Shared by every connector.
+    selfs: Arc<Mutex<Vec<SocketAddr>>>,
 }
 
 impl LoopGuard {
+    /// Register our own listener addresses.
+    pub fn add_self(&self, addrs: impl IntoIterator<Item = SocketAddr>) {
+        let mut v = self.selfs.lock().unwrap_or_else(|e| e.into_inner());
+        for a in addrs {
+            if !v.contains(&a) {
+                v.push(a);
+            }
+        }
+    }
+
+    /// Is `a` one of our own registered listener addresses?
+    pub fn is_self(&self, a: &SocketAddr) -> bool {
+        self.selfs.lock().unwrap_or_else(|e| e.into_inner()).contains(a)
+    }
+
+    pub fn remove_self(&self, a: &SocketAddr) {
+        self.selfs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|x| x != a);
+    }
+
     fn add(&self, a: SocketAddr) {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).insert(a);
     }
@@ -145,7 +169,6 @@ pub struct Connector {
     route: Route,
     tls: TlsConnector,
     guard: LoopGuard,
-    self_ports: Arc<Vec<SocketAddr>>,
 }
 
 impl std::fmt::Debug for Connector {
@@ -205,11 +228,11 @@ impl Connector {
                 Route::Socks(s)
             }
         };
+        guard.add_self(self_addrs);
         Ok(Self {
             route,
             tls: TlsConnector::from(Arc::new(client_tls(verify_tls, alpn_h2))),
             guard,
-            self_ports: Arc::new(self_addrs),
         })
     }
 
@@ -244,6 +267,7 @@ impl Connector {
 
     /// Cheap pre-check for obvious loops: a loopback/unspecified target on one of our own ports.
     fn targets_self(&self, host: &str, port: u16) -> bool {
+        let selfs = self.guard.selfs.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let host = host.trim_start_matches('[').trim_end_matches(']');
         let local_name =
             host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost");
@@ -251,13 +275,12 @@ impl Connector {
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified());
         (local_name || local_ip)
-            && self
-                .self_ports
+            && selfs
                 .iter()
                 .any(|a| a.port() == port && (a.ip().is_loopback() || a.ip().is_unspecified()))
             || host
                 .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| self.self_ports.iter().any(|a| a.ip() == ip && a.port() == port))
+                .is_ok_and(|ip| selfs.iter().any(|a| a.ip() == ip && a.port() == port))
     }
 }
 

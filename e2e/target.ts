@@ -88,7 +88,7 @@ export function viaProxy(proxyPort: number, url: string, headers: Record<string,
   return new Promise<{ status: number; body: string }>((resolve, reject) => {
     const u = new URL(url);
     const req = http.request(
-      { host: '127.0.0.1', port: proxyPort, method: 'GET', path: url, headers: { host: u.host, ...headers } },
+      { host: '127.0.0.1', port: proxyPort, method: 'GET', path: url, agent: false, headers: { host: u.host, ...headers } },
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c) => chunks.push(c));

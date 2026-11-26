@@ -16,6 +16,7 @@ pub mod events;
 pub mod handlers;
 pub mod intruder;
 pub mod issues;
+pub mod listeners;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
@@ -423,6 +424,15 @@ pub fn router(st: AppState) -> Router {
         )
         .route("/intercept/forward-all", post(h::intercept_forward_all))
         .route("/proxy", get(h::proxy_info))
+        .route("/proxy/listeners", get(listeners::list).post(listeners::add))
+        .route(
+            "/proxy/listeners/{id}",
+            put(listeners::update).delete(listeners::remove),
+        )
+        .route(
+            "/proxy/config",
+            get(listeners::get_config).put(listeners::put_config),
+        )
         .route("/tools/stop", put(h::set_stopped))
         .route("/ca", get(h::ca_info))
         .route("/ca/cert.pem", get(h::ca_pem))

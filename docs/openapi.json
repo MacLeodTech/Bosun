@@ -4712,6 +4712,392 @@
         }
       }
     },
+    "/proxy/config": {
+      "get": {
+        "tags": [
+          "proxy"
+        ],
+        "description": "The proxy settings that change live, and the names of those that need a restart. Needs the viewer role or above.",
+        "operationId": "get_proxy_config",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxyConfigView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "proxy"
+        ],
+        "description": "Change live proxy settings without a restart (audited). A setting that needs a restart is refused with 409. Needs the admin role.",
+        "operationId": "put_proxy_config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LiveSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxyConfigView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proxy/listeners": {
+      "get": {
+        "tags": [
+          "proxy"
+        ],
+        "description": "The proxy listeners and their options (passwords are never returned). Needs the viewer role or above.",
+        "operationId": "list_listeners",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ListenerInfo"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "proxy"
+        ],
+        "description": "Start another proxy listener without a restart (audited). Needs the admin role.",
+        "operationId": "add_listener",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListenerSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListenerInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proxy/listeners/{id}": {
+      "put": {
+        "tags": [
+          "proxy"
+        ],
+        "description": "Change a listener's options live (audited); an empty password keeps the current one. Only an added listener can move to another address. Needs the admin role.",
+        "operationId": "update_listener",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListenerSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListenerInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "proxy"
+        ],
+        "description": "Stop an added listener (audited); connections it already accepted run to their end. Needs the admin role.",
+        "operationId": "remove_listener",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/repeater/send": {
       "post": {
         "tags": [
@@ -8677,6 +9063,143 @@
           }
         }
       },
+      "ListenerInfo": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ListenerSpec"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "primary",
+              "auth_required",
+              "accepted"
+            ],
+            "properties": {
+              "accepted": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Connections accepted since it started.",
+                "minimum": 0
+              },
+              "auth_required": {
+                "type": "boolean"
+              },
+              "id": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "primary": {
+                "type": "boolean",
+                "description": "The listener from the config file: its options change live, but it cannot be removed or moved."
+              }
+            }
+          }
+        ],
+        "description": "A listener as the API shows it. The password is never part of it."
+      },
+      "ListenerSpec": {
+        "type": "object",
+        "description": "One proxy listener and the options that belong to it. The first listener comes from the `proxy` section of the\nconfig file; others are added while running. Everything here changes live (a new address means a new bind).",
+        "required": [
+          "addr"
+        ],
+        "properties": {
+          "addr": {
+            "type": "string",
+            "description": "Address to listen on, for example `127.0.0.1:8081`. Loopback unless `auth` or `allow_clients` is set."
+          },
+          "allow_clients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Only these client networks may use this listener (empty: anyone who can reach it)."
+          },
+          "auth": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProxyAuth",
+                "description": "Basic credentials clients must send as `Proxy-Authorization`. The password is never returned."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invisible": {
+            "type": "boolean",
+            "description": "Accept origin-form requests (`GET /path` with a Host header) as if they were proxied."
+          },
+          "tls_passthrough": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Hosts whose TLS this listener tunnels untouched (scope host pattern syntax)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "LiveSettings": {
+        "type": "object",
+        "description": "Settings that change while running, without a restart. Everything else in the `proxy` section needs one.",
+        "required": [
+          "max_request_body",
+          "record_body_limit",
+          "max_buffered_response",
+          "record_out_of_scope",
+          "upstream_timeout_secs",
+          "header_timeout_secs",
+          "http2",
+          "max_connections"
+        ],
+        "properties": {
+          "header_timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds a client may take to send a request's headers (applies to new connections).",
+            "minimum": 0
+          },
+          "http2": {
+            "type": "boolean",
+            "description": "Offer HTTP/2 to clients over ALPN (applies to new connections)."
+          },
+          "max_buffered_response": {
+            "type": "integer",
+            "description": "Buffered responses (response intercept, body rules) larger than this fail.",
+            "minimum": 0
+          },
+          "max_connections": {
+            "type": "integer",
+            "description": "Most client connections at once, summed over all listeners.",
+            "minimum": 0
+          },
+          "max_request_body": {
+            "type": "integer",
+            "description": "Requests whose body is larger than this are refused with 413.",
+            "minimum": 0
+          },
+          "record_body_limit": {
+            "type": "integer",
+            "description": "Only this much of each body is recorded.",
+            "minimum": 0
+          },
+          "record_out_of_scope": {
+            "type": "boolean",
+            "description": "Record traffic to hosts that are out of scope."
+          },
+          "upstream_timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds to wait for an upstream response head.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "LoginBody": {
         "type": "object",
         "required": [
@@ -9646,6 +10169,43 @@
           "http1",
           "h2"
         ]
+      },
+      "ProxyAuth": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "password_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "File holding the password (container secrets); read at start-up, and instead of `password`."
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "ProxyConfigView": {
+        "type": "object",
+        "description": "The live settings, and the names of the settings that need a restart.",
+        "required": [
+          "live",
+          "restart_required"
+        ],
+        "properties": {
+          "live": {
+            "$ref": "#/components/schemas/LiveSettings"
+          },
+          "restart_required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       },
       "ProxyEvent": {
         "oneOf": [

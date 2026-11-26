@@ -20,10 +20,12 @@ use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
 use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
 use crate::intruder::{AttackDetail, AttackInfo, AttackList, PlanReply, ResultsReply, StartBody, StopReply};
 use crate::issues::{IssueChange, IssueList};
+use crate::listeners::ProxyConfigView;
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
 use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
 use crate::sequencer::{AnalyzeBody, CaptureBody, CaptureStarted, CaptureStatus};
 use bosun_proxy::rules::RuleSpec as MatchRule;
+use bosun_proxy::{ListenerInfo, ListenerSpec, LiveSettings};
 use bosun_scope::ScopeSpec;
 
 #[derive(ToSchema, Serialize)]
@@ -354,6 +356,24 @@ fn intercept_forward_all() {}
 #[utoipa::path(get, path = "/proxy", operation_id = "proxy_info", tag = "proxy", description = "Proxy settings and resource counters. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ProxyInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn proxy_info() {}
 
+#[utoipa::path(get, path = "/proxy/listeners", operation_id = "list_listeners", tag = "proxy", description = "The proxy listeners and their options (passwords are never returned). Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<ListenerInfo>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_listeners() {}
+
+#[utoipa::path(post, path = "/proxy/listeners", operation_id = "add_listener", tag = "proxy", description = "Start another proxy listener without a restart (audited). Needs the admin role.", request_body = ListenerSpec, responses((status = 200, description = "OK", body = ListenerInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn add_listener() {}
+
+#[utoipa::path(put, path = "/proxy/listeners/{id}", operation_id = "update_listener", tag = "proxy", description = "Change a listener's options live (audited); an empty password keeps the current one. Only an added listener can move to another address. Needs the admin role.", request_body = ListenerSpec, responses((status = 200, description = "OK", body = ListenerInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn update_listener() {}
+
+#[utoipa::path(delete, path = "/proxy/listeners/{id}", operation_id = "remove_listener", tag = "proxy", description = "Stop an added listener (audited); connections it already accepted run to their end. Needs the admin role.", responses((status = 204, description = "Removed"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn remove_listener() {}
+
+#[utoipa::path(get, path = "/proxy/config", operation_id = "get_proxy_config", tag = "proxy", description = "The proxy settings that change live, and the names of those that need a restart. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ProxyConfigView), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_proxy_config() {}
+
+#[utoipa::path(put, path = "/proxy/config", operation_id = "put_proxy_config", tag = "proxy", description = "Change live proxy settings without a restart (audited). A setting that needs a restart is refused with 409. Needs the admin role.", request_body = LiveSettings, responses((status = 200, description = "OK", body = ProxyConfigView), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_proxy_config() {}
+
 #[utoipa::path(put, path = "/tools/stop", operation_id = "set_stopped", tag = "proxy", description = "The kill switch for all tool traffic. Needs the tester role or above.", request_body = StopBody, responses((status = 200, description = "OK", body = Stopped), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn set_stopped() {}
 
@@ -501,8 +521,8 @@ fn intruder_stop() {}
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, import_requests, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, list_issues, rescan_issues, get_issue, change_issue, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
-    components(schemas(crate::imports::ImportBody, crate::imports::ImportReply, bosun_import::Format, ResponseFilter, bosun_store::Issue, bosun_store::Severity, bosun_store::Confidence, bosun_store::IssueStatus, bosun_store::Evidence, bosun_store::EvidencePart, LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
+    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, list_listeners, add_listener, update_listener, remove_listener, get_proxy_config, put_proxy_config, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, import_requests, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, list_issues, rescan_issues, get_issue, change_issue, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    components(schemas(bosun_proxy::ListenerSpec, bosun_proxy::ListenerInfo, bosun_proxy::LiveSettings, bosun_proxy::ProxyAuth, crate::listeners::ProxyConfigView, crate::imports::ImportBody, crate::imports::ImportReply, bosun_import::Format, ResponseFilter, bosun_store::Issue, bosun_store::Severity, bosun_store::Confidence, bosun_store::IssueStatus, bosun_store::Evidence, bosun_store::EvidencePart, LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
     tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "intruder"), (name = "issues"), (name = "sequencer"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
@@ -565,6 +585,12 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/intercept/queue/{id}"),
     ("post", "/intercept/forward-all"),
     ("get", "/proxy"),
+    ("get", "/proxy/listeners"),
+    ("post", "/proxy/listeners"),
+    ("put", "/proxy/listeners/{id}"),
+    ("delete", "/proxy/listeners/{id}"),
+    ("get", "/proxy/config"),
+    ("put", "/proxy/config"),
     ("put", "/tools/stop"),
     ("post", "/decoder/apply"),
     ("post", "/decoder/smart"),

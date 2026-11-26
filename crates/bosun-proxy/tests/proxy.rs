@@ -847,3 +847,30 @@ async fn a_full_intercept_queue_refuses_with_503_and_never_forwards() {
     h.proxy.intercept().forward_all();
     assert_eq!(first.await.unwrap(), 200);
 }
+
+#[tokio::test]
+async fn a_large_streamed_upload_arrives_whole_and_is_recorded_whole() {
+    let up = upstream_http().await;
+    let h = start(ProxyConfig::default(), &[]).await;
+    let c = client(&h);
+    let body = "abcdefgh".repeat(40_000);
+    let r = c
+        .post(format!("http://{up}/up"))
+        .body(body.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        r.text().await.unwrap().ends_with(&body),
+        "the upstream got the whole body"
+    );
+    h.proxy.flush();
+    let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
+    let d = h.project.get_flow(flows[0].id).unwrap().unwrap();
+    assert!(
+        d.request.ends_with(body.as_bytes()),
+        "the record holds the whole body"
+    );
+    assert_eq!(h.proxy.stats().memory_used, 0);
+}

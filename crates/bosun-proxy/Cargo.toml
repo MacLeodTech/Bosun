@@ -41,6 +41,11 @@ tokio-tungstenite.workspace = true
 futures-util.workspace = true
 rcgen.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "proxy"
+harness = false
 
 [lints]
 workspace = true

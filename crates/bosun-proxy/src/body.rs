@@ -19,6 +19,8 @@ pub struct TeeBody<B> {
     truncated: bool,
     on_done: Option<OnDone>,
     budget: Option<(MemoryBudget, Reservation)>,
+    /// Bytes already reserved (admission) that capture may use up before it reserves more.
+    prepaid: usize,
 }
 
 impl<B> std::fmt::Debug for TeeBody<B> {
@@ -39,6 +41,7 @@ impl<B: Body> TeeBody<B> {
             truncated: false,
             on_done: Some(on_done),
             budget: None,
+            prepaid: 0,
         };
         if t.inner.is_end_stream() {
             t.finish(None);
@@ -54,6 +57,13 @@ impl<B> TeeBody<B> {
         if let Some(r) = budget.reserve(0) {
             self.budget = Some((budget.clone(), r));
         }
+        self
+    }
+
+    /// Like [`Self::with_budget`], starting from a reservation made up front (a known body length).
+    pub fn with_reservation(mut self, budget: &MemoryBudget, r: Reservation) -> Self {
+        self.prepaid = r.bytes();
+        self.budget = Some((budget.clone(), r));
         self
     }
 
@@ -95,7 +105,9 @@ where
                     let mut room = this.limit.saturating_sub(this.captured.len());
                     if let Some((b, r)) = &mut this.budget {
                         let want = d.len().min(room);
-                        if !r.grow(want, b) {
+                        let from_prepaid = want.min(this.prepaid);
+                        this.prepaid -= from_prepaid;
+                        if want > from_prepaid && !r.grow(want - from_prepaid, b) {
                             room = 0;
                         }
                     }
@@ -180,7 +192,7 @@ pub async fn collect_budgeted<B>(
     body: &mut B,
     limit: usize,
     budget: &MemoryBudget,
-) -> Result<(Vec<u8>, Reservation), CollectError>
+) -> Result<(Bytes, Reservation), CollectError>
 where
     B: Body<Data = Bytes> + Unpin,
     B::Error: Into<BoxError>,
@@ -190,18 +202,91 @@ where
         return Err(CollectError::TooBig);
     }
     let mut mem = budget.reserve(0).ok_or(CollectError::OutOfMemory)?;
-    let mut out = Vec::new();
+    // One data frame (the common case for small bodies) is kept as it is; only several are joined.
+    let mut first: Option<Bytes> = None;
+    let mut joined: Option<Vec<u8>> = None;
+    let mut len = 0usize;
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|e| CollectError::Other(e.into().to_string()))?;
         if let Some(d) = frame.data_ref() {
-            if out.len() + d.len() > limit {
+            if len + d.len() > limit {
                 return Err(CollectError::TooBig);
             }
             if !mem.grow(d.len() * crate::budget::COPY_FACTOR, budget) {
                 return Err(CollectError::OutOfMemory);
             }
-            out.extend_from_slice(d);
+            len += d.len();
+            match (&mut first, &mut joined) {
+                (None, None) => first = Some(d.clone()),
+                (Some(f), None) => {
+                    let mut v = Vec::with_capacity(len.max(f.len() * 2));
+                    v.extend_from_slice(f);
+                    v.extend_from_slice(d);
+                    first = None;
+                    joined = Some(v);
+                }
+                (_, Some(v)) => v.extend_from_slice(d),
+            }
         }
     }
+    let out = match (first, joined) {
+        (Some(b), _) => b,
+        (None, Some(v)) => Bytes::from(v),
+        (None, None) => Bytes::new(),
+    };
     Ok((out, mem))
+}
+
+/// Passes a body through and fails it once it has carried more than `limit` bytes (for streamed request bodies
+/// of unknown length; a declared length over the limit is refused with 413 before anything is forwarded).
+pub struct LimitBody<B> {
+    inner: B,
+    left: usize,
+}
+
+impl<B> LimitBody<B> {
+    pub fn new(inner: B, limit: usize) -> Self {
+        Self { inner, left: limit }
+    }
+}
+
+impl<B> Body for LimitBody<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: Into<BoxError>,
+{
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        let this = &mut *self;
+        match Pin::new(&mut this.inner).poll_frame(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                if let Some(d) = frame.data_ref() {
+                    if d.len() > this.left {
+                        this.left = 0;
+                        return Poll::Ready(Some(Err(
+                            "request body is larger than proxy.max_request_body".into()
+                        )));
+                    }
+                    this.left -= d.len();
+                }
+                Poll::Ready(Some(Ok(frame)))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
 }

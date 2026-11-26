@@ -2,7 +2,8 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use bosun_ca::CertificateAuthority;
@@ -25,7 +26,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::body::{CollectError, LimitBody, TeeBody, collect_budgeted, discard_body};
 use crate::budget::MemoryBudget;
-use crate::config::ProxyConfig;
+use crate::config::{ListenerSpec, LiveSettings, ProxyConfig};
 use crate::events::EventSender;
 use crate::intercept::{Decision, InterceptController, Phase};
 use crate::limits::ConnLimit;
@@ -174,8 +175,81 @@ pub(crate) struct Shared {
     pub guard: LoopGuard,
     pub limit: ConnLimit,
     pub budget: MemoryBudget,
-    pub passthrough: Scope,
-    pub expected_auth: Option<String>,
+    /// Settings that change while running (see [`Proxy::set_live`]).
+    pub live: RwLock<Arc<LiveSettings>>,
+    pub listeners: Mutex<Listeners>,
+}
+
+/// A listener's options, compiled. Swapped whole when they change, so a request sees one consistent set.
+pub(crate) struct ListenerOpts {
+    spec: ListenerSpec,
+    passthrough: Scope,
+    expected_auth: Option<String>,
+}
+
+impl ListenerOpts {
+    fn compile(spec: ListenerSpec) -> Result<Self, String> {
+        spec.validate()?;
+        let passthrough = Scope::compile(ScopeSpec {
+            include: spec
+                .tls_passthrough
+                .iter()
+                .map(|h| ScopeRule {
+                    host: h.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+            exclude: vec![],
+        })
+        .map_err(|e| format!("tls_passthrough: {e}"))?;
+        let expected_auth = spec.auth.as_ref().map(|a| {
+            use base64::Engine;
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", a.username, a.password))
+            )
+        });
+        Ok(Self {
+            spec,
+            passthrough,
+            expected_auth,
+        })
+    }
+}
+
+/// A running listener.
+pub(crate) struct ListenerRt {
+    id: u32,
+    primary: bool,
+    addr: SocketAddr,
+    opts: RwLock<Arc<ListenerOpts>>,
+    accepted: AtomicU64,
+    task: Mutex<Option<tokio::task::AbortHandle>>,
+}
+
+impl ListenerRt {
+    fn opts(&self) -> Arc<ListenerOpts> {
+        self.opts.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Listeners {
+    next: u32,
+    all: Vec<Arc<ListenerRt>>,
+}
+
+/// A listener as the API shows it. The password is never part of it.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct ListenerInfo {
+    pub id: u32,
+    /// The listener from the config file: its options change live, but it cannot be removed or moved.
+    pub primary: bool,
+    #[serde(flatten)]
+    pub spec: ListenerSpec,
+    pub auth_required: bool,
+    /// Connections accepted since it started.
+    pub accepted: u64,
 }
 
 pub(crate) struct Active {
@@ -193,6 +267,7 @@ struct Tunnel {
 #[derive(Clone)]
 struct ConnCtx {
     peer: SocketAddr,
+    listener: Arc<ListenerRt>,
     tunnel: Option<Tunnel>,
 }
 
@@ -265,25 +340,6 @@ impl Proxy {
         let limit = ConnLimit::new("proxy", cfg.max_connections);
         let client = mk(true)?;
         let ws_client = mk(false)?;
-        let passthrough = Scope::compile(ScopeSpec {
-            include: cfg
-                .tls_passthrough
-                .iter()
-                .map(|h| ScopeRule {
-                    host: h.clone(),
-                    ..Default::default()
-                })
-                .collect(),
-            exclude: vec![],
-        })
-        .map_err(|e| ProxyError::Config(format!("tls_passthrough: {e}")))?;
-        let expected_auth = cfg.auth.as_ref().map(|a| {
-            use base64::Engine;
-            format!(
-                "Basic {}",
-                base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", a.username, a.password))
-            )
-        });
         let budget = MemoryBudget::new(
             cfg.memory_budget_mib
                 .map_or_else(MemoryBudget::default_cap, |m| m.saturating_mul(1 << 20)),
@@ -299,7 +355,6 @@ impl Proxy {
                     cfg.max_intercept_items,
                     cfg.max_intercept_bytes,
                 )),
-                cfg,
                 ca,
                 gate,
                 active: RwLock::new(active),
@@ -311,8 +366,9 @@ impl Proxy {
                 guard,
                 limit,
                 budget,
-                passthrough,
-                expected_auth,
+                live: RwLock::new(Arc::new(LiveSettings::from_config(&cfg))),
+                listeners: Mutex::new(Listeners::default()),
+                cfg,
             }),
         })
     }
@@ -427,22 +483,202 @@ impl Proxy {
             .map_err(|e| ProxyError::Bind(self.shared.cfg.listen, e))
     }
 
-    /// Accept connections until `shutdown` resolves.
+    /// Accept connections on the configured listener until `shutdown` resolves.
     pub async fn serve(&self, listener: TcpListener, shutdown: impl std::future::Future<Output = ()>) {
-        tokio::pin!(shutdown);
-        loop {
-            tokio::select! {
-                _ = &mut shutdown => break,
-                accepted = listener.accept() => {
-                    let Ok((stream, peer)) = accepted else { continue };
-                    // Over the limit: close at once; connections already open are unaffected.
-                    let Some(permit) = self.shared.limit.try_acquire() else { continue };
-                    let shared = self.shared.clone();
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        shared.accept(stream, peer).await
-                    });
-                }
+        let addr = listener.local_addr().unwrap_or(self.shared.cfg.listen);
+        let spec = ProxyConfig {
+            listen: addr,
+            ..self.shared.cfg.clone()
+        }
+        .listener_spec();
+        let Ok(opts) = ListenerOpts::compile(spec) else {
+            return;
+        };
+        let rt = self.register(addr, true, opts);
+        self.shared.guard.add_self([addr]);
+        accept_loop(self.shared.clone(), rt, listener, shutdown).await;
+    }
+
+    fn register(&self, addr: SocketAddr, primary: bool, opts: ListenerOpts) -> Arc<ListenerRt> {
+        let mut l = self.shared.listeners.lock().unwrap_or_else(|e| e.into_inner());
+        l.next += 1;
+        let rt = Arc::new(ListenerRt {
+            id: l.next,
+            primary,
+            addr,
+            opts: RwLock::new(Arc::new(opts)),
+            accepted: AtomicU64::new(0),
+            task: Mutex::new(None),
+        });
+        l.all.push(rt.clone());
+        rt
+    }
+
+    fn info(rt: &ListenerRt) -> ListenerInfo {
+        let o = rt.opts();
+        ListenerInfo {
+            id: rt.id,
+            primary: rt.primary,
+            auth_required: o.spec.auth.is_some(),
+            spec: ListenerSpec {
+                addr: rt.addr,
+                ..o.spec.clone()
+            },
+            accepted: rt.accepted.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Every listener, the configured one first.
+    pub fn listeners(&self) -> Vec<ListenerInfo> {
+        let l = self.shared.listeners.lock().unwrap_or_else(|e| e.into_inner());
+        l.all.iter().map(|r| Self::info(r)).collect()
+    }
+
+    /// Every listener's spec with its password, the configured one first (flagged true): what has to be kept to
+    /// bring them back. Never send these to a client.
+    pub fn listener_specs(&self) -> Vec<(u32, bool, ListenerSpec)> {
+        let l = self.shared.listeners.lock().unwrap_or_else(|e| e.into_inner());
+        l.all
+            .iter()
+            .map(|r| {
+                (
+                    r.id,
+                    r.primary,
+                    ListenerSpec {
+                        addr: r.addr,
+                        ..r.opts().spec.clone()
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Start another listener. It shares the connection limit and everything else with the others; no restart.
+    pub async fn add_listener(&self, spec: ListenerSpec) -> Result<ListenerInfo, ProxyError> {
+        let opts = ListenerOpts::compile(spec).map_err(ProxyError::Config)?;
+        let addr = opts.spec.addr;
+        {
+            let l = self.shared.listeners.lock().unwrap_or_else(|e| e.into_inner());
+            if addr.port() != 0 && l.all.iter().any(|r| r.addr == addr) {
+                return Err(ProxyError::Config(format!("{addr} is already a proxy listener")));
+            }
+            if self.shared.guard.is_self(&addr) {
+                return Err(ProxyError::Config(format!(
+                    "{addr} is Bosun's own UI/API listener"
+                )));
+            }
+        }
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|e| ProxyError::Bind(addr, e))?;
+        let bound = listener.local_addr().map_err(|e| ProxyError::Bind(addr, e))?;
+        let rt = self.register(bound, false, opts);
+        self.shared.guard.add_self([bound]);
+        let handle = tokio::spawn(accept_loop(
+            self.shared.clone(),
+            rt.clone(),
+            listener,
+            std::future::pending::<()>(),
+        ));
+        *rt.task.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle.abort_handle());
+        Ok(Self::info(&rt))
+    }
+
+    /// Change a listener's options, in effect for the next request on it. Connections already open keep running
+    /// under the new options from their next request. An added listener may also move to another address (it is
+    /// bound first, so a failure leaves it where it was); the configured one may not.
+    pub async fn update_listener(&self, id: u32, spec: ListenerSpec) -> Result<ListenerInfo, ProxyError> {
+        let opts = ListenerOpts::compile(spec).map_err(ProxyError::Config)?;
+        let rt = self
+            .find(id)
+            .ok_or_else(|| ProxyError::Config(format!("no listener {id}")))?;
+        if opts.spec.addr != rt.addr {
+            if rt.primary {
+                return Err(ProxyError::Config(
+                    "the address of the configured listener needs a restart; add another listener instead"
+                        .into(),
+                ));
+            }
+            // Different address: start the new one, then retire this one.
+            let fresh = self.add_listener(opts.spec.clone()).await?;
+            self.remove_listener(id)?;
+            return Ok(fresh);
+        }
+        *rt.opts.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(opts);
+        Ok(Self::info(&rt))
+    }
+
+    fn find(&self, id: u32) -> Option<Arc<ListenerRt>> {
+        let l = self.shared.listeners.lock().unwrap_or_else(|e| e.into_inner());
+        l.all.iter().find(|r| r.id == id).cloned()
+    }
+
+    /// Stop listening on an added listener. Connections it already accepted run to their end.
+    pub fn remove_listener(&self, id: u32) -> Result<(), ProxyError> {
+        let mut l = self.shared.listeners.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(i) = l.all.iter().position(|r| r.id == id) else {
+            return Err(ProxyError::Config(format!("no listener {id}")));
+        };
+        if l.all[i].primary {
+            return Err(ProxyError::Config(
+                "the configured listener cannot be removed while running".into(),
+            ));
+        }
+        let rt = l.all.remove(i);
+        if let Some(h) = rt.task.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            h.abort();
+        }
+        self.shared.guard.remove_self(&rt.addr);
+        Ok(())
+    }
+
+    /// Stop every added listener (the configured one stops with its `serve` call).
+    pub fn stop_added_listeners(&self) {
+        let ids: Vec<u32> = self
+            .listeners()
+            .into_iter()
+            .filter(|l| !l.primary)
+            .map(|l| l.id)
+            .collect();
+        for id in ids {
+            let _ = self.remove_listener(id);
+        }
+    }
+
+    pub fn live(&self) -> LiveSettings {
+        (*self.shared.live()).clone()
+    }
+
+    /// Apply new live settings. The connection limit takes effect at once; the rest from the next request or
+    /// connection.
+    pub fn set_live(&self, s: LiveSettings) -> Result<(), ProxyError> {
+        s.validate().map_err(ProxyError::Config)?;
+        self.shared.limit.set_max(s.max_connections);
+        *self.shared.live.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(s);
+        Ok(())
+    }
+}
+
+async fn accept_loop(
+    shared: Arc<Shared>,
+    rt: Arc<ListenerRt>,
+    listener: TcpListener,
+    shutdown: impl std::future::Future<Output = ()>,
+) {
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => break,
+            accepted = listener.accept() => {
+                let Ok((stream, peer)) = accepted else { continue };
+                // Over the limit: close at once; connections already open are unaffected.
+                let Some(permit) = shared.limit.try_acquire() else { continue };
+                rt.accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (shared, rt) = (shared.clone(), rt.clone());
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    shared.accept(stream, peer, rt).await
+                });
             }
         }
     }
@@ -457,13 +693,14 @@ impl Shared {
         self.rules.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    fn client_allowed(&self, peer: &SocketAddr) -> bool {
-        let ip = peer.ip().to_canonical();
-        self.cfg.allow_clients.is_empty() || self.cfg.allow_clients.iter().any(|n| n.contains(&ip))
+    fn live(&self) -> Arc<LiveSettings> {
+        self.live.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    async fn accept(self: Arc<Self>, stream: TcpStream, peer: SocketAddr) {
-        if !self.client_allowed(&peer) {
+    async fn accept(self: Arc<Self>, stream: TcpStream, peer: SocketAddr, listener: Arc<ListenerRt>) {
+        let ip = peer.ip().to_canonical();
+        let allow = &listener.opts().spec.allow_clients;
+        if !(allow.is_empty() || allow.iter().any(|n| n.contains(&ip))) {
             tracing::warn!(%peer, "proxy client not in allow_clients; closing");
             return;
         }
@@ -472,7 +709,11 @@ impl Shared {
             return;
         }
         let _ = stream.set_nodelay(true);
-        let ctx = ConnCtx { peer, tunnel: None };
+        let ctx = ConnCtx {
+            peer,
+            listener,
+            tunnel: None,
+        };
         self.serve_h1(TokioIo::new(stream), ctx).await;
     }
 
@@ -489,7 +730,7 @@ impl Shared {
         });
         let res = hyper::server::conn::http1::Builder::new()
             .preserve_header_case(true)
-            .header_read_timeout(Duration::from_secs(self.cfg.header_timeout_secs.max(1)))
+            .header_read_timeout(Duration::from_secs(self.live().header_timeout_secs.max(1)))
             .timer(hyper_util::rt::TokioTimer::new())
             .serve_connection(io, svc)
             .with_upgrades()
@@ -535,7 +776,7 @@ impl Shared {
         if magic {
             return self.magic(&req);
         }
-        if ctx.tunnel.is_none() && !self.authorised(req.headers()) {
+        if ctx.tunnel.is_none() && !self.authorised(&ctx, req.headers()) {
             return proxy_auth_required();
         }
         let target = if let Some(t) = &ctx.tunnel {
@@ -553,7 +794,7 @@ impl Shared {
                     .to_ascii_lowercase(),
                 port: auth.port_u16().unwrap_or(scheme.default_port()),
             }
-        } else if self.cfg.invisible {
+        } else if ctx.listener.opts().spec.invisible {
             let Some(h) = req.headers().get(header::HOST).and_then(|v| v.to_str().ok()) else {
                 return text(StatusCode::BAD_REQUEST, "invisible proxying needs a Host header");
             };
@@ -573,8 +814,8 @@ impl Shared {
         self.proxy_request(ctx, target, req).await
     }
 
-    fn authorised(&self, headers: &HeaderMap) -> bool {
-        match &self.expected_auth {
+    fn authorised(&self, ctx: &ConnCtx, headers: &HeaderMap) -> bool {
+        match &ctx.listener.opts().expected_auth {
             None => true,
             Some(expected) => headers
                 .get(header::PROXY_AUTHORIZATION)
@@ -583,7 +824,7 @@ impl Shared {
     }
 
     async fn connect(self: Arc<Self>, ctx: ConnCtx, mut req: Request<Incoming>) -> Response<RespBody> {
-        if !self.authorised(req.headers()) {
+        if !self.authorised(&ctx, req.headers()) {
             return proxy_auth_required();
         }
         let Some(auth) = req.uri().authority().cloned() else {
@@ -596,7 +837,11 @@ impl Shared {
             .to_ascii_lowercase();
         let port = auth.port_u16().unwrap_or(443);
         let on_upgrade = hyper::upgrade::on(&mut req);
-        let passthrough = self.passthrough.contains(Scheme::Https, &host, port, "/");
+        let passthrough = ctx
+            .listener
+            .opts()
+            .passthrough
+            .contains(Scheme::Https, &host, port, "/");
         let shared = self.clone();
         tokio::spawn(async move {
             let upgraded = match on_upgrade.await {
@@ -648,7 +893,7 @@ impl Shared {
             };
             let sni = start.client_hello().server_name().map(str::to_string);
             let cert_host = sni.clone().unwrap_or_else(|| host.clone());
-            let cfg = match self.ca.server_config(&cert_host, self.cfg.http2) {
+            let cfg = match self.ca.server_config(&cert_host, self.live().http2) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::debug!(error = %e, host = cert_host, "cannot issue a certificate");
@@ -681,7 +926,7 @@ impl Shared {
             b.http1()
                 .preserve_header_case(true)
                 .timer(hyper_util::rt::TokioTimer::new())
-                .header_read_timeout(Duration::from_secs(self.cfg.header_timeout_secs.max(1)));
+                .header_read_timeout(Duration::from_secs(self.live().header_timeout_secs.max(1)));
             b.http2()
                 .timer(hyper_util::rt::TokioTimer::new())
                 .max_concurrent_streams(100)
@@ -766,7 +1011,7 @@ impl Shared {
             .gate
             .scope()
             .contains(target.scheme, &target.host, target.port, &path);
-        let record = in_scope || self.cfg.record_out_of_scope;
+        let record = in_scope || self.live().record_out_of_scope;
         // An id is reserved only for flows that are stored (or held in the intercept queue).
         let mut flow_id: Option<FlowId> = record.then(|| active.project.next_flow_id());
         let rules = self.rules();
@@ -787,17 +1032,17 @@ impl Shared {
         let mut tail = None;
         let _mem;
         let body = if stream_request {
-            if body.size_hint().lower() > self.cfg.max_request_body as u64 {
+            if body.size_hint().lower() > self.live().max_request_body as u64 {
                 discard_body(body).await;
                 return text(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "request body is larger than proxy.max_request_body",
                 );
             }
-            let limited = LimitBody::new(body, self.cfg.max_request_body);
+            let limited = LimitBody::new(body, self.live().max_request_body);
             if record {
                 // Reserve the part that will be kept up front; refuse (503) when it would not fit the budget.
-                let expect = (limited.size_hint().lower() as usize).min(self.cfg.record_body_limit);
+                let expect = (limited.size_hint().lower() as usize).min(self.live().record_body_limit);
                 let Some(admit) = self.budget.reserve(expect * crate::budget::COPY_FACTOR) else {
                     discard_body(limited).await;
                     return busy();
@@ -806,7 +1051,7 @@ impl Shared {
                 let slot2 = slot.clone();
                 let tee = TeeBody::new(
                     limited,
-                    self.cfg.record_body_limit,
+                    self.live().record_body_limit,
                     Box::new(move |captured, _truncated, _error| {
                         slot2.complete(captured);
                     }),
@@ -821,7 +1066,8 @@ impl Shared {
             Bytes::new()
         } else {
             // `_mem` keeps the body's bytes counted against the memory budget while this request is in flight.
-            let (b, mem) = match collect_budgeted(&mut body, self.cfg.max_request_body, &self.budget).await {
+            let (b, mem) = match collect_budgeted(&mut body, self.live().max_request_body, &self.budget).await
+            {
                 Ok(b) => b,
                 Err(CollectError::TooBig) => {
                     // Let the client finish its upload, so it can read the answer (see `discard_body`).
@@ -995,7 +1241,7 @@ impl Shared {
             &self.client
         };
         let resp = match tokio::time::timeout(
-            Duration::from_secs(self.cfg.upstream_timeout_secs),
+            Duration::from_secs(self.live().upstream_timeout_secs),
             client.request(out),
         )
         .await
@@ -1112,7 +1358,7 @@ impl Shared {
             resp_hold != crate::intercept::RespHold::No || rules.has(|t| t == RuleTarget::ResponseBody);
         if need_buffer {
             let (rbody, _resp_mem) =
-                match collect_budgeted(&mut rbody, self.cfg.max_buffered_response, &self.budget).await {
+                match collect_budgeted(&mut rbody, self.live().max_buffered_response, &self.budget).await {
                     Ok(b) => b,
                     Err(CollectError::OutOfMemory) => return busy(),
                     Err(e) => {
@@ -1262,7 +1508,7 @@ impl Shared {
         let shared = self.clone();
         let tee = TeeBody::new(
             rbody,
-            self.cfg.record_body_limit,
+            self.live().record_body_limit,
             Box::new(move |captured, truncated, error| {
                 if !record {
                     return;

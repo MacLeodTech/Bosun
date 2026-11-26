@@ -913,15 +913,25 @@ pub async fn intercept_forward_all(State(st): State<AppState>, caller: Caller) -
 pub async fn proxy_info(State(st): State<AppState>, caller: Caller) -> R {
     caller.require(Role::Viewer)?;
     let c = st.inner.proxy.config();
+    let live = st.inner.proxy.live();
+    // The configured listener as it is now (its options may have been changed live).
+    let main = st
+        .inner
+        .proxy
+        .listeners()
+        .into_iter()
+        .find(|l| l.primary)
+        .map(|l| l.spec)
+        .unwrap_or_else(|| c.listener_spec());
     Ok(Json(serde_json::json!({
-        "listen": c.listen,
-        "http2": c.http2,
-        "invisible": c.invisible,
+        "listen": main.addr,
+        "http2": live.http2,
+        "invisible": main.invisible,
         "verify_upstream_tls": c.verify_upstream_tls,
         "upstream": c.upstream,
-        "tls_passthrough": c.tls_passthrough,
-        "auth_required": c.auth.is_some(),
-        "record_out_of_scope": c.record_out_of_scope,
+        "tls_passthrough": main.tls_passthrough,
+        "auth_required": main.auth.is_some(),
+        "record_out_of_scope": live.record_out_of_scope,
         "tools_stopped": st.inner.gate.is_stopped(),
         "stats": st.inner.proxy.stats(),
     }))

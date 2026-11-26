@@ -933,6 +933,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proxy/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The proxy settings that change live, and the names of those that need a restart. Needs the viewer role or above. */
+        get: operations["get_proxy_config"];
+        /** @description Change live proxy settings without a restart (audited). A setting that needs a restart is refused with 409. Needs the admin role. */
+        put: operations["put_proxy_config"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proxy/listeners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The proxy listeners and their options (passwords are never returned). Needs the viewer role or above. */
+        get: operations["list_listeners"];
+        put?: never;
+        /** @description Start another proxy listener without a restart (audited). Needs the admin role. */
+        post: operations["add_listener"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proxy/listeners/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Change a listener's options live (audited); an empty password keeps the current one. Only an added listener can move to another address. Needs the admin role. */
+        put: operations["update_listener"];
+        post?: never;
+        /** @description Stop an added listener (audited); connections it already accepted run to their end. Needs the admin role. */
+        delete: operations["remove_listener"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repeater/send": {
         parameters: {
             query?: never;
@@ -1898,6 +1952,59 @@ export interface components {
         Launched: {
             launched: string;
         };
+        /** @description A listener as the API shows it. The password is never part of it. */
+        ListenerInfo: components["schemas"]["ListenerSpec"] & {
+            /**
+             * Format: int64
+             * @description Connections accepted since it started.
+             */
+            accepted: number;
+            auth_required: boolean;
+            /** Format: int32 */
+            id: number;
+            /** @description The listener from the config file: its options change live, but it cannot be removed or moved. */
+            primary: boolean;
+        };
+        /**
+         * @description One proxy listener and the options that belong to it. The first listener comes from the `proxy` section of the
+         *     config file; others are added while running. Everything here changes live (a new address means a new bind).
+         */
+        ListenerSpec: {
+            /** @description Address to listen on, for example `127.0.0.1:8081`. Loopback unless `auth` or `allow_clients` is set. */
+            addr: string;
+            /** @description Only these client networks may use this listener (empty: anyone who can reach it). */
+            allow_clients?: string[];
+            auth?: components["schemas"]["ProxyAuth"] | null;
+            /** @description Accept origin-form requests (`GET /path` with a Host header) as if they were proxied. */
+            invisible?: boolean;
+            /** @description Hosts whose TLS this listener tunnels untouched (scope host pattern syntax). */
+            tls_passthrough?: string[];
+        };
+        /** @description Settings that change while running, without a restart. Everything else in the `proxy` section needs one. */
+        LiveSettings: {
+            /**
+             * Format: int64
+             * @description Seconds a client may take to send a request's headers (applies to new connections).
+             */
+            header_timeout_secs: number;
+            /** @description Offer HTTP/2 to clients over ALPN (applies to new connections). */
+            http2: boolean;
+            /** @description Buffered responses (response intercept, body rules) larger than this fail. */
+            max_buffered_response: number;
+            /** @description Most client connections at once, summed over all listeners. */
+            max_connections: number;
+            /** @description Requests whose body is larger than this are refused with 413. */
+            max_request_body: number;
+            /** @description Only this much of each body is recorded. */
+            record_body_limit: number;
+            /** @description Record traffic to hosts that are out of scope. */
+            record_out_of_scope: boolean;
+            /**
+             * Format: int64
+             * @description Seconds to wait for an upstream response head.
+             */
+            upstream_timeout_secs: number;
+        };
         LoginBody: {
             password: string;
             username: string;
@@ -2198,6 +2305,16 @@ export interface components {
         };
         /** @enum {string} */
         Protocol: "http1" | "h2";
+        ProxyAuth: {
+            /** @description File holding the password (container secrets); read at start-up, and instead of `password`. */
+            password_file?: string | null;
+            username: string;
+        };
+        /** @description The live settings, and the names of the settings that need a restart. */
+        ProxyConfigView: {
+            live: components["schemas"]["LiveSettings"];
+            restart_required: string[];
+        };
         /** @description Events the proxy publishes for front ends (sent over the API's event stream). */
         ProxyEvent: {
             flow: components["schemas"]["FlowSummary"];
@@ -6531,6 +6648,352 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProxyInfo"];
                 };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_proxy_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyConfigView"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_proxy_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiveSettings"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyConfigView"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_listeners: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListenerInfo"][];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    add_listener: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListenerSpec"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListenerInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    update_listener: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListenerSpec"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListenerInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    remove_listener: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad request */
             400: {

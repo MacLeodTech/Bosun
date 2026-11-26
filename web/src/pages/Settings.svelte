@@ -4,6 +4,7 @@
   import { session } from '../lib/session.svelte';
   import { fmtTime } from '../lib/bytes';
   import TotpPanel from '../components/TotpPanel.svelte';
+  import ProxyListeners from '../components/ProxyListeners.svelte';
   import type { ApiToken, AuditEntry, Role, SessionInfo, User } from '../lib/types';
 
   interface ProxyInfo { listen: string; http2: boolean; invisible: boolean; verify_upstream_tls: boolean; auth_required: boolean; tools_stopped: boolean; tls_passthrough: string[] }
@@ -97,6 +98,7 @@
           {/if}
         </div>
       {/if}
+      <ProxyListeners />
     {/if}
   </section>
 

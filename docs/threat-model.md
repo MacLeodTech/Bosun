@@ -159,7 +159,8 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - An append-only audit log (database triggers refuse UPDATE and DELETE) records sign-ins, account, token, scope,
   rule, kill-switch, role, session-revocation, login-ticket, second-factor (enrolment, enable, disable, recovery
   codes used or replaced, failed codes, the require-everyone policy, admin and CLI resets), project (create, open, close, rename, delete, export,
-  backup, import and refused imports) and intercept changes (settings, response filter, drop, edited forward, forward-all),
+  backup, import and refused imports), proxy listener changes (`proxy.listener.add|update|remove`: address and
+  options, never the password) and live proxy settings (`proxy.config.update`: the values that changed), and intercept changes (settings, response filter, drop, edited forward, forward-all),
   with the user and remote address. Admins can read it in the UI.
 
 ### Information disclosure
@@ -196,7 +197,10 @@ This document says what is protected, from whom, and how. Code comments refer ba
   recovery codes are stored only as hashes. Someone who holds both the account database and the data key can read
   the secrets, as with the CA key.
 - *An open proxy.* The proxy refuses to start on a non-loopback address without proxy authentication or a
-  client allowlist.
+  client allowlist. The same check applies to every listener added while running (`POST /proxy/listeners`), so an
+  admin cannot open one by mistake; each listener has its own credentials and allowlist, and a listener's
+  credentials are never returned by the API or written to the audit log. Added listeners (with their passwords) are
+  kept in the account database, the passwords sealed with the data key, so they come back after a restart.
 
 ### Denial of service
 
@@ -251,8 +255,11 @@ This document says what is protected, from whom, and how. Code comments refer ba
 
 ### Elevation of privilege
 
-- Roles: viewer (read), tester (change proxy settings, scope, intercept), admin (accounts, audit). Every handler
-  checks the role it needs. API tokens carry their owner's role.
+- Roles: viewer (read), tester (change scope, rules, intercept), admin (accounts, audit, proxy listeners and live
+  proxy settings: they decide who can reach the proxy and how much it holds). Every handler checks the role it
+  needs. API tokens carry their owner's role. Settings that cannot change safely while running (upstream proxy,
+  upstream TLS verification, memory budget, intercept queue limits, the configured address) are refused with 409
+  rather than half applied; removing a listener leaves connections it already accepted to finish.
 - *Out-of-scope traffic from tools.* Every request from Repeater, Intruder, the scanner, the crawler and plugins
   goes through one gate (`bosun-scope`) that refuses out-of-scope targets and honours a global stop switch. The
   proxy itself is exempt: it forwards what the user's own browser asks for.

@@ -1360,3 +1360,38 @@ test('issues: the passive scanner reports what recorded traffic shows, with evid
   await panel().getByRole('button', { name: 'Open request' }).click();
   await expect(page.getByText('BEGIN RSA PRIVATE KEY').first()).toBeVisible();
 });
+
+test('listeners: one is added and removed live, and a live setting is saved', async () => {
+  const extra = PROXY_PORT + 7;
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  const box = page.getByTestId('listeners');
+  await expect(box.getByTestId('listener-row')).toHaveCount(1);
+
+  await box.getByLabel('Listener address').fill(`127.0.0.1:${extra}`);
+  await box.getByRole('button', { name: 'Add listener' }).click();
+  await expect(box.getByTestId('listener-row')).toHaveCount(2);
+  await expect(box.getByText(`127.0.0.1:${extra}`)).toBeVisible();
+
+  // Traffic through the new listener reaches the target at once, with no restart.
+  const r = await viaProxy(extra, `${TARGET}/listener-check`);
+  expect(r.status).toBe(200);
+
+  // A non-loopback listener without credentials is refused.
+  await box.getByLabel('Listener address').fill('0.0.0.0:0');
+  await box.getByRole('button', { name: 'Add listener' }).click();
+  await expect(box.getByRole('alert')).toContainText('not on loopback');
+
+  // A live setting is saved and kept across a reload.
+  await box.getByLabel('Max connections').fill('512');
+  await box.getByRole('button', { name: 'Save' }).click();
+  await expect(box.getByText('in effect now')).toBeVisible();
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByTestId('listeners').getByLabel('Max connections')).toHaveValue('512');
+
+  // Stopping it closes the port.
+  const rows = page.getByTestId('listeners').getByTestId('listener-row');
+  await rows.filter({ hasText: `127.0.0.1:${extra}` }).getByRole('button', { name: 'Stop' }).click();
+  await expect(rows).toHaveCount(1);
+  await expect.poll(() => viaProxy(extra, `${TARGET}/listener-check`).then(() => 'open', () => 'closed')).toBe('closed');
+});

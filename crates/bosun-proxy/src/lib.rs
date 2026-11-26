@@ -17,12 +17,14 @@ pub mod server;
 pub mod upstream;
 pub mod ws;
 
-pub use config::{ProxyAuth, ProxyConfig, UpstreamProxy, read_secret_file};
+pub use config::{
+    ListenerSpec, LiveSettings, ProxyAuth, ProxyConfig, RESTART_ONLY, UpstreamProxy, read_secret_file,
+};
 pub use events::{EventBus, EventReceiver, EventSender, ProxyEvent, Resume, Sequenced};
 pub use intercept::{
     Decision, InterceptController, InterceptItem, InterceptSettings, InterceptSummary, Phase, ResponseFilter,
 };
 pub use limits::ConnLimit;
 pub use rules::{RuleSet, RuleSpec, RuleTarget};
-pub use server::{MAGIC_HOST, Proxy, ProxyError, ProxyStats};
+pub use server::{ListenerInfo, MAGIC_HOST, Proxy, ProxyError, ProxyStats};
 pub use upstream::LoopGuard;

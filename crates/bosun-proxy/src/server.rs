@@ -321,7 +321,8 @@ impl Proxy {
                 guard.clone(),
                 self_addrs.clone(),
             )
-            .map_err(ProxyError::Config)?;
+            .map_err(ProxyError::Config)?
+            .with_sni_overrides(&cfg.upstream_sni);
             let mut b = Client::builder(TokioExecutor::new());
             b.pool_idle_timeout(Duration::from_secs(60))
                 .pool_max_idle_per_host(16)
@@ -1231,10 +1232,9 @@ impl Shared {
         *out.method_mut() = method;
         *out.uri_mut() = uri;
         *out.headers_mut() = headers;
-        if req_state.original.is_none() {
-            // Keeps the client's header-name casing for HTTP/1 (hyper stores it in the extensions).
-            *out.extensions_mut() = parts.extensions;
-        }
+        // Keeps the client's header-name casing for HTTP/1 (hyper stores it in the extensions). After an edit
+        // the names that are still there keep their casing; a name the edit added goes out in lower case.
+        *out.extensions_mut() = parts.extensions;
         let client = if wants_upgrade {
             &self.ws_client
         } else {
@@ -1330,11 +1330,17 @@ impl Shared {
             }
             let recorder = active.recorder.clone();
             let ws_id = flow_id.unwrap_or_default();
+            let deflate = rparts
+                .headers
+                .get_all("sec-websocket-extensions")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .find_map(crate::ws::DeflateParams::from_header);
             tokio::spawn(async move {
                 match tokio::join!(client_upgrade, server_upgrade) {
                     (Ok(c), Ok(s)) => {
                         if record {
-                            crate::ws::relay(TokioIo::new(c), TokioIo::new(s), ws_id, recorder).await;
+                            crate::ws::relay(TokioIo::new(c), TokioIo::new(s), ws_id, recorder, deflate).await;
                         } else {
                             let (mut c, mut s) = (TokioIo::new(c), TokioIo::new(s));
                             let _ = tokio::io::copy_bidirectional(&mut c, &mut s).await;

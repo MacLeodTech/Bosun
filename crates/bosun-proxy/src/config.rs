@@ -48,6 +48,10 @@ pub struct ProxyConfig {
     /// self-signed certificates, and the tool must reach them. Turn it on when the network between you and
     /// the target is not trusted.
     pub verify_upstream_tls: bool,
+    /// Host name to send as the TLS server name (SNI) to that target instead of its own name, keyed by target
+    /// host (exact, case-insensitive). With `verify_upstream_tls` the certificate is checked against the
+    /// override. The `Host` header is not changed.
+    pub upstream_sni: std::collections::BTreeMap<String, String>,
     /// Offer HTTP/2 to clients (browsers) over ALPN.
     pub http2: bool,
     /// Requests whose body is larger than this are refused with 413.
@@ -110,6 +114,7 @@ impl Default for ProxyConfig {
             allow_clients: Vec::new(),
             upstream: None,
             verify_upstream_tls: false,
+            upstream_sni: std::collections::BTreeMap::new(),
             http2: true,
             max_request_body: 64 * 1024 * 1024,
             record_body_limit: 16 * 1024 * 1024,
@@ -177,6 +182,13 @@ impl ProxyConfig {
             && (a.username.is_empty() || a.password.len() < 12)
         {
             return Err("proxy.auth needs a username and a password of at least 12 characters".into());
+        }
+        for (host, sni) in &self.upstream_sni {
+            if host.is_empty() || rustls::pki_types::ServerName::try_from(sni.as_str()).is_err() {
+                return Err(format!(
+                    "proxy.upstream_sni: \"{host}\" -> \"{sni}\" is not a host name to send as the server name"
+                ));
+            }
         }
         Ok(())
     }
@@ -293,6 +305,7 @@ impl LiveSettings {
 pub const RESTART_ONLY: &[&str] = &[
     "upstream",
     "verify_upstream_tls",
+    "upstream_sni",
     "memory_budget_mib",
     "max_intercept_items",
     "max_intercept_bytes",

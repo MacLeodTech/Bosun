@@ -103,6 +103,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Traffic that reaches the UI through the proxy.* Requests the proxy would send to its own listeners are refused
   (the proxy knows the API's address), and the API refuses any connection whose source address belongs to one of
   the proxy's own outbound sockets (covers aliases such as other loopback addresses or the host's LAN address).
+- *Compressed WebSocket messages from a target.* The proxy relays `permessage-deflate` frames untouched and inflates
+  a copy only to record it. The copy is capped at the record limit (1 MiB per message), so a decompression bomb is
+  cut and flagged truncated; corrupt data is stored as the raw compressed bytes, flagged. The extension header the
+  server sends is read tolerantly, and the frame parser, inflater and header reader share the `ws_frames` fuzz target.
+- *Upstream SNI override.* `proxy.upstream_sni` (restart-only, a config-file setting) sends a chosen server name to a
+  target instead of its own. It changes only the TLS name; the request still goes through `Gate::check` for the
+  original host, and with `verify_upstream_tls` the certificate is checked against the name sent.
 - *Hostile HTML in the UI.* The UI's CSP forbids inline script and inline style and allows nothing but its own
   origin. Responses are shown as text; the "render" view is an iframe with an empty `sandbox` attribute (no
   scripts, opaque origin) whose `srcdoc` also inherits the UI's CSP. Syntax colour is drawn from a tokeniser's

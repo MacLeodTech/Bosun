@@ -995,3 +995,225 @@ async fn a_flow_answered_before_its_upload_ends_is_recorded_whole() {
     }
     assert!(stored.ends_with("0123456789abcdefghij"), "{stored:?}");
 }
+
+/// A target that records the raw bytes of each request head it receives and answers 200.
+async fn raw_target(seen: Arc<std::sync::Mutex<Vec<String>>>) -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let mut got = Vec::new();
+                let mut b = [0u8; 1024];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut b).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => got.extend_from_slice(&b[..n]),
+                    }
+                }
+                seen.lock().unwrap().push(String::from_utf8_lossy(&got).into_owned());
+                let _ = s
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn header_name_case_survives_an_edit_of_the_request() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let up = raw_target(seen.clone()).await;
+    let h = start(ProxyConfig::default(), &["127.0.0.1"]).await;
+    h.proxy.intercept().set(InterceptSettings {
+        requests: true,
+        responses: false,
+        in_scope_only: true,
+        timeout_secs: None,
+    });
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    s.write_all(
+        format!("GET http://{up}/original HTTP/1.1\r\nHost: {up}\r\nX-Custom-CASE: yes\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let item = loop {
+        if let Some(i) = h.proxy.intercept().list().first() {
+            break h.proxy.intercept().get(i.id).unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let edited = String::from_utf8(item.raw.clone()).unwrap().replace("/original", "/edited");
+    assert!(h.proxy.intercept().resolve(
+        item.summary.id,
+        Decision::Forward {
+            raw: Some(edited.into_bytes())
+        }
+    ));
+    let mut resp = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut resp)).await;
+    let got = seen.lock().unwrap().first().cloned().unwrap();
+    assert!(got.starts_with("GET /edited"), "{got}");
+    assert!(got.contains("X-Custom-CASE: yes"), "{got}");
+}
+
+#[tokio::test]
+async fn upstream_sni_override_is_sent_to_the_target() {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let cfg = Arc::new(
+        rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.cert.der().clone()],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into()),
+            )
+            .unwrap(),
+    );
+    let names = Arc::new(std::sync::Mutex::new(Vec::<Option<String>>::new()));
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let up = l.local_addr().unwrap();
+    let n2 = names.clone();
+    tokio::spawn(async move {
+        loop {
+            let (s, _) = l.accept().await.unwrap();
+            let (cfg, n2) = (cfg.clone(), n2.clone());
+            tokio::spawn(async move {
+                let Ok(start) =
+                    tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), s).await
+                else {
+                    return;
+                };
+                n2.lock()
+                    .unwrap()
+                    .push(start.client_hello().server_name().map(str::to_string));
+                if let Ok(tls) = start.into_stream(cfg).await {
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(tls), service_fn(echo))
+                        .await;
+                }
+            });
+        }
+    });
+    let mut cfg = ProxyConfig::default();
+    cfg.upstream_sni.insert("LOCALHOST".into(), "front.example.net".into());
+    let h = start(cfg, &[]).await;
+    let c = client(&h);
+    let r = c
+        .get(format!("https://localhost:{}/x", up.port()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.text().await.unwrap().starts_with("GET /x"));
+    let seen = names.lock().unwrap().clone();
+    assert!(!seen.is_empty());
+    assert!(
+        seen.iter().all(|n| n.as_deref() == Some("front.example.net")),
+        "{seen:?}"
+    );
+}
+
+/// A target that accepts the WebSocket handshake with `permessage-deflate` and sends two compressed text
+/// messages sharing one window.
+async fn deflate_ws_target() -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut got = Vec::new();
+                let mut b = [0u8; 1024];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut b).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => got.extend_from_slice(&b[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&got).into_owned();
+                let key = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("Sec-WebSocket-Key: "))
+                    .unwrap()
+                    .trim()
+                    .to_string();
+                let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+                s.write_all(
+                    format!(
+                        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+                         Sec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+                let mut c = flate2::Compress::new(flate2::Compression::default(), false);
+                for text in ["compressed hello compressed hello", "compressed hello again"] {
+                    let mut z = Vec::with_capacity(256);
+                    c.compress_vec(text.as_bytes(), &mut z, flate2::FlushCompress::Sync)
+                        .unwrap();
+                    z.truncate(z.len() - 4);
+                    let mut f = vec![0xC1, z.len() as u8];
+                    f.extend_from_slice(&z);
+                    s.write_all(&f).await.unwrap();
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn permessage_deflate_messages_are_recorded_inflated() {
+    let up = deflate_ws_target().await;
+    let h = start(ProxyConfig::default(), &[]).await;
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    s.write_all(format!("CONNECT {up} HTTP/1.1\r\nHost: {up}\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut buf = [0u8; 256];
+    let n = s.read(&mut buf).await.unwrap();
+    assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+    s.write_all(
+        format!(
+            "GET /chat HTTP/1.1\r\nHost: {up}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\
+             Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    // The client still receives the compressed frames untouched.
+    let mut got = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_millis(400), async {
+        let mut b = [0u8; 1024];
+        loop {
+            match s.read(&mut b).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => got.extend_from_slice(&b[..n]),
+            }
+        }
+    })
+    .await;
+    assert!(got.contains(&0xC1));
+    h.proxy.flush();
+    let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
+    assert_eq!(flows.len(), 1);
+    let msgs = h.project.ws_messages(flows[0].id, None, 100).unwrap();
+    let texts: Vec<_> = msgs
+        .iter()
+        .map(|m| String::from_utf8_lossy(&m.payload).to_string())
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["compressed hello compressed hello", "compressed hello again"]
+    );
+}

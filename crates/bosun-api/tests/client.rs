@@ -944,6 +944,13 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/crawl/crawls", "crawl_list"),
         ("get", "/crawl/crawls/{id}", "crawl_get"),
         ("post", "/crawl/crawls/{id}/stop", "crawl_stop"),
+        ("post", "/scan/scans", "scan_start"),
+        ("get", "/scan/scans", "scan_list"),
+        ("get", "/scan/checks", "scan_checks"),
+        ("get", "/scan/scans/{id}", "scan_get"),
+        ("post", "/scan/scans/{id}/stop", "scan_stop"),
+        ("post", "/scan/scans/{id}/pause", "scan_pause"),
+        ("post", "/scan/scans/{id}/resume", "scan_resume"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),
         ("get", "/flows/{id}/ws", "ws_messages"),
@@ -1240,7 +1247,11 @@ async fn proxy_listeners_and_live_settings_change_without_a_restart() {
         .unwrap();
     let shown = c.list_listeners().await.unwrap();
     assert!(shown.iter().any(|l| l["max_connections"] == 5), "{shown:?}");
-    assert!(c.update_listener(id, &json!({"addr": addr, "max_connections": 0})).await.is_err());
+    assert!(
+        c.update_listener(id, &json!({"addr": addr, "max_connections": 0}))
+            .await
+            .is_err()
+    );
 
     // Remove: the port stops answering.
     c.remove_listener(id).await.unwrap();

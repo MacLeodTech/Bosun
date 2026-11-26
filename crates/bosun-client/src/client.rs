@@ -803,6 +803,46 @@ impl Client {
             .await
     }
 
+    /// Start an active scan. `body` is the `ScanStartBody` of the API: `targets` (each a `url`, optionally with
+    /// `method`, `headers`, `body`, `content_type`) and optionally `checks`, `strength`, `concurrency`, `delay_ms`,
+    /// `max_requests`. Returns the scan as it starts.
+    pub async fn scan_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/scan/scans").json(body)).await
+    }
+
+    /// The scans of this run of the server, newest first.
+    pub async fn scan_list(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/scan/scans")).await
+    }
+
+    /// The active checks: id and description.
+    pub async fn scan_checks(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/scan/checks")).await
+    }
+
+    /// One scan with its progress and findings.
+    pub async fn scan_get(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/scan/scans/{id}"))).await
+    }
+
+    /// Throw the stop switch of a scan.
+    pub async fn scan_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/scan/scans/{id}/stop")))
+            .await
+    }
+
+    /// Pause a scan: no request starts until it is resumed.
+    pub async fn scan_pause(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/scan/scans/{id}/pause")))
+            .await
+    }
+
+    /// Resume a paused scan.
+    pub async fn scan_resume(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/scan/scans/{id}/resume")))
+            .await
+    }
+
     /// The kill switch for all tool traffic. Returns the new state.
     pub async fn set_stopped(&self, stopped: bool) -> Result<bool> {
         #[derive(serde::Deserialize)]

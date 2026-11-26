@@ -14,8 +14,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bosun_crawl::{Options, Page, Report, Sink, Stop};
 use bosun_http::Exchange;
-use bosun_proxy::ProxyEvent;
 use bosun_model::{FlowSource, now_ms};
+use bosun_proxy::ProxyEvent;
 use bosun_store::Role;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -119,7 +119,9 @@ fn options(b: &CrawlStartBody) -> Result<Options, Response> {
     let bad = |m: &str| reject(StatusCode::BAD_REQUEST, m);
     let mut headers = Vec::new();
     for h in &b.headers {
-        let (k, v) = h.split_once(':').ok_or_else(|| bad("a header is `Name: value`"))?;
+        let (k, v) = h
+            .split_once(':')
+            .ok_or_else(|| bad("a header is `Name: value`"))?;
         headers.push((k.trim().to_string(), v.trim().to_string()));
     }
     let d = Options::default();
@@ -285,7 +287,10 @@ impl ApiSink {
     fn progress(&self, force: bool) {
         let (pages, requests) = {
             let mut g = lock(&self.job.inner);
-            if !force && g.last_event.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250)) {
+            if !force
+                && g.last_event
+                    .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250))
+            {
                 return;
             }
             g.last_event = Some(std::time::Instant::now());
@@ -302,7 +307,10 @@ impl ApiSink {
 impl Sink for ApiSink {
     fn exchange(&self, ex: &Exchange) {
         let id = self.st.project().next_flow_id();
-        self.st.inner.proxy.record(ex.to_new_flow(id, FlowSource::Crawler));
+        self.st
+            .inner
+            .proxy
+            .record(ex.to_new_flow(id, FlowSource::Crawler));
         lock(&self.job.inner).requests += 1;
         self.progress(false);
     }
@@ -395,7 +403,11 @@ pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<Cra
                 opts.start.join(", "),
                 opts.max_depth,
                 opts.max_pages,
-                if opts.submit_post_forms { ", POST forms on" } else { "" }
+                if opts.submit_post_forms {
+                    ", POST forms on"
+                } else {
+                    ""
+                }
             ),
         )
         .await;

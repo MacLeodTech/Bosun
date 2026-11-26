@@ -18,6 +18,7 @@ bosun-codec = { path = "../crates/bosun-codec" }
 bosun-sequencer = { path = "../crates/bosun-sequencer" }
 bosun-intruder = { path = "../crates/bosun-intruder" }
 bosun-crawl = { path = "../crates/bosun-crawl" }
+bosun-active = { path = "../crates/bosun-active" }
 bosun-checks = { path = "../crates/bosun-checks" }
 serde_json = "1"
 bosun-import = { path = "../crates/bosun-import" }
@@ -126,6 +127,13 @@ bench = false
 [[bin]]
 name = "import_formats"
 path = "fuzz_targets/import_formats.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "active_targets"
+path = "fuzz_targets/active_targets.rs"
 test = false
 doc = false
 bench = false

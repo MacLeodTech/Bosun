@@ -449,6 +449,21 @@ This document says what is protected, from whom, and how. Code comments refer ba
   with source `crawler`, which is how they reach the history and the site map. Page rows, forms and links are
   target content and are shown only as text in the UI. `POST` forms are sent only when the request sets
   `submit_post_forms` (an explicit checkbox in the panel, a flag in the CLI).
+- *The active scanner (`bosun-active`, API `/scan/*`).* It sends attack probes (a quote, a marker with HTML
+  metacharacters), so starting, pausing, resuming and stopping a scan need the tester role (listing and reading
+  results, the viewer role) and each is audited (target count, strength, request cap). Every request goes through
+  `Engine::send` and so through the gate as source `scanner` (an automated source: out of scope is refused, never
+  prompted; the target is listed in `refused` and not contacted again). The per-host rate limit is waited out
+  (up to 60 seconds a request) and never bypassed; the kill switch ends the scan. The scan is bounded: at most 2,000
+  targets, 40 insertion points per target, a concurrency of 1 to 32, a request cap (default 5,000, at most 200,000)
+  and a response cap; the API runs at most 2 scans at once and keeps the last 8 in memory. Pause holds every
+  request that has not started. Targets, cookie values and headers are checked for line breaks, so a target cannot
+  smuggle a header; probe values are percent-encoded in the query, form and path. The built-in checks are
+  non-destructive and prove a finding from the answer (a database error that a doubled quote does not repeat; the
+  marker returned unescaped in an HTML page). Findings become issues with the proving flow attached; the target's
+  answers are target content and appear only as text. The target parser (URL, query, form, JSON) has a fuzz
+  target (`active_targets`). The testbed (`bosun-testbed`) is intentionally vulnerable: it listens on loopback
+  only by default, holds no data and is a test dependency, never part of the shipped binary.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

@@ -18,13 +18,14 @@ use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntr
 
 use crate::checks::{CheckBody, CheckEnabled, CheckList, CheckValidation, CheckView};
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
-use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
 use crate::crawl::{CrawlDetail, CrawlInfo, CrawlList, CrawlStartBody, CrawlStopReply};
+use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
 use crate::intruder::{AttackDetail, AttackInfo, AttackList, PlanReply, ResultsReply, StartBody, StopReply};
 use crate::issues::{IssueChange, IssueList};
 use crate::listeners::ProxyConfigView;
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
 use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
+use crate::scan::{ScanChecks, ScanControlReply, ScanDetail, ScanInfo, ScanList, ScanStartBody};
 use crate::sequencer::{AnalyzeBody, CaptureBody, CaptureStarted, CaptureStatus};
 use bosun_proxy::rules::RuleSpec as MatchRule;
 use bosun_proxy::{ListenerInfo, ListenerSpec, LiveSettings};
@@ -540,14 +541,28 @@ fn crawl_list() {}
 fn crawl_get() {}
 #[utoipa::path(post, path = "/crawl/crawls/{id}/stop", operation_id = "crawl_stop", tag = "crawl", description = "The stop switch: no further request is sent. `stopped` is false when the crawl was not running. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Crawl id")), responses((status = 200, description = "OK", body = CrawlStopReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such crawl", body = Error)))]
 fn crawl_stop() {}
+#[utoipa::path(post, path = "/scan/scans", operation_id = "scan_start", tag = "scan", description = "Start an active scan of the given requests: each query, form or JSON value, cookie and (by strength) the last path segment or a header is probed by the enabled checks (see scan_checks). Every request goes through the scope gate (a target outside the scope is listed in refused, never contacted), is rate limited by the gate and the scan's own delay, and is recorded as a flow with source scanner. Findings become issues. Two scans run at once. Needs the tester role or above; audited.", request_body = ScanStartBody, responses((status = 200, description = "The scan, running", body = ScanInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 429, description = "Too many scans running", body = Error)))]
+fn scan_start() {}
+#[utoipa::path(get, path = "/scan/scans", operation_id = "scan_list", tag = "scan", description = "The scans of this run of the server, newest first, with live progress (units finished of planned, requests, findings).", responses((status = 200, description = "OK", body = ScanList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn scan_list() {}
+#[utoipa::path(get, path = "/scan/checks", operation_id = "scan_checks", tag = "scan", description = "The active checks the scanner has: id and what each looks for.", responses((status = 200, description = "OK", body = ScanChecks), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn scan_checks() {}
+#[utoipa::path(get, path = "/scan/scans/{id}", operation_id = "scan_get", tag = "scan", description = "One scan: its state, progress, the findings so far and, once it has ended, the refused targets.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanDetail), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_get() {}
+#[utoipa::path(post, path = "/scan/scans/{id}/stop", operation_id = "scan_stop", tag = "scan", description = "The stop switch: no further request is sent. `changed` is false when the scan had ended. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanControlReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_stop() {}
+#[utoipa::path(post, path = "/scan/scans/{id}/pause", operation_id = "scan_pause", tag = "scan", description = "No request starts until the scan is resumed; requests in flight finish. `changed` is false when the scan had ended or was paused already. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanControlReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_pause() {}
+#[utoipa::path(post, path = "/scan/scans/{id}/resume", operation_id = "scan_resume", tag = "scan", description = "Continue a paused scan where it stopped. `changed` is false when it was not paused. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanControlReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_resume() {}
 
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, list_listeners, add_listener, update_listener, remove_listener, get_proxy_config, put_proxy_config, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, import_requests, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, crawl_start, crawl_list, crawl_get, crawl_stop, issues_report, list_checks, add_check, validate_check, replace_check, set_check_enabled, delete_check, list_issues, rescan_issues, get_issue, change_issue, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, list_listeners, add_listener, update_listener, remove_listener, get_proxy_config, put_proxy_config, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, import_requests, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, crawl_start, crawl_list, crawl_get, crawl_stop, scan_start, scan_list, scan_checks, scan_get, scan_stop, scan_pause, scan_resume, issues_report, list_checks, add_check, validate_check, replace_check, set_check_enabled, delete_check, list_issues, rescan_issues, get_issue, change_issue, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
     components(schemas(bosun_proxy::ListenerSpec, bosun_proxy::ListenerInfo, bosun_proxy::LiveSettings, bosun_proxy::ProxyAuth, crate::listeners::ProxyConfigView, crate::imports::ImportBody, crate::imports::ImportReply, bosun_import::Format, ResponseFilter, bosun_store::Issue, bosun_store::Severity, bosun_store::Confidence, bosun_store::IssueStatus, bosun_store::Evidence, bosun_store::EvidencePart, LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
-    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "intruder"), (name = "crawl"), (name = "issues"), (name = "checks"), (name = "sequencer"), (name = "accounts"), (name = "projects"), (name = "events"))
+    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "intruder"), (name = "crawl"), (name = "scan"), (name = "issues"), (name = "checks"), (name = "sequencer"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
 
@@ -641,6 +656,13 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("get", "/crawl/crawls"),
     ("get", "/crawl/crawls/{id}"),
     ("post", "/crawl/crawls/{id}/stop"),
+    ("post", "/scan/scans"),
+    ("get", "/scan/scans"),
+    ("get", "/scan/checks"),
+    ("get", "/scan/scans/{id}"),
+    ("post", "/scan/scans/{id}/stop"),
+    ("post", "/scan/scans/{id}/pause"),
+    ("post", "/scan/scans/{id}/resume"),
     ("get", "/ca"),
     ("get", "/ca/cert.pem"),
     ("post", "/browser/launch"),

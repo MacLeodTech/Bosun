@@ -6500,6 +6500,413 @@
         }
       }
     },
+    "/scan/checks": {
+      "get": {
+        "tags": [
+          "scan"
+        ],
+        "description": "The active checks the scanner has: id and what each looks for.",
+        "operationId": "scan_checks",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanChecks"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scan/scans": {
+      "get": {
+        "tags": [
+          "scan"
+        ],
+        "description": "The scans of this run of the server, newest first, with live progress (units finished of planned, requests, findings).",
+        "operationId": "scan_list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "scan"
+        ],
+        "description": "Start an active scan of the given requests: each query, form or JSON value, cookie and (by strength) the last path segment or a header is probed by the enabled checks (see scan_checks). Every request goes through the scope gate (a target outside the scope is listed in refused, never contacted), is rate limited by the gate and the scan's own delay, and is recorded as a flow with source scanner. Findings become issues. Two scans run at once. Needs the tester role or above; audited.",
+        "operationId": "scan_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The scan, running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many scans running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scan/scans/{id}": {
+      "get": {
+        "tags": [
+          "scan"
+        ],
+        "description": "One scan: its state, progress, the findings so far and, once it has ended, the refused targets.",
+        "operationId": "scan_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scan/scans/{id}/pause": {
+      "post": {
+        "tags": [
+          "scan"
+        ],
+        "description": "No request starts until the scan is resumed; requests in flight finish. `changed` is false when the scan had ended or was paused already. Needs the tester role or above; audited.",
+        "operationId": "scan_pause",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanControlReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scan/scans/{id}/resume": {
+      "post": {
+        "tags": [
+          "scan"
+        ],
+        "description": "Continue a paused scan where it stopped. `changed` is false when it was not paused. Needs the tester role or above; audited.",
+        "operationId": "scan_resume",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanControlReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scan/scans/{id}/stop": {
+      "post": {
+        "tags": [
+          "scan"
+        ],
+        "description": "The stop switch: no further request is sent. `changed` is false when the scan had ended. Needs the tester role or above; audited.",
+        "operationId": "scan_stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanControlReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/scope": {
       "get": {
         "tags": [
@@ -12321,6 +12728,310 @@
           }
         }
       },
+      "ScanCheck": {
+        "type": "object",
+        "required": [
+          "id",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "ScanChecks": {
+        "type": "object",
+        "required": [
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanCheck"
+            }
+          }
+        }
+      },
+      "ScanControlReply": {
+        "type": "object",
+        "required": [
+          "changed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "boolean",
+            "description": "False when the scan was not running (or, for resume, not paused)."
+          }
+        }
+      },
+      "ScanDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ScanInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "results",
+              "refused",
+              "truncated"
+            ],
+            "properties": {
+              "refused": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Targets the gate refused (outside the scope). Never contacted. Filled when the scan has ended."
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ScanFinding"
+                }
+              },
+              "truncated": {
+                "type": "boolean",
+                "description": "The request cap ended the scan with work left."
+              }
+            }
+          }
+        ]
+      },
+      "ScanFinding": {
+        "type": "object",
+        "required": [
+          "check",
+          "title",
+          "severity",
+          "confidence",
+          "url",
+          "point",
+          "payload",
+          "detail",
+          "flow_id"
+        ],
+        "properties": {
+          "check": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "flow_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The flow that proves it; the issue list shows the finding too."
+          },
+          "payload": {
+            "type": "string"
+          },
+          "point": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "ScanInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "targets",
+          "created_ms",
+          "units_done",
+          "units_total",
+          "requests",
+          "findings"
+        ],
+        "properties": {
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "findings": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/ScanState"
+          },
+          "targets": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "units_done": {
+            "type": "integer",
+            "description": "Units of work (a target and one insertion point) finished, and planned.",
+            "minimum": 0
+          },
+          "units_total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ScanList": {
+        "type": "object",
+        "required": [
+          "scans"
+        ],
+        "properties": {
+          "scans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanInfo"
+            }
+          }
+        }
+      },
+      "ScanStartBody": {
+        "type": "object",
+        "required": [
+          "targets"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Check ids (see the check list in the description); empty runs all."
+          },
+          "concurrency": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Units of work in flight at once (1 to 32, default 4).",
+            "minimum": 0
+          },
+          "delay_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The least time between two request starts in one unit, milliseconds (at most 60000).",
+            "minimum": 0
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra headers for every request, each `Name: value`."
+          },
+          "max_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The most requests the scan may send (1 to 200000, default 5000).",
+            "minimum": 0
+          },
+          "strength": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`low`, `medium` (default) or `high`: more insertion points and probes."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanTarget"
+            },
+            "description": "The requests to test (1 to 2000)."
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ScanState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "paused",
+          "done",
+          "stopped",
+          "failed"
+        ]
+      },
+      "ScanTarget": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`application/x-www-form-urlencoded` (default with a body) or `application/json`: their values are\ninsertion points."
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Each `Name: value`. A `Cookie` header makes its cookies insertion points."
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Default `GET`."
+          },
+          "url": {
+            "type": "string",
+            "description": "Absolute `http` or `https` URL; its query values are insertion points."
+          }
+        }
+      },
       "Scheme": {
         "type": "string",
         "enum": [
@@ -13530,6 +14241,9 @@
     },
     {
       "name": "crawl"
+    },
+    {
+      "name": "scan"
     },
     {
       "name": "issues"

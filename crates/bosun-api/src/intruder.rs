@@ -252,13 +252,25 @@ fn build(b: &StartBody) -> Result<(Template, Plan, Vec<u8>), Response> {
     Ok((template, plan, raw))
 }
 
-pub async fn plan(State(_st): State<AppState>, caller: Caller, Json(b): Json<StartBody>) -> R {
+#[derive(Debug, Deserialize)]
+pub struct PlanQuery {
+    /// How many requests to list (default 10, at most 1000).
+    limit: Option<u32>,
+}
+
+pub async fn plan(
+    State(_st): State<AppState>,
+    caller: Caller,
+    Query(q): Query<PlanQuery>,
+    Json(b): Json<StartBody>,
+) -> R {
     caller.require(Role::Tester)?;
     let (_, plan, _) = build(&b)?;
     let total = plan.total().min(b.options.max_requests.unwrap_or(u64::MAX));
+    let limit = q.limit.unwrap_or(10).clamp(1, 1000) as usize;
     let mut preview = Vec::new();
     for i in 0..plan.total() {
-        if preview.len() >= 10 {
+        if preview.len() >= limit {
             break;
         }
         if let Some(j) = plan.job(i) {

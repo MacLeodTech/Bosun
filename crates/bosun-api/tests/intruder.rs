@@ -115,6 +115,10 @@ async fn an_attack_runs_stores_its_results_and_streams_them() {
         (Some(6), Some(2))
     );
     assert_eq!(plan["preview"][1]["payloads"], json!(["one", "y"]));
+    assert_eq!(plan["preview"].as_array().unwrap().len(), 6);
+    let two = cl.intruder_plan_limit(&body, 2).await.unwrap();
+    assert_eq!(two["preview"].as_array().unwrap().len(), 2);
+    assert_eq!(two["total"], 6);
 
     let started = cl.intruder_start(&body).await.unwrap();
     let id = started["id"].as_i64().unwrap();

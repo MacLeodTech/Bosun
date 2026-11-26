@@ -1,0 +1,22 @@
+version: 1
+id: sensitive-info-in-url
+info:
+  name: Sensitive value in the URL
+  severity: medium
+  confidence: tentative
+  description: The request puts a password, token or key in the URL, where it ends up in logs, history and Referer headers.
+  remediation: Send secrets in the request body or an Authorization header, never in the query string.
+  cwe: [598]
+  owasp: ["A04:2021 Insecure Design"]
+  tags: [disclosure]
+source:
+  origin: zap
+  id: "Information Disclosure - Sensitive Information in URL"
+  license: Apache-2.0
+  notice: Ported in spirit from the ZAP passive rule set, Copyright the ZAP Dev Team, Apache License 2.0.
+passive:
+  matchers:
+    - type: regex
+      part: request
+      regex:
+        - '^[A-Z]+ [^ \r\n?]*\?(?:[^ \r\n#]*&)?(?:password|passwd|pwd|pass|secret|token|access_token|api_?key|apikey|auth)=[^&# \r\n]{3,}'

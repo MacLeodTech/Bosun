@@ -1,0 +1,22 @@
+version: 1
+id: email-disclosure
+info:
+  name: Email address in a response
+  severity: info
+  confidence: tentative
+  description: The response contains email addresses, which can feed phishing and spam or reveal staff names.
+  remediation: Remove addresses that need not be public, or obfuscate them.
+  cwe: [200]
+  owasp: ["A01:2021 Broken Access Control"]
+  tags: [disclosure]
+source:
+  origin: zap
+  id: "Information Disclosure - Email"
+  license: Apache-2.0
+  notice: Ported in spirit from the ZAP passive rule set, Copyright the ZAP Dev Team, Apache License 2.0.
+passive:
+  matchers:
+    - type: regex
+      part: body
+      regex:
+        - '\b[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9-]{1,63}\.)+(?:com|net|org|io|co|edu|gov|de|uk|fr|nl|info|biz)\b'

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  blankProc, blankSet, clearMarks, countPositions, csvCell, filterRows, markSelection, requestB64, rowsToCsv, setBody,
+  blankProc, blankSet, parseRules, clearMarks, countPositions, csvCell, filterRows, markSelection, requestB64, rowsToCsv, setBody,
   setFromBody, sortRows, type Row,
 } from '../src/lib/intruder.ts';
 

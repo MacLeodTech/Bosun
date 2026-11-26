@@ -721,6 +721,20 @@ impl Client {
             .await
     }
 
+    /// Like [`Client::intruder_plan`], listing the payloads of the first `limit` requests (at most 1000).
+    pub async fn intruder_plan_limit(
+        &self,
+        body: &serde_json::Value,
+        limit: u32,
+    ) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/intruder/plan")
+                .query(&[("limit", limit)])
+                .json(body),
+        )
+        .await
+    }
+
     /// Start an Intruder attack (same body as [`Client::intruder_plan`]). Returns the attack as it starts; results
     /// arrive as `IntruderResult` events and can be read with [`Client::intruder_results`].
     pub async fn intruder_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {

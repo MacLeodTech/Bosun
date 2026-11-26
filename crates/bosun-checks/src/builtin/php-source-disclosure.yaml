@@ -1,0 +1,22 @@
+version: 1
+id: php-source-disclosure
+info:
+  name: PHP source code in a response
+  severity: high
+  confidence: firm
+  description: The response contains PHP source, so the server is not running the file.
+  remediation: Make sure PHP files are executed and not served, and remove backup copies from the web root.
+  cwe: [540]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  tags: [disclosure]
+source:
+  origin: zap
+  id: "Source Code Disclosure - PHP"
+  license: Apache-2.0
+  notice: Ported in spirit from the ZAP passive rule set, Copyright the ZAP Dev Team, Apache License 2.0.
+passive:
+  matchers:
+    - type: regex
+      part: body
+      regex:
+        - '<\?php\s[^?]{0,400}(?:\$[a-z_]+\s*=|function\s+\w+\s*\(|require(?:_once)?\s*\(|include(?:_once)?\s*\()'

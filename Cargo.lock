@@ -505,6 +505,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bosun-crawl"
+version = "0.1.0"
+dependencies = [
+ "bosun-http",
+ "bosun-model",
+ "bosun-proxy",
+ "bosun-scope",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "bosun-desktop"
 version = "0.1.0"
 dependencies = [

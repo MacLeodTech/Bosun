@@ -351,6 +351,18 @@ This document says what is protected, from whom, and how. Code comments refer ba
   file, a row at a time, so they hold what the target sent back and are shown only as text in the UI; a CSV export
   puts a quote before any cell that a spreadsheet would run as a formula. Payload lists loaded from a file are read
   in the browser and sent as text. The request template and payload sets parser has a fuzz target (`intruder_plan`).
+- *The spider (`bosun-crawl`, an engine for now, with no API yet).* Every request, `robots.txt` and sitemaps
+  included, goes through `Engine::send` and so through the gate as source `crawler` (an automated source: out of
+  scope is refused, never prompted). Links are also checked against the scope before they are queued, so an
+  out-of-scope link is listed in the report and not requested; the gate stays the guarantee. Redirects are not
+  followed by the engine: a `Location` is a link like the others, so every hop is checked. The target's pages decide
+  what gets requested, so the crawl is bounded: depth, a page limit (at most 1,000,000), a concurrency of 1 to 32,
+  a response cap per page, only `http` and `https` links, and the per-host rate limit is waited out (up to 60
+  seconds a request) and never bypassed; the kill switch ends the crawl. `POST` forms are listed and not sent unless
+  the tester turns that on, since a form can change data; `GET` forms are sent with the values the page gives
+  them. `robots.txt` is obeyed by default (what it hides is still listed) and its patterns are matched in linear
+  time. The HTML, robots and sitemap readers take untrusted input and have a fuzz target (`crawl_html`). Extra
+  headers (such as a session cookie) are refused if they hold a line break.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

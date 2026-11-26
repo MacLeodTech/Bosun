@@ -16,11 +16,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{Caller, check_password_policy, check_username, hash_password, random_token};
 use crate::security::{empty, reject};
-use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SCOPE};
+use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SAVED_FILTERS, SETTING_SCOPE};
 
 type R = Result<Response, Response>;
 
-fn internal(e: impl std::fmt::Display) -> Response {
+pub(crate) fn internal(e: impl std::fmt::Display) -> Response {
     tracing::error!(error = %e, "API error");
     reject(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -77,6 +77,15 @@ pub struct FlowQuery {
     before: Option<FlowId>,
     after: Option<FlowId>,
     limit: Option<u32>,
+    /// `id` (default), `time`, `method`, `host`, `path`, `status`, `size`, `duration` or `mime`.
+    sort: Option<String>,
+    /// Oldest or smallest first.
+    #[serde(default)]
+    asc: bool,
+    /// Rows to skip when the list is sorted by something other than `id`.
+    offset: Option<u32>,
+    /// A history query (see `docs/query-language.md`), combined with the fields above by `and`.
+    q: Option<String>,
 }
 
 fn csv(s: Option<String>) -> Option<Vec<String>> {
@@ -90,7 +99,30 @@ fn csv(s: Option<String>) -> Option<Vec<String>> {
 
 pub async fn list_flows(State(st): State<AppState>, caller: Caller, Query(q): Query<FlowQuery>) -> R {
     caller.require(Role::Viewer)?;
+    let query = match q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(text) => {
+            let parsed = bosun_store::query::parse(text);
+            if let Some(e) = parsed.errors.first() {
+                return Err(reject(StatusCode::BAD_REQUEST, &format!("query: {}", e.message)));
+            }
+            parsed.expr
+        }
+        None => None,
+    };
+    let sort = match q.sort.as_deref().filter(|s| !s.is_empty()) {
+        None => bosun_store::FlowSort::Id,
+        Some(s) => bosun_store::FlowSort::parse(s).ok_or_else(|| {
+            reject(
+                StatusCode::BAD_REQUEST,
+                "sort: expects id, time, method, host, path, status, size, duration or mime",
+            )
+        })?,
+    };
     let filter = FlowFilter {
+        sort,
+        ascending: q.asc,
+        offset: q.offset,
+        query,
         text: q.text,
         host: q.host,
         methods: csv(q.methods),
@@ -104,8 +136,174 @@ pub async fn list_flows(State(st): State<AppState>, caller: Caller, Query(q): Qu
         limit: q.limit,
     };
     let p = st.project();
-    let flows = blocking(move || p.list_flows(&filter)).await?.map_err(internal)?;
+    let flows = blocking(move || p.list_flows(&filter))
+        .await?
+        .map_err(|e| match e {
+            // Only the time limit is a Conflict here: say so rather than "internal error".
+            bosun_store::StoreError::Conflict(m) => reject(StatusCode::BAD_REQUEST, &m),
+            e => internal(e),
+        })?;
     Ok(Json(flows).into_response())
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct QueryCheckParams {
+    q: Option<String>,
+}
+
+/// What a history query means: each recognised term with its place in the text, and every mistake. Nothing is
+/// run. A front end uses this for chips and messages while the person types.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct QueryCheck {
+    pub terms: Vec<bosun_store::query::TermSpan>,
+    pub errors: Vec<bosun_store::query::QueryError>,
+}
+
+pub async fn check_flow_query(caller: Caller, Query(p): Query<QueryCheckParams>) -> R {
+    caller.require(Role::Viewer)?;
+    let parsed = bosun_store::query::parse(p.q.as_deref().unwrap_or(""));
+    Ok(Json(QueryCheck {
+        terms: parsed.terms,
+        errors: parsed.errors,
+    })
+    .into_response())
+}
+
+/// A history query kept under a name, for the whole project.
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SavedFilter {
+    pub name: String,
+    pub query: String,
+}
+
+const MAX_SAVED_FILTERS: usize = 50;
+const MAX_FILTER_NAME: usize = 60;
+
+pub async fn get_saved_filters(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    let p = st.project();
+    let list: Option<Vec<SavedFilter>> = blocking(move || p.setting(SETTING_SAVED_FILTERS))
+        .await?
+        .map_err(internal)?;
+    Ok(Json(list.unwrap_or_default()).into_response())
+}
+
+/// Replace the saved filters. Each query must be valid, so a saved filter always runs.
+pub async fn put_saved_filters(
+    State(st): State<AppState>,
+    caller: Caller,
+    Json(list): Json<Vec<SavedFilter>>,
+) -> R {
+    caller.require(Role::Tester)?;
+    if list.len() > MAX_SAVED_FILTERS {
+        return Err(reject(StatusCode::BAD_REQUEST, "too many saved filters"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for f in &list {
+        let name = f.name.trim();
+        if name.is_empty() || name.chars().count() > MAX_FILTER_NAME || name.chars().any(char::is_control) {
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                "a filter name is 1 to 60 characters, without control characters",
+            ));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(reject(StatusCode::BAD_REQUEST, "two filters have the same name"));
+        }
+        if let Some(e) = bosun_store::query::parse(&f.query).errors.first() {
+            return Err(reject(
+                StatusCode::BAD_REQUEST,
+                &format!("filter \"{name}\": {}", e.message),
+            ));
+        }
+    }
+    let list: Vec<SavedFilter> = list
+        .into_iter()
+        .map(|f| SavedFilter {
+            name: f.name.trim().to_string(),
+            query: f.query,
+        })
+        .collect();
+    let _settings = st.inner.projects.settings_guard().await;
+    save_setting(&st, SETTING_SAVED_FILTERS, list.clone()).await?;
+    Ok(Json(list).into_response())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+pub async fn list_organizer(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    let p = st.project();
+    let items = blocking(move || p.organizer_list()).await?.map_err(internal)?;
+    Ok(Json(items).into_response())
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct OrganizerAdd {
+    flow_ids: Vec<FlowId>,
+}
+
+/// Keep requests for follow-up. Answers how many were new.
+pub async fn add_to_organizer(State(st): State<AppState>, caller: Caller, Json(b): Json<OrganizerAdd>) -> R {
+    caller.require(Role::Tester)?;
+    if b.flow_ids.is_empty() || b.flow_ids.len() > 1_000 {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "flow_ids: between 1 and 1000 requests at a time",
+        ));
+    }
+    let p = st.project();
+    let added = blocking(move || p.organizer_add(&b.flow_ids, now_ms()))
+        .await?
+        .map_err(internal)?;
+    Ok(Json(serde_json::json!({ "added": added })).into_response())
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct OrganizerChange {
+    status: Option<bosun_store::OrganizerStatus>,
+    note: Option<String>,
+}
+
+pub async fn update_organizer_item(
+    State(st): State<AppState>,
+    caller: Caller,
+    Path(id): Path<i64>,
+    Json(b): Json<OrganizerChange>,
+) -> R {
+    caller.require(Role::Tester)?;
+    if b.note
+        .as_ref()
+        .is_some_and(|n| n.len() > bosun_store::MAX_ORGANIZER_NOTE)
+    {
+        return Err(reject(StatusCode::BAD_REQUEST, "note: too long"));
+    }
+    let p = st.project();
+    let found = blocking(move || p.organizer_update(id, b.status, b.note.as_deref(), now_ms()))
+        .await?
+        .map_err(internal)?;
+    Ok(if found {
+        empty(StatusCode::NO_CONTENT)
+    } else {
+        reject(StatusCode::NOT_FOUND, "no such item")
+    })
+}
+
+pub async fn delete_organizer_item(State(st): State<AppState>, caller: Caller, Path(id): Path<i64>) -> R {
+    caller.require(Role::Tester)?;
+    let p = st.project();
+    let found = blocking(move || p.organizer_delete(id))
+        .await?
+        .map_err(internal)?;
+    Ok(if found {
+        empty(StatusCode::NO_CONTENT)
+    } else {
+        reject(StatusCode::NOT_FOUND, "no such item")
+    })
 }
 
 /// A flow without its bodies: summary, each message's header block and size. The bodies come from the
@@ -454,6 +652,40 @@ pub async fn annotate_flow(
     } else {
         reject(StatusCode::NOT_FOUND, "no such flow")
     })
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ChangeTags {
+    ids: Vec<FlowId>,
+    #[serde(default)]
+    add: Vec<String>,
+    #[serde(default)]
+    remove: Vec<String>,
+}
+
+const MAX_TAG_CHANGE_IDS: usize = 5_000;
+
+/// Add and remove tags on many flows at once. Returns how many flows changed.
+pub async fn change_tags(State(st): State<AppState>, caller: Caller, Json(b): Json<ChangeTags>) -> R {
+    caller.require(Role::Tester)?;
+    let bad = |t: &String| t.is_empty() || t.len() > 64 || t.chars().any(char::is_control);
+    if b.ids.is_empty() || b.ids.len() > MAX_TAG_CHANGE_IDS {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "ids: between 1 and 5000 flows at a time",
+        ));
+    }
+    if b.add.len() > 32 || b.remove.len() > 32 || b.add.iter().chain(&b.remove).any(bad) {
+        return Err(reject(
+            StatusCode::BAD_REQUEST,
+            "tags: at most 32 of 1 to 64 characters, without control characters",
+        ));
+    }
+    let p = st.project();
+    let changed = blocking(move || p.change_tags(&b.ids, &b.add, &b.remove, 32))
+        .await?
+        .map_err(internal)?;
+    Ok(Json(serde_json::json!({ "changed": changed })).into_response())
 }
 
 #[derive(Deserialize)]

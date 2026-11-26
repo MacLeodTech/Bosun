@@ -2,6 +2,7 @@
   // The Comparer: a word or byte diff of any two texts, computed by the server (`/comparer/diff`). The pieces are
   // shown as text, never as HTML. The +/- markers mean colour is not the only signal.
   import { api } from '../lib/api';
+  import { inbox } from '../lib/inbox.svelte';
   import { bytesToB64, textToBytes } from '../lib/bytes';
   import type { components } from '../lib/api-types';
 
@@ -30,6 +31,16 @@
         ? dec.decode(bytesB.subarray(o.b_start, o.b_start + o.len))
         : dec.decode(bytesA.subarray(o.a_start, o.a_start + o.len)),
     }));
+  });
+
+  // "Send to Comparer" fills a side; take what is waiting.
+  $effect(() => {
+    const m = inbox.comparer;
+    if (!m) return;
+    inbox.comparer = null;
+    if (m.a !== undefined) a = m.a;
+    if (m.b !== undefined) b = m.b;
+    schedule();
   });
 
   function schedule() {

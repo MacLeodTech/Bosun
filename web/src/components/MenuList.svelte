@@ -57,7 +57,8 @@
 </div>
 
 <style>
-  .menu { min-width: 14rem; padding: .25rem 0; background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 6px 18px rgb(0 0 0 / .28); }
+  /* A long menu scrolls inside the window instead of running off it. */
+  .menu { min-width: 14rem; max-height: calc(100vh - 12px); overflow-y: auto; padding: .25rem 0; background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 6px 18px rgb(0 0 0 / .28); }
   button { display: flex; align-items: center; gap: .4rem; width: 100%; text-align: left; background: none; border: 0; border-radius: 0; padding: .25rem .6rem .25rem .3rem; }
   button:hover:not(:disabled), button:focus-visible { background: var(--surface-sel); border: 0; outline: none; }
   .tick { width: 1rem; text-align: center; color: var(--accent); }

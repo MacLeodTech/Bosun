@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isTyping } from './lib/typing';
   import { onMount } from 'svelte';
   import { api } from './lib/api';
   import { session } from './lib/session.svelte';
@@ -71,8 +72,7 @@
   /** Plain keys belong to whatever has focus; commands with a modifier work from anywhere that is not a text field. */
   function onKey(e: KeyboardEvent) {
     if (e.defaultPrevented || !session.me) return;
-    const t = e.target as HTMLElement | null;
-    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    const typing = isTyping(e);
     // An open dialog (palette, help, layouts) owns the keyboard.
     if (document.querySelector('dialog[open]')) return;
     if (e.key === '?' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {

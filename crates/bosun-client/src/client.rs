@@ -252,6 +252,76 @@ impl Client {
         self.json(self.req(Method::GET, "/flows").query(q)).await
     }
 
+    /// What a history query means (its terms and its mistakes) without running it.
+    pub async fn check_flow_query(&self, q: &str) -> Result<QueryCheck> {
+        self.json(self.req(Method::GET, "/flows/query").query(&[("q", q)]))
+            .await
+    }
+
+    pub async fn saved_filters(&self) -> Result<Vec<SavedFilter>> {
+        self.json(self.req(Method::GET, "/saved-filters")).await
+    }
+
+    /// Replace the project's saved filters.
+    pub async fn put_saved_filters(&self, list: &[SavedFilter]) -> Result<Vec<SavedFilter>> {
+        self.json(self.req(Method::PUT, "/saved-filters").json(list))
+            .await
+    }
+
+    /// Add and remove tags on many flows at once; returns how many flows changed.
+    pub async fn change_tags(&self, ids: &[FlowId], add: &[&str], remove: &[&str]) -> Result<u64> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            changed: u64,
+        }
+        let r: R = self
+            .json(
+                self.req(Method::POST, "/flows/tags")
+                    .json(&json!({ "ids": ids, "add": add, "remove": remove })),
+            )
+            .await?;
+        Ok(r.changed)
+    }
+
+    // --- organizer -----------------------------------------------------------------------------------------
+
+    pub async fn organizer(&self) -> Result<Vec<OrganizerItem>> {
+        self.json(self.req(Method::GET, "/organizer")).await
+    }
+
+    /// Keep requests for follow-up; returns how many were new.
+    pub async fn add_to_organizer(&self, flow_ids: &[FlowId]) -> Result<u64> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            added: u64,
+        }
+        let r: R = self
+            .json(
+                self.req(Method::POST, "/organizer")
+                    .json(&json!({ "flow_ids": flow_ids })),
+            )
+            .await?;
+        Ok(r.added)
+    }
+
+    pub async fn update_organizer_item(
+        &self,
+        id: i64,
+        status: Option<OrganizerStatus>,
+        note: Option<&str>,
+    ) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/organizer/{id}"))
+                .json(&json!({ "status": status, "note": note })),
+        )
+        .await
+    }
+
+    pub async fn delete_organizer_item(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/organizer/{id}")))
+            .await
+    }
+
     /// Delete flows by id; returns how many were removed.
     pub async fn delete_flows(&self, ids: &[FlowId]) -> Result<u64> {
         #[derive(serde::Deserialize)]
@@ -288,6 +358,21 @@ impl Client {
                 .query(&[("after", after), ("limit", limit.map(i64::from))]),
         )
         .await
+    }
+
+    /// Comments, scripts and references in the response, and the request's parameters.
+    pub async fn flow_engage(&self, id: FlowId) -> Result<EngageReport> {
+        self.json(self.req(Method::GET, &format!("/flows/{id}/engage")))
+            .await
+    }
+
+    /// A CSRF proof of concept for the request, as HTML text.
+    pub async fn flow_csrf_poc(&self, id: FlowId, auto_submit: bool) -> Result<String> {
+        let mut rb = self.req(Method::GET, &format!("/flows/{id}/csrf-poc"));
+        if auto_submit {
+            rb = rb.query(&[("auto", "1")]);
+        }
+        Ok(self.check(rb.send().await?).await?.text().await?)
     }
 
     /// A whole message body. `decoded` undoes the response's `Content-Encoding`.
@@ -397,6 +482,11 @@ impl Client {
             .await
     }
 
+    /// Open a WebSocket, send frames and listen. `body` is the `WsBody` of the API.
+    pub async fn repeater_ws(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/repeater/ws").json(body)).await
+    }
+
     /// Run a chain of decoders. `body` is the `DecodeBody` of the API: base64 `input` and a list of `ops`.
     pub async fn decoder_apply(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
         self.json(self.req(Method::POST, "/decoder/apply").json(body))
@@ -444,6 +534,16 @@ impl Client {
             )
             .await?;
         Ok(r.allow_out_of_scope)
+    }
+
+    /// The Repeater's saved tabs (`tabs`, `active`, `next`).
+    pub async fn repeater_tabs(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/repeater/tabs")).await
+    }
+
+    /// Replace the Repeater's saved tabs.
+    pub async fn put_repeater_tabs(&self, doc: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::PUT, "/repeater/tabs").json(doc)).await
     }
 
     /// The kill switch for all tool traffic. Returns the new state.

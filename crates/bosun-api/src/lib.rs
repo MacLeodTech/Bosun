@@ -10,6 +10,7 @@ pub mod auth;
 pub mod browser;
 pub mod child;
 pub mod codec;
+pub mod engage;
 pub mod events;
 pub mod handlers;
 pub mod openapi;
@@ -43,7 +44,9 @@ pub const MAX_PROJECT_UPLOAD: u64 = 2 << 30;
 
 pub const SETTING_SCOPE: &str = "scope";
 pub const SETTING_RULES: &str = "match_replace";
+pub const SETTING_SAVED_FILTERS: &str = "saved_filters";
 pub const SETTING_INTERCEPT: &str = "intercept";
+pub const SETTING_REPEATER_TABS: &str = "repeater_tabs";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -355,8 +358,21 @@ pub fn router(st: AppState) -> Router {
         .route("/auth/sso", get(sso::config))
         .route("/auth/password", post(auth::change_password))
         .route("/flows", get(h::list_flows).delete(h::delete_flows))
+        .route("/flows/query", get(h::check_flow_query))
+        .route("/flows/tags", post(h::change_tags))
+        .route("/organizer", get(h::list_organizer).post(h::add_to_organizer))
+        .route(
+            "/organizer/{id}",
+            axum::routing::patch(h::update_organizer_item).delete(h::delete_organizer_item),
+        )
+        .route(
+            "/saved-filters",
+            get(h::get_saved_filters).put(h::put_saved_filters),
+        )
         .route("/flows/{id}", get(h::get_flow).patch(h::annotate_flow))
         .route("/flows/{id}/ws", get(h::ws_messages))
+        .route("/flows/{id}/engage", get(engage::flow_engage))
+        .route("/flows/{id}/csrf-poc", get(engage::flow_csrf_poc))
         .route("/flows/{id}/{part}/body", get(h::flow_body))
         .route("/sitemap", get(h::site_map))
         .route("/scope", get(h::get_scope).put(h::put_scope))
@@ -407,6 +423,8 @@ pub fn router(st: AppState) -> Router {
             "/repeater/settings",
             get(repeater::get_settings).put(repeater::put_settings),
         )
+        .route("/repeater/ws", post(repeater::ws_send))
+        .route("/repeater/tabs", get(repeater::get_tabs).put(repeater::put_tabs))
         .route("/audit", get(h::audit_log))
         .route("/events", get(events::events));
     Router::new()

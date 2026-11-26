@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test';
 import { PROXY_PORT, TARGET_PORT } from '../ports';
+import fs from 'node:fs';
 import { hits, seen, viaProxy } from '../target';
 
 // One engine and one account for the whole file; the tests build on each other in order.
@@ -147,10 +148,14 @@ test('intercept: hold a request, edit it, forward it, and the target sees the ed
   const pending = viaProxy(PROXY_PORT, `${TARGET}/echo`);
   await expect(page.locator('.list li button', { hasText: '/echo' })).toBeVisible();
 
-  const editor = page.locator('textarea.code');
-  const raw = await editor.inputValue();
-  expect(raw).toContain('GET /echo');
-  await editor.fill(raw.replace(/\r?\n\r?\n$/, '\r\nX-Edited-By-Test: yes\r\n\r\n'));
+  // The raw editor is CodeMirror (in a shadow root); the message ends with a blank line, so one line up from the
+  // end is the gap between the headers and the body, and a new header goes there.
+  const editor = page.getByRole('textbox', { name: /^request #\d+/i });
+  await expect(editor).toContainText('GET /echo');
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.type('X-Edited-By-Test: yes');
   await page.getByRole('button', { name: 'Forward', exact: true }).click();
 
   const reply = await pending;
@@ -208,6 +213,105 @@ test('repeater: send by hand, again with a change, diff the two, and the sends a
   await rp.getByLabel('Mode').selectOption('sequential');
   await rp.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(rp.getByText('refused')).toBeVisible();
+});
+
+test('message editor: CodeMirror runs under the unchanged CSP, pretty-prints, edits as hex, and the edit is what is sent', async () => {
+  // The policy has no nonce and no 'unsafe-inline': the editor gets its styles from a constructed stylesheet.
+  const csp = (await page.request.get('/')).headers()['content-security-policy'] ?? '';
+  expect(csp).toContain("style-src 'self';");
+  expect(csp).not.toMatch(/unsafe-inline|nonce-/);
+  // Stylesheets are what the editor needs. (When typing replaces a selection, Chromium's own editing can try to
+  // write an inline style attribute, which the policy blocks and the editor does not rely on, so
+  // `style-src-attr` is not counted here; any other blocked style is.)
+  await page.evaluate(() => {
+    (window as unknown as { __csp: string[] }).__csp = [];
+    document.addEventListener('securitypolicyviolation', (e) => { if (e.violatedDirective !== 'style-src-attr') (window as unknown as { __csp: string[] }).__csp.push(`${e.violatedDirective} ${e.blockedURI}`); });
+  });
+
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByRole('button', { name: '+', exact: true }).click(); // a fresh tab builds a fresh editor
+  await rp.getByLabel('Scheme').selectOption('http');
+  await rp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await rp.getByLabel('Port').fill(String(TARGET_PORT));
+  const editor = rp.getByLabel('Request', { exact: true });
+  // Real key presses: Playwright's fill() goes through an editing command that writes inline styles into a
+  // contenteditable, which the policy (rightly) blocks, and nobody types that way.
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('POST /rp-json HTTP/1.1\nHost: 127.0.0.1\nContent-Type: application/json\n\n{"a":1,"b":[1,2]}');
+
+  // Its styles applied (line numbers and colours), and nothing was blocked.
+  await expect(rp.locator('.cm-lineNumbers')).toBeVisible();
+  await expect(rp.locator('.cm-gutters')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(rp.locator('.sx-hname').first()).toHaveCSS('color', /rgb/);
+  expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)).toEqual([]);
+
+  // Pretty-print re-indents the body as text.
+  await rp.getByRole('button', { name: 'pretty-print body' }).click();
+  await expect(editor).toContainText('"a": 1');
+
+  // Hex: the same bytes, editable. POST becomes PUT.
+  await rp.getByRole('button', { name: 'hex', exact: true }).click();
+  const hex = rp.getByLabel('Request', { exact: true });
+  await expect(hex).toHaveValue(/^50 4f 53 54 20 2f 72 70/);
+  await hex.fill((await hex.inputValue()).replace(/^50 4f 53 54/, '50 55 54'));
+  await rp.getByRole('button', { name: 'text', exact: true }).click();
+  await expect(editor).toContainText('PUT /rp-json');
+
+  // What is sent is the edited message.
+  await rp.getByLabel('Request', { exact: true }).click();
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(rp.locator('.out')).toContainText('hello from /rp-json');
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await page.locator('.row', { hasText: '/rp-json' }).first().click();
+  await expect(page.locator('.row', { hasText: '/rp-json' }).first()).toContainText('PUT');
+
+  expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp)).toEqual([]);
+});
+
+test('repeater: a WebSocket tab sends frames, shows what came back, and the frames are recorded', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByRole('button', { name: '+', exact: true }).click();
+  await rp.getByLabel('Kind').selectOption('ws');
+  await rp.getByLabel('Scheme').selectOption('http');
+  await rp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await rp.getByLabel('Port').fill(String(TARGET_PORT));
+  const editor = rp.getByLabel('Request', { exact: true });
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('GET /ws HTTP/1.1\nHost: 127.0.0.1\nUpgrade: websocket\nConnection: Upgrade\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\nSec-WebSocket-Version: 13\n\n');
+  await rp.getByRole('button', { name: 'Add frame' }).click();
+  await rp.getByLabel('Frame 1 payload').fill('ping-pong');
+  await rp.getByLabel('Listen time').fill('500');
+  await rp.getByRole('button', { name: 'Send', exact: true }).click();
+  const log = rp.getByRole('log', { name: 'WebSocket frames' });
+  await expect(log).toContainText('echo: ping-pong');
+  await expect(log).toContainText('→');
+  await expect(log).toContainText('←');
+  await expect(rp.locator('b', { hasText: '101' })).toBeVisible();
+  // It is in the history as a Repeater flow, with its messages.
+  await nav.getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/ws' }).first()).toBeVisible();
+});
+
+test('repeater: the tabs are saved in the project, not just in the page', async () => {
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByLabel('Host', { exact: true }).fill('saved.example');
+  await rp.getByLabel('Request').fill('GET /kept HTTP/1.1\nHost: saved.example\n\n');
+  // Saving waits for typing to settle, then the server holds the tab (the responses are not stored).
+  await expect
+    .poll(async () => {
+      const r = await page.request.get('/api/v1/repeater/tabs');
+      const doc = (await r.json()) as { tabs: { host: string; request: string; history: unknown[] }[] };
+      return doc.tabs.some((t) => t.host === 'saved.example' && t.request.includes('/kept') && t.history.length === 0);
+    })
+    .toBe(true);
 });
 
 test('decoder and comparer: a chain decodes, smart decode peels layers, and the diff marks what changed', async () => {
@@ -519,6 +623,118 @@ test('filter bar: terms become chips, a bad term is explained, and filters can b
   await applyFilter('');
 });
 
+test('query bar: or, not and groups run on the server, keys complete, a mistake is refused, saved filters outlive a reload', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/q-alpha`);
+  await viaProxy(PROXY_PORT, `${TARGET}/q-beta`);
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  const alpha = page.locator('.row', { hasText: '/q-alpha' });
+  const beta = page.locator('.row', { hasText: '/q-beta' });
+  await applyFilter('');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toBeVisible();
+
+  // Operators, groups and a newer key (path:) are the server's.
+  await applyFilter('(path:q-alpha or path:nothing-like-it) -ext:css');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toHaveCount(0);
+  await applyFilter('host:127.0.0.1 not path:q-alpha path:q-');
+  await expect(beta).toBeVisible();
+  await expect(alpha).toHaveCount(0);
+  await expect(page.locator('.chip', { hasText: 'path:q-' }).first()).toBeVisible();
+
+  // Completion: a key from a prefix, then a value; Tab takes the first suggestion.
+  await filterBox().fill('meth');
+  await expect(page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option', { name: /method:/ })).toBeVisible();
+  await filterBox().press('Tab');
+  await expect(filterBox()).toHaveValue('method:');
+  await expect(page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option', { name: /^GET/ })).toBeVisible();
+  await filterBox().press('ArrowDown');
+  await filterBox().press('Enter');
+  await expect(filterBox()).toHaveValue('method:GET');
+  await filterBox().press('Enter');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toBeVisible();
+
+  // A mistake is explained and nothing is applied: the list and the applied line stay as they were.
+  await filterBox().fill('status:banana path:q-alpha');
+  await filterBox().press('Enter');
+  await expect(page.getByRole('alert')).toContainText('status: expects');
+  await expect(beta).toBeVisible();
+  await expect(page.locator('.chip', { hasText: 'method:GET' })).toBeVisible();
+
+  // Saved on the server, so a reload (which drops everything the page held) still has it, and it re-runs.
+  await applyFilter('path:q-alpha or path:q-beta');
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'Save the applied filter as…' }).click();
+  await page.getByLabel('Name for this filter').fill('both q');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:q-alpha');
+  await expect(beta).toHaveCount(0);
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'both q', exact: true }).click();
+  await expect(filterBox()).toHaveValue('path:q-alpha or path:q-beta');
+  await expect(alpha).toBeVisible();
+  await expect(beta).toBeVisible();
+  await page.getByRole('button', { name: 'Saved' }).click();
+  await page.getByRole('menuitem', { name: 'Delete “both q”' }).click();
+  await applyFilter('');
+});
+
+test('history table: sort by a column on the server, choose columns, highlight and tag the selection', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/t-alpha`);
+  await viaProxy(PROXY_PORT, `${TARGET}/t-beta`);
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:/t-');
+  const rows = page.getByRole('listbox', { name: 'HTTP history' }).getByRole('option');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText('/t-beta'); // newest first
+
+  // Sorting is the server's: descending first, then ascending, then back to the newest-first order.
+  const pathHead = page.getByRole('columnheader', { name: /^Path/ });
+  await pathHead.getByRole('button').click();
+  await expect(pathHead).toHaveAttribute('aria-sort', 'descending');
+  await expect(rows.first()).toContainText('/t-beta');
+  await pathHead.getByRole('button').click();
+  await expect(pathHead).toHaveAttribute('aria-sort', 'ascending');
+  await expect(rows.first()).toContainText('/t-alpha');
+  await pathHead.getByRole('button').click();
+  await expect(pathHead).toHaveAttribute('aria-sort', 'none');
+  await expect(rows.first()).toContainText('/t-beta');
+
+  // Columns: Host can go, Duration can come, and the choice survives a reload (it is a preference of the browser).
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toBeVisible();
+  await page.getByRole('button', { name: 'Columns' }).click();
+  await page.getByRole('menuitemradio', { name: 'Host' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Columns' }).click();
+  await page.getByRole('menuitemradio', { name: 'Host' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Host' })).toBeVisible();
+
+  // Highlight one row from its menu, tag both from the selection bar, and find them again by tag.
+  await applyFilter('path:/t-');
+  await rows.first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Green', exact: true }).click();
+  await expect(rows.first()).toHaveAttribute('data-hl', 'green');
+  await rows.first().click();
+  await rows.nth(1).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Tag…' }).click();
+  await page.getByLabel(/Tag for 2 requests/).fill('review');
+  await page.getByRole('button', { name: 'Add tag' }).click();
+  await applyFilter('tag:review');
+  await expect(rows).toHaveCount(2);
+  await applyFilter('tag:hl:green');
+  await expect(rows).toHaveCount(1);
+  await applyFilter('');
+});
+
 test('history: shift-click and Ctrl+A select several, delete can be undone, and an undone delete changes nothing', async () => {
   await page.mouse.move(2, 2);
   for (const p of ['ms-a', 'ms-b', 'ms-c']) await viaProxy(PROXY_PORT, `${TARGET}/${p}`);
@@ -572,7 +788,125 @@ test('context menu: a row offers its actions, Escape closes it, and Send to Repe
   await expect(page.getByRole('tab', { name: 'Repeater' })).toHaveAttribute('aria-selected', 'true');
   const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
   await expect(rp.getByLabel('Host', { exact: true })).toHaveValue('127.0.0.1');
-  await expect(rp.getByLabel('Request')).toHaveValue(/GET \/hello-history/);
+  await expect(rp.getByLabel('Request')).toContainText('GET /hello-history');
+});
+
+test('send to: a response body goes to the Decoder, and a request and a response to the two sides of the Comparer', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  const r = page.locator('.row', { hasText: '/hello-history' });
+  const menu = page.getByRole('menu', { name: 'Request actions' });
+
+  await r.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Decoder: response', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Decoder' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel('Decoder input')).toHaveValue('hello from /hello-history');
+
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await r.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Comparer: request as A', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await r.click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Comparer: response as B', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Comparer' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel('Left side')).toHaveValue(/^GET \/hello-history/);
+  await expect(page.getByLabel('Right side')).toHaveValue(/^HTTP\/1\.1 200/);
+});
+
+test('export: a HAR file is saved with secrets redacted, and keeps them only when asked', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/export-me?x=1`, { cookie: 'sid=topsecret', authorization: 'Bearer tok123' });
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:/export-me');
+  const row = page.locator('.row', { hasText: '/export-me' });
+  await expect(row).toBeVisible();
+  const menu = page.getByRole('menu', { name: 'Request actions' });
+  const download = async () => {
+    await row.click({ button: 'right' });
+    const [dl] = await Promise.all([page.waitForEvent('download'), menu.getByRole('menuitem', { name: 'Export as HAR…' }).click()]);
+    expect(dl.suggestedFilename()).toMatch(/\.har$/);
+    return fs.readFileSync((await dl.path())!, 'utf8');
+  };
+  const redacted = await download();
+  const har = JSON.parse(redacted);
+  expect(har.log.version).toBe('1.2');
+  expect(har.log.entries).toHaveLength(1);
+  expect(har.log.entries[0].request.url).toBe(`${TARGET}/export-me?x=1`);
+  expect(har.log.entries[0].request.queryString).toEqual([{ name: 'x', value: '1' }]);
+  expect(har.log.entries[0].response.content.text).toBe('hello from /export-me');
+  expect(redacted).not.toContain('topsecret');
+  expect(redacted).not.toContain('tok123');
+  expect(redacted).toContain('sid=REDACTED');
+
+  await row.click({ button: 'right' });
+  await menu.getByRole('menuitemradio', { name: 'Keep cookies and authorization values' }).click();
+  const kept = await download();
+  expect(kept).toContain('topsecret');
+  expect(kept).toContain('Bearer tok123');
+  // Put the preference back so later tests start from the default.
+  await row.click({ button: 'right' });
+  await expect(menu.getByRole('menuitemradio', { name: 'Keep cookies and authorization values' })).toHaveAttribute('aria-checked', 'true');
+  await menu.getByRole('menuitemradio', { name: 'Keep cookies and authorization values' }).click();
+  await applyFilter('');
+});
+
+test('findings: a response is searched for scripts and resources, shown as text, and a CSRF page is downloaded', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('path:/evil');
+  const row = page.locator('.row', { hasText: '/evil' }).first();
+  await expect(row).toBeVisible();
+  const before = hits.length;
+  await row.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'Request actions' });
+  await menu.getByRole('menuitem', { name: 'Comments, scripts and references' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Findings' });
+  await expect(panel.getByRole('row', { name: /Inline script.*from=inline-script/ })).toBeVisible();
+  await expect(panel.getByRole('row', { name: /Resource.*\/missing\.png/ })).toBeVisible();
+  // The hostile page's text is only text: nothing in it ran or was fetched.
+  await page.waitForTimeout(300);
+  expect(hits.length).toBe(before);
+  await panel.getByRole('searchbox', { name: 'Filter findings' }).fill('missing');
+  await expect(panel.getByRole('row', { name: /Inline script/ })).toHaveCount(0);
+
+  const [dl] = await Promise.all([page.waitForEvent('download'), panel.getByRole('button', { name: 'CSRF proof of concept' }).click()]);
+  expect(dl.suggestedFilename()).toMatch(/^csrf-poc-\d+\.html$/);
+  const html = fs.readFileSync((await dl.path())!, 'utf8');
+  expect(html).toContain('method="get"');
+  expect(html).not.toContain('<script>');
+  await applyFilter('');
+});
+
+test('organizer: a request is saved for follow-up with a status and a note, and both survive a reload', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  await page.locator('.row', { hasText: '/hello-history' }).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Organizer', exact: true }).click();
+  await expect(page.getByText('Saved 1 request to the Organizer.')).toBeVisible();
+
+  await page.getByRole('navigation').getByRole('button', { name: 'Organizer' }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Organizer', exact: true });
+  const row = panel.getByRole('row', { name: /hello-history/ });
+  await expect(row).toBeVisible();
+  await row.getByRole('combobox', { name: /Status of request/ }).selectOption('in_progress');
+  await row.getByLabel(/Note for request/).fill('check the cache headers');
+  await row.getByLabel(/Note for request/).blur();
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', { name: 'Organizer' }).click();
+  const again = page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByRole('row', { name: /hello-history/ });
+  await expect(again.getByRole('combobox', { name: /Status of request/ })).toHaveValue('in_progress');
+  await expect(again.getByLabel(/Note for request/)).toHaveValue('check the cache headers');
+
+  // The status filter, then Remove (the request stays in the history).
+  await page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByLabel('Show').selectOption('done');
+  await expect(page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByText('Nothing is done.')).toBeVisible();
+  await page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByLabel('Show').selectOption('all');
+  await again.getByRole('button', { name: /Remove request/ }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Organizer', exact: true }).getByText('Nothing saved yet.')).toBeVisible();
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await expect(page.locator('.row', { hasText: '/hello-history' })).toBeVisible();
 });
 
 test('shortcuts: Ctrl+R sends to the Repeater without reloading, and ? lists every shortcut and any conflict', async () => {
@@ -607,7 +941,7 @@ test('drag and drop: dropping requests on a pane opens the Repeater there with o
   await src.dragTo(page.locator('#pane-flow'), { targetPosition: { x: target!.width / 2, y: target!.height - 10 } });
   await expect(page.getByRole('tablist')).toHaveCount(3);
   const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
-  await expect(rp.getByLabel('Request')).toHaveValue(/GET \/hello-history/);
+  await expect(rp.getByLabel('Request')).toContainText('GET /hello-history');
 });
 
 test('deep link: the address names the open request and a reload brings it back', async () => {

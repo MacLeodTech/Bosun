@@ -17,9 +17,9 @@ use bosun_proxy::{ProxyEvent, ProxyStats};
 use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
 
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
-use crate::handlers::FlowOverview;
+use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
-use crate::repeater::{RepeaterSettings, SendBody, SendReply};
+use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
 use bosun_proxy::rules::RuleSpec as MatchRule;
 use bosun_scope::ScopeSpec;
 
@@ -52,6 +52,14 @@ pub struct SsoInfo {
 #[derive(ToSchema, Serialize)]
 pub struct Deleted {
     pub deleted: u64,
+}
+#[derive(ToSchema, Serialize)]
+pub struct AddedCount {
+    pub added: u64,
+}
+#[derive(ToSchema, Serialize)]
+pub struct ChangedCount {
+    pub changed: u64,
 }
 #[derive(ToSchema, Serialize)]
 pub struct Forwarded {
@@ -174,8 +182,32 @@ fn sso_config() {}
 #[utoipa::path(post, path = "/auth/password", operation_id = "change_password", tag = "session", description = "Change your own password. Needs the viewer role or above.", request_body = PasswordBody, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn change_password() {}
 
-#[utoipa::path(get, path = "/flows", operation_id = "list_flows", tag = "history", description = "List recorded flows, newest first. Needs the viewer role or above.", params(("text" = Option<String>, Query), ("host" = Option<String>, Query), ("methods" = Option<String>, Query), ("status_min" = Option<i64>, Query), ("status_max" = Option<i64>, Query), ("in_scope_only" = Option<bool>, Query), ("source" = Option<String>, Query), ("hide_ext" = Option<String>, Query), ("before" = Option<i64>, Query), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = Vec<FlowSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+#[utoipa::path(get, path = "/flows", operation_id = "list_flows", tag = "history", description = "List recorded flows, newest first unless sorted. Needs the viewer role or above.", params(("text" = Option<String>, Query), ("host" = Option<String>, Query), ("methods" = Option<String>, Query), ("status_min" = Option<i64>, Query), ("status_max" = Option<i64>, Query), ("in_scope_only" = Option<bool>, Query), ("source" = Option<String>, Query), ("hide_ext" = Option<String>, Query), ("before" = Option<i64>, Query), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("sort" = Option<String>, Query, description = "id (default), time, method, host, path, status, size, duration or mime. Ties break on the id."), ("asc" = Option<bool>, Query, description = "Oldest or smallest first."), ("offset" = Option<i64>, Query, description = "Rows to skip, for paging a list sorted by something other than id."), ("q" = Option<String>, Query, description = "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.")), responses((status = 200, description = "OK", body = Vec<FlowSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn list_flows() {}
+
+#[utoipa::path(get, path = "/flows/query", operation_id = "check_flow_query", tag = "history", description = "Check a history query without running it: the recognised terms with their positions, and every mistake. Needs the viewer role or above.", params(("q" = Option<String>, Query)), responses((status = 200, description = "OK", body = QueryCheck), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn check_flow_query() {}
+
+#[utoipa::path(post, path = "/flows/tags", operation_id = "change_tags", tag = "history", description = "Add and remove tags on many flows in one step (tags compare without regard to case; a flow keeps at most 32). Answers how many flows changed. Needs the tester role or above.", request_body = ChangeTags, responses((status = 200, description = "OK", body = ChangedCount), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn change_tags() {}
+
+#[utoipa::path(get, path = "/organizer", operation_id = "list_organizer", tag = "organizer", description = "Requests kept for follow-up, newest first, each with its status, note and the flow's summary. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<bosun_store::OrganizerItem>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_organizer() {}
+
+#[utoipa::path(post, path = "/organizer", operation_id = "add_to_organizer", tag = "organizer", description = "Keep requests in the Organizer (ones already there are left alone). Answers how many were new. Needs the tester role or above.", request_body = OrganizerAdd, responses((status = 200, description = "OK", body = AddedCount), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn add_to_organizer() {}
+
+#[utoipa::path(patch, path = "/organizer/{id}", operation_id = "update_organizer_item", tag = "organizer", description = "Change an item's status and/or note. Needs the tester role or above.", params(("id" = i64, Path)), request_body = OrganizerChange, responses((status = 204, description = "Changed"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn update_organizer_item() {}
+
+#[utoipa::path(delete, path = "/organizer/{id}", operation_id = "delete_organizer_item", tag = "organizer", description = "Remove an item (the request stays in the history). Needs the tester role or above.", params(("id" = i64, Path)), responses((status = 204, description = "Removed"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn delete_organizer_item() {}
+
+#[utoipa::path(get, path = "/saved-filters", operation_id = "get_saved_filters", tag = "history", description = "The project's saved history filters. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<SavedFilter>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_saved_filters() {}
+
+#[utoipa::path(put, path = "/saved-filters", operation_id = "put_saved_filters", tag = "history", description = "Replace the saved filters. Every query must be valid. Needs the tester role or above.", request_body = Vec<SavedFilter>, responses((status = 200, description = "OK", body = Vec<SavedFilter>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_saved_filters() {}
 
 #[utoipa::path(delete, path = "/flows", operation_id = "delete_flows", tag = "history", description = "Delete flows by id. Needs the tester role or above.", request_body = DeleteFlows, responses((status = 200, description = "OK", body = Deleted), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn delete_flows() {}
@@ -306,6 +338,12 @@ fn backup_project() {}
 #[utoipa::path(get, path = "/audit", operation_id = "audit_log", tag = "accounts", description = "The audit log, newest first. Needs the admin role or above.", params(("before" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = Vec<AuditEntry>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn audit_log() {}
 
+#[utoipa::path(get, path = "/flows/{id}/engage", operation_id = "flow_engage", tag = "history", description = "Comments, scripts, references and URLs in the response, and the parameters of the request, for finding what to test next. Scans up to 2 MiB of each body. Needs the viewer role.", params(("id" = i64, Path, description = "Flow id")), responses((status = 200, description = "OK", body = crate::engage::EngageReport), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such flow", body = Error)))]
+fn flow_engage() {}
+
+#[utoipa::path(get, path = "/flows/{id}/csrf-poc", operation_id = "flow_csrf_poc", tag = "history", description = "A cross-site request forgery proof of concept for the recorded request, as an HTML attachment to open in a test browser that is signed in to the target. Only a GET or POST with a form, JSON-object or multipart body can be reproduced; anything else is a 422 that says why. ?auto=1 submits on load. Needs the viewer role.", params(("id" = i64, Path, description = "Flow id"), ("auto" = Option<String>, Query, description = "1 to submit on load")), responses((status = 200, description = "An HTML file", content_type = "text/html", body = String), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such flow", body = Error), (status = 422, description = "The request cannot be reproduced by a form", body = Error)))]
+fn flow_csrf_poc() {}
+
 #[utoipa::path(get, path = "/events", operation_id = "events", tag = "events", description = "WebSocket event stream. ?since=N&epoch=E resumes after event N of that engine run (see ProxyEvent). Needs the viewer role or above.", params(("since" = Option<i64>, Query), ("epoch" = Option<String>, Query)), responses((status = 101, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn events() {}
 
@@ -321,13 +359,19 @@ fn repeater_send() {}
 fn get_repeater_settings() {}
 #[utoipa::path(put, path = "/repeater/settings", operation_id = "put_repeater_settings", tag = "repeater", description = "Allow or refuse out-of-scope sends from the Repeater (audited; goes back to refuse when a project is opened). Needs the tester role or above.", request_body = RepeaterSettings, responses((status = 200, description = "OK", body = RepeaterSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn put_repeater_settings() {}
+#[utoipa::path(get, path = "/repeater/tabs", operation_id = "get_repeater_tabs", tag = "repeater", description = "The Repeater's tabs as saved in the open project (requests and options; responses are not stored).", responses((status = 200, description = "OK", body = TabsDoc), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn get_repeater_tabs() {}
+#[utoipa::path(post, path = "/repeater/ws", operation_id = "repeater_ws", tag = "repeater", description = "Open a WebSocket with a raw handshake, send frames exactly as described (any opcode, reserved bits, FIN and mask), listen for a while, then close. The handshake is recorded as a flow with source repeater and the frames as its messages. Passes the scope gate. A refused or failed connection comes back as a reply with an error. Needs the tester role or above.", request_body = WsBody, responses((status = 200, description = "OK", body = WsReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn repeater_ws() {}
+#[utoipa::path(put, path = "/repeater/tabs", operation_id = "put_repeater_tabs", tag = "repeater", description = "Replace the Repeater's saved tabs (at most 100). Needs the tester role or above.", request_body = TabsDoc, responses((status = 200, description = "OK", body = TabsDoc), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Too large", body = Error)))]
+fn put_repeater_tabs() {}
 
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
-    components(schemas(ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
+    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
+    components(schemas(crate::engage::EngageReport, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
     tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
@@ -352,10 +396,20 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("get", "/auth/sso"),
     ("post", "/auth/password"),
     ("get", "/flows"),
+    ("get", "/flows/query"),
+    ("post", "/flows/tags"),
+    ("get", "/organizer"),
+    ("post", "/organizer"),
+    ("patch", "/organizer/{id}"),
+    ("delete", "/organizer/{id}"),
+    ("get", "/saved-filters"),
+    ("put", "/saved-filters"),
     ("delete", "/flows"),
     ("get", "/flows/{id}"),
     ("patch", "/flows/{id}"),
     ("get", "/flows/{id}/ws"),
+    ("get", "/flows/{id}/engage"),
+    ("get", "/flows/{id}/csrf-poc"),
     ("get", "/flows/{id}/{part}/body"),
     ("get", "/sitemap"),
     ("get", "/scope"),
@@ -376,6 +430,9 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/repeater/send"),
     ("get", "/repeater/settings"),
     ("put", "/repeater/settings"),
+    ("post", "/repeater/ws"),
+    ("get", "/repeater/tabs"),
+    ("put", "/repeater/tabs"),
     ("get", "/ca"),
     ("get", "/ca/cert.pem"),
     ("post", "/browser/launch"),

@@ -930,7 +930,7 @@
         "tags": [
           "history"
         ],
-        "description": "List recorded flows, newest first. Needs the viewer role or above.",
+        "description": "List recorded flows, newest first unless sorted. Needs the viewer role or above.",
         "operationId": "list_flows",
         "parameters": [
           {
@@ -1025,6 +1025,43 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "id (default), time, method, host, path, status, size, duration or mime. Ties break on the id.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "asc",
+            "in": "query",
+            "description": "Oldest or smallest first.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip, for paging a list sorted by something other than id.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1106,6 +1143,148 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/query": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "Check a history query without running it: the recognised terms with their positions, and every mistake. Needs the viewer role or above.",
+        "operationId": "check_flow_query",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/tags": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "description": "Add and remove tags on many flows in one step (tags compare without regard to case; a flow keeps at most 32). Answers how many flows changed. Needs the tester role or above.",
+        "operationId": "change_tags",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeTags"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangedCount"
                 }
               }
             }
@@ -1287,6 +1466,151 @@
           },
           "404": {
             "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/{id}/csrf-poc": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "A cross-site request forgery proof of concept for the recorded request, as an HTML attachment to open in a test browser that is signed in to the target. Only a GET or POST with a form, JSON-object or multipart body can be reproduced; anything else is a 422 that says why. ?auto=1 submits on load. Needs the viewer role.",
+        "operationId": "flow_csrf_poc",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Flow id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "auto",
+            "in": "query",
+            "description": "1 to submit on load",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An HTML file",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request cannot be reproduced by a form",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/flows/{id}/engage": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "Comments, scripts, references and URLs in the response, and the parameters of the request, for finding what to test next. Scans up to 2 MiB of each body. Needs the viewer role.",
+        "operationId": "flow_engage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Flow id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngageReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such flow",
             "content": {
               "application/json": {
                 "schema": {
@@ -1835,6 +2159,277 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organizer": {
+      "get": {
+        "tags": [
+          "organizer"
+        ],
+        "description": "Requests kept for follow-up, newest first, each with its status, note and the flow's summary. Needs the viewer role or above.",
+        "operationId": "list_organizer",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OrganizerItem"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "organizer"
+        ],
+        "description": "Keep requests in the Organizer (ones already there are left alone). Answers how many were new. Needs the tester role or above.",
+        "operationId": "add_to_organizer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizerAdd"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddedCount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organizer/{id}": {
+      "delete": {
+        "tags": [
+          "organizer"
+        ],
+        "description": "Remove an item (the request stays in the history). Needs the tester role or above.",
+        "operationId": "delete_organizer_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "organizer"
+        ],
+        "description": "Change an item's status and/or note. Needs the tester role or above.",
+        "operationId": "update_organizer_item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizerChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Changed"
           },
           "400": {
             "description": "Bad request",
@@ -2855,6 +3450,177 @@
         }
       }
     },
+    "/repeater/tabs": {
+      "get": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "The Repeater's tabs as saved in the open project (requests and options; responses are not stored).",
+        "operationId": "get_repeater_tabs",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TabsDoc"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Replace the Repeater's saved tabs (at most 100). Needs the tester role or above.",
+        "operationId": "put_repeater_tabs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TabsDoc"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TabsDoc"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/repeater/ws": {
+      "post": {
+        "tags": [
+          "repeater"
+        ],
+        "description": "Open a WebSocket with a raw handshake, send frames exactly as described (any opcode, reserved bits, FIN and mask), listen for a while, then close. The handshake is recorded as a flow with source repeater and the frames as its messages. Passes the scope gate. A refused or failed connection comes back as a reply with an error. Needs the tester role or above.",
+        "operationId": "repeater_ws",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WsReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rules": {
       "get": {
         "tags": [
@@ -2946,6 +3712,145 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/MatchRule"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/saved-filters": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "description": "The project's saved history filters. Needs the viewer role or above.",
+        "operationId": "get_saved_filters",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedFilter"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "history"
+        ],
+        "description": "Replace the saved filters. Every query must be valid. Needs the tester role or above.",
+        "operationId": "put_saved_filters",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SavedFilter"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedFilter"
                   }
                 }
               }
@@ -4222,6 +5127,19 @@
   },
   "components": {
     "schemas": {
+      "AddedCount": {
+        "type": "object",
+        "required": [
+          "added"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "Annotate": {
         "type": "object",
         "properties": {
@@ -4362,6 +5280,45 @@
           },
           "spki_sha256": {
             "type": "string"
+          }
+        }
+      },
+      "ChangeTags": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "add": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/i64"
+            }
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ChangedCount": {
+        "type": "object",
+        "required": [
+          "changed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -4605,6 +5562,41 @@
           "server_to_client"
         ]
       },
+      "EngageReport": {
+        "type": "object",
+        "required": [
+          "findings",
+          "params",
+          "truncated"
+        ],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "description": "What the response holds: comments, scripts, links, forms, resources, URLs and quoted paths."
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Param"
+            },
+            "description": "The parameters of the request: query, form body and JSON body."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The scanned body was longer than the scan limit (or the decoded body was cut)."
+          },
+          "undecoded": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The response has a Content-Encoding Bosun cannot undo, so only the request side is reported."
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": [
@@ -4615,6 +5607,40 @@
             "type": "string"
           }
         }
+      },
+      "Finding": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value",
+          "offset"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/FindingKind"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset into the text that was scanned.",
+            "minimum": 0
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "FindingKind": {
+        "type": "string",
+        "enum": [
+          "comment",
+          "inline_script",
+          "script_src",
+          "link",
+          "form_action",
+          "resource",
+          "url",
+          "path"
+        ]
       },
       "FlowMeta": {
         "allOf": [
@@ -5102,6 +6128,117 @@
           "sha512"
         ]
       },
+      "OrganizerAdd": {
+        "type": "object",
+        "required": [
+          "flow_ids"
+        ],
+        "properties": {
+          "flow_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/i64"
+            }
+          }
+        }
+      },
+      "OrganizerChange": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrganizerStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "OrganizerItem": {
+        "type": "object",
+        "description": "A request kept in the Organizer, with the summary of the flow it points at.",
+        "required": [
+          "id",
+          "flow_id",
+          "status",
+          "note",
+          "added_ms",
+          "updated_ms",
+          "flow"
+        ],
+        "properties": {
+          "added_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "flow": {
+            "$ref": "#/components/schemas/FlowSummary"
+          },
+          "flow_id": {
+            "$ref": "#/components/schemas/i64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "note": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrganizerStatus"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "OrganizerStatus": {
+        "type": "string",
+        "description": "Where a saved request stands.",
+        "enum": [
+          "todo",
+          "in_progress",
+          "done",
+          "ignored"
+        ]
+      },
+      "Param": {
+        "type": "object",
+        "required": [
+          "name",
+          "where",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "where": {
+            "$ref": "#/components/schemas/ParamWhere"
+          }
+        }
+      },
+      "ParamWhere": {
+        "type": "string",
+        "enum": [
+          "query",
+          "form",
+          "json"
+        ]
+      },
       "PartInfo": {
         "type": "object",
         "description": "The head of one stored message and how big it is, which is all the flow overview needs.",
@@ -5462,6 +6599,7 @@
           "memory_budget",
           "memory_used",
           "memory_refused",
+          "connections_refused",
           "recorder_bodies_dropped",
           "recorder_records_dropped",
           "recorder_write_failures",
@@ -5470,6 +6608,12 @@
           "intercept_queued_bytes"
         ],
         "properties": {
+          "connections_refused": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections closed at once because the proxy was at its connection limit.",
+            "minimum": 0
+          },
           "intercept_queued_bytes": {
             "type": "integer",
             "minimum": 0
@@ -5510,6 +6654,49 @@
           "recorder_write_failures": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "QueryCheck": {
+        "type": "object",
+        "description": "What a history query means: each recognised term with its place in the text, and every mistake. Nothing is\nrun. A front end uses this for chips and messages while the person types.",
+        "required": [
+          "terms",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueryError"
+            }
+          },
+          "terms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TermSpan"
+            }
+          }
+        }
+      },
+      "QueryError": {
+        "type": "object",
+        "required": [
+          "message",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer",
             "minimum": 0
           }
         }
@@ -5579,6 +6766,22 @@
           "response_header",
           "response_body"
         ]
+      },
+      "SavedFilter": {
+        "type": "object",
+        "description": "A history query kept under a name, for the whole project.",
+        "required": [
+          "name",
+          "query"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          }
+        }
       },
       "Scheme": {
         "type": "string",
@@ -6059,6 +7262,59 @@
           }
         }
       },
+      "TabsDoc": {
+        "type": "object",
+        "description": "The Repeater's tabs as the page keeps them. The server stores them as the page wrote them and looks only at their\ncount and shape, so the page can add a field without a server change.",
+        "required": [
+          "tabs"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Id of the tab that was open."
+          },
+          "next": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The id the next new tab gets."
+          },
+          "tabs": {
+            "type": "array",
+            "items": {},
+            "description": "One object per tab (target, request text, options). Responses are not stored."
+          }
+        }
+      },
+      "TermSpan": {
+        "type": "object",
+        "description": "A recognised term, for showing as a chip: where it is in the query and what it says.",
+        "required": [
+          "key",
+          "label",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "key": {
+            "type": "string",
+            "description": "`host`, `method`, `status`, `text`, ..."
+          },
+          "label": {
+            "type": "string",
+            "description": "The term as written, including a leading `-`."
+          },
+          "start": {
+            "type": "integer",
+            "description": "Byte offsets into the query.",
+            "minimum": 0
+          }
+        }
+      },
       "TicketBody": {
         "type": "object",
         "required": [
@@ -6166,6 +7422,118 @@
           }
         }
       },
+      "WsBody": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "host",
+          "port",
+          "request"
+        ],
+        "properties": {
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WsFrameIn"
+            },
+            "description": "Frames to send, in order, once the server has answered `101`."
+          },
+          "host": {
+            "type": "string"
+          },
+          "listen_ms": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How long to keep listening after the last frame, in milliseconds (at most 10000).",
+            "minimum": 0
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request": {
+            "type": "string",
+            "description": "The handshake, a raw HTTP/1.1 upgrade request, base64."
+          },
+          "scheme": {
+            "$ref": "#/components/schemas/Scheme"
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WsFrameIn": {
+        "type": "object",
+        "required": [
+          "opcode"
+        ],
+        "properties": {
+          "fin": {
+            "type": "boolean"
+          },
+          "mask": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`random` (the default), `none` (send unmasked, which a compliant client never does) or four bytes as eight\nhex digits."
+          },
+          "opcode": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0 continuation, 1 text, 2 binary, 8 close, 9 ping, 10 pong; anything from 0 to 15 is sent as given.",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "string",
+            "description": "The payload, base64."
+          },
+          "rsv": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The three reserved bits as a number from 0 to 7.",
+            "minimum": 0
+          }
+        }
+      },
+      "WsFrameOut": {
+        "type": "object",
+        "required": [
+          "direction",
+          "fin",
+          "rsv",
+          "opcode",
+          "masked",
+          "payload"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "fin": {
+            "type": "boolean"
+          },
+          "masked": {
+            "type": "boolean"
+          },
+          "opcode": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "string",
+            "description": "The payload, unmasked, base64."
+          },
+          "rsv": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "WsMessage": {
         "type": "object",
         "description": "A WebSocket message seen on an upgraded connection.",
@@ -6205,6 +7573,69 @@
           },
           "truncated": {
             "type": "boolean"
+          }
+        }
+      },
+      "WsReply": {
+        "type": "object",
+        "required": [
+          "refused",
+          "request",
+          "response",
+          "frames",
+          "closed_by_server"
+        ],
+        "properties": {
+          "closed_by_server": {
+            "type": "boolean",
+            "description": "The server sent a close frame."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no open connection or why listening stopped early."
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The handshake as a recorded flow; the frames are its messages."
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WsFrameOut"
+            },
+            "description": "Frames sent and received, in the order they happened (sent ones first, then what came back)."
+          },
+          "in_scope": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "refused": {
+            "type": "boolean",
+            "description": "The scope gate or the kill switch stopped it; nothing was sent."
+          },
+          "request": {
+            "type": "string",
+            "description": "The handshake request and the server's answer, base64."
+          },
+          "response": {
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

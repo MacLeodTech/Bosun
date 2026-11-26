@@ -7,6 +7,29 @@ There is no tagged release yet. The first public preview is v0.2, at the end of 
 
 Newest first. Each entry keeps the work package's original brief (why, do, done when) and its "Done" note.
 
+## Phase 3, track A (branch `wp-43`, 2026-11-25)
+
+- **Recorder under bursts** (PR #32). The proxy now counts refused connections, and a test pins how the recorder
+  behaves under a burst (see the PR for what the 7,000 requests a second burst showed).
+- **WP-75 History query language and saved filters** (PR #33, UI in the `wp-43` branch). The grammar is parsed in Rust
+  (`GET /flows/query` for chips and errors, `GET /flows?q=`), compiled to SQL with bound parameters only, a 5 second
+  deadline, a `history_query` fuzz target, the query bar with completion and recent queries, and saved filters.
+  Saved filters live in the project setting `saved_filters`, not in a table (a deviation from the brief's "a
+  migration"). Documented in `docs/query-language.md`. Reuse of the bar for Intruder results is in WP-47.
+- **WP-43 History, Organizer and "send to"** (`wp-43`). Server-side sorting and paging by any column, a column chooser,
+  colour highlights (reserved tags `hl:<colour>`), bulk tag changes (`POST /flows/tags`), "send to" Decoder and
+  Comparer from the History menu, and the Organizer (migration v3, `/organizer`, a status and a note per saved
+  request). No separate Logger panel: History lists every source (Source column, `source:`), and a second History
+  instance needs multi-instance panels. Left: Send to Intruder (with WP-47).
+- **WP-77 Export** (`wp-43`). Copy as cURL for POSIX shells and PowerShell, snippets in Python, JavaScript and Go, and a
+  HAR 1.2 export of the selection. Cookie and authorization values become `REDACTED` unless "Keep cookies and
+  authorization values" is ticked (a per-browser preference, off by default). Golden tests, including hostile values run
+  through a real shell. Left: the round trip through HAR import, with WP-60.
+- **WP-45 Engagement helpers, first part** (`wp-43`). `bosun_codec::engage` (comments, scripts, links, forms,
+  resources, URLs, quoted paths, request parameters, the CSRF page builder; an `engage` fuzz target),
+  `GET /flows/{id}/engage`, `GET /flows/{id}/csrf-poc` (an attachment with a sandboxing CSP), the Findings panel and
+  History menu items. Left: analysing a target across the whole history.
+
 ## Phase 3 so far (on `main`)
 
 - **Web UI upgrade** (PR #25). The `web/` restructure from `docs/ui-ux-upgrade-plan.md`, phases 0 to 5: a dockable
@@ -27,6 +50,9 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 - **WP-41 Repeater, first slice** (PR #22). Connection reuse (opt-in pooling that keeps the scope gate and DNS pinning),
   HTTP/2 multiplexing with a single-packet batch mode, `/repeater/send` and `/repeater/settings`, the `bosun-client`
   methods, and the Repeater page. What is left is in the roadmap's WP-41 entry.
+
+- **WP-41 finished** (PRs #28, #30, and the CLI PR). Repeater tabs saved in the project, `/repeater/ws`, the page's
+  WebSocket mode, and `bosun login`, `bosun status` and `bosun repeater send FILE`.
 
 ### WP-40: the raw request engine
 
@@ -62,6 +88,26 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
   zstd, JWT, Unicode escapes, SHA-256 and SHA-512, smart decode, word and byte diff), the `/decoder/apply`,
   `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests, the `codec` fuzz target, and the
   Decoder and Comparer panels. **Not done:** MD5 and SHA-1, compression encoders, and a `bosun decode` command (WP-26).
+
+### WP-44: Message editor
+
+**WP-44** Message editor (CodeMirror 6, hex, pretty-print) · Phase 3 · M
+
+- **Do:**
+  - CodeMirror 6 for the raw editor, with HTTP syntax highlighting; a hex editor; pretty-printing of JSON, XML and
+    HTML as text, never rendered.
+  - Check CodeMirror under the strict CSP. If anything is blocked, use `EditorView.cspNonce` with a per-response
+    nonce from the server instead of loosening `style-src`. Record the decision in the threat model.
+  - Large messages stay responsive (load bodies in pages from WP-12's endpoints).
+- **Done when:** a Playwright test edits and sends a message, and the CSP header is unchanged or only gains a nonce.
+- **Done:** the editor (`RawEditor`, `HexEditor`, `MessageEditor`) is used by the Repeater and by Intercept's edit
+  view. CodeMirror adds its styles as a `<style>` element, which `style-src 'self'` blocks, but inside a shadow root
+  it adopts a constructed stylesheet instead, which the policy does not govern. So the editor is mounted in a shadow
+  root, and the CSP header is **unchanged** (no nonce, no `unsafe-inline`); the e2e test asserts both. Colours come
+  from the existing tokeniser (not a CodeMirror language package), so only `@codemirror/state`, `view` and `commands`
+  were added. Window-level shortcuts now read the real event target (`lib/typing.ts`), because inside a shadow root
+  `event.target` is the host element: Intercept's single-key shortcuts had fired while typing. **Not done:** paging
+  an editable body (the editor holds what the message view has loaded; the hex view is read-only past 256 KiB).
 
 ## After Phase 2 (on `main`)
 

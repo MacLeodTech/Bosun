@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { DEFAULT_QUERY, matchesFlow, parseQuery, removeChip, withTerm, withText } from '../src/lib/query.ts';
 import { canonical, conflicts, format, matches, parseKeys } from '../src/lib/shortcuts.ts';
 import { fuzzy } from '../src/lib/fuzzy.ts';
-import { buildCurl } from '../src/lib/curl.ts';
 
 function rng(seed: number) {
   let s = seed >>> 0;
@@ -39,7 +38,8 @@ test('status forms', () => {
 });
 
 test('bad terms are reported, not thrown, and unknown keys are plain text', () => {
-  assert.equal(parseQuery('scope:out').errors.length, 1);
+  assert.equal(parseQuery('scope:out').errors.length, 0);
+  assert.equal(parseQuery('scope:out').filter.serverOnly, true);
   assert.equal(parseQuery('ext:png').errors.length, 1);
   assert.equal(parseQuery('-host:x').errors.length, 1);
   assert.equal(parseQuery('method:').errors.length, 1);
@@ -47,6 +47,16 @@ test('bad terms are reported, not thrown, and unknown keys are plain text', () =
   const p = parseQuery('foo:bar');
   assert.equal(p.filter.text, 'foo:bar');
   assert.deepEqual(p.errors, []);
+});
+
+test('terms only the server knows keep the live tail from matching on this side', () => {
+  for (const q of ['tag:x', 'a or b', 'not a', '(a b)', '-(a)', 'header:x=y', 'size:>1k', 'since:1h']) {
+    const p = parseQuery(q);
+    assert.equal(p.filter.serverOnly, true, q);
+  }
+  for (const q of ['host:a.com', 'login', 'order status', DEFAULT_QUERY]) assert.equal(parseQuery(q).filter.serverOnly, false, q);
+  // Such a term is never taken for free text, so replacing the text leaves it alone.
+  assert.equal(withText('tag:x login', 'other'), 'tag:x other');
 });
 
 test('the default query hides the usual static extensions', () => {
@@ -146,21 +156,6 @@ test('fuzzy never throws and its indices are in range and increasing', () => {
   }
 });
 
-// ---- curl
-
-test('buildCurl', () => {
-  const c = buildCurl('POST /a?b=1 HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nX-It\'s: yes', "it's", 'https')!;
-  assert.ok(c.startsWith("curl -i -X POST 'https://example.com/a?b=1'"));
-  assert.ok(c.includes("-H 'Content-Type: text/plain'"));
-  assert.ok(!c.includes('Content-Length') && !c.includes('Host:'));
-  assert.ok(c.includes(`-H 'X-It'\\''s: yes'`));
-  assert.ok(c.includes(`--data-binary 'it'\\''s'`));
-  assert.equal(buildCurl('GET / HTTP/1.1\r\nHost: x', '', 'https', true), null);
-  assert.equal(buildCurl('GET / HTTP/1.1', '', 'https'), null);
-  assert.equal(buildCurl('nonsense', '', 'https'), null);
-  assert.equal(buildCurl('GET / HTTP/1.1\r\nHost: x', 'x'.repeat(70_000), 'https'), null);
-});
-
 // ---- deep links
 
 import { buildHash, parseHash } from '../src/lib/deeplink.ts';
@@ -206,4 +201,103 @@ test('only well-formed messages get through, and they carry ids only', () => {
     { type: 'select', from: 'abcd1234', selected: new Array(6000).fill(1), selectedId: null, openId: null }, { type: 'alive', id: 'no' }, { type: 'other', id: 'abcd1234' }]) {
     assert.equal(parseMsg(bad), null, JSON.stringify(bad)?.slice(0, 60));
   }
+});
+
+// ---- the query bar
+
+import { applyCompletion, byteToIndex, complete, MAX_PAST, remember } from '../src/lib/querybar.ts';
+
+test('keys complete from a prefix, and values after the colon', () => {
+  const c = complete('host:a he', 9);
+  assert.deepEqual(c.items.map((i) => i.insert), ['header:']);
+  assert.equal(applyCompletion('host:a he', c, c.items[0]!).line, 'host:a header:');
+  const m = complete('method:GET,PO', 13);
+  assert.deepEqual(m.items.map((i) => i.insert), ['POST']);
+  assert.equal(applyCompletion('method:GET,PO', m, m.items[0]!).line, 'method:GET,POST');
+  assert.deepEqual(complete('-sta', 4).items.map((i) => i.insert), ['status:']);
+  assert.deepEqual(complete('(sco', 4).items.map((i) => i.insert), ['scope:']);
+});
+
+test('nothing is offered inside quotes, after a full word or for free-form keys', () => {
+  assert.deepEqual(complete('"host', 5).items, []);
+  assert.deepEqual(complete('host', 4).items, []);
+  assert.deepEqual(complete('tag:x', 5).items, []);
+  assert.deepEqual(complete('', 0).items, []);
+  assert.deepEqual(complete('login ', 6).items, []);
+});
+
+test('completion never throws and stays inside the line', () => {
+  const r = rng(7);
+  const chars = ' abcdefmhst:,-("é\u{1f600}';
+  for (let n = 0; n < 2000; n++) {
+    const line = Array.from({ length: Math.floor(r() * 20) }, () => chars[Math.floor(r() * chars.length)]!).join('');
+    const caret = Math.floor(r() * (line.length + 3)) - 1;
+    const c = complete(line, caret);
+    assert.ok(c.from >= 0 && c.from <= c.to && c.to <= line.length, `${JSON.stringify(line)} ${caret}`);
+    for (const s of c.items) applyCompletion(line, c, s);
+  }
+});
+
+test('past queries: newest first, no repeats, capped, blanks dropped', () => {
+  let p: string[] = [];
+  for (let i = 0; i < 40; i++) p = remember(p, `q${i}`);
+  assert.equal(p.length, MAX_PAST);
+  assert.equal(p[0], 'q39');
+  p = remember(p, 'q30');
+  assert.equal(p[0], 'q30');
+  assert.equal(p.filter((x) => x === 'q30').length, 1);
+  assert.equal(remember(p, '   '), p);
+});
+
+test('server byte offsets map to string positions', () => {
+  const s = 'aé\u{1f600}b';
+  assert.equal(byteToIndex(s, 0), 0);
+  assert.equal(byteToIndex(s, 1), 1);
+  assert.equal(byteToIndex(s, 3), 2);
+  assert.equal(byteToIndex(s, 7), 4);
+  assert.equal(byteToIndex(s, 99), s.length);
+});
+
+// ---- the History table
+
+import { COLS, DEFAULT_COLS, HL_COLORS, highlightOf, nextSort, normalizeCols, plainTags, template } from '../src/lib/histcols.ts';
+
+test('a stored column list is made safe: known, unique, in table order, path kept', () => {
+  assert.deepEqual(normalizeCols(undefined), DEFAULT_COLS);
+  assert.deepEqual(normalizeCols([]), DEFAULT_COLS);
+  assert.deepEqual(normalizeCols('x'), DEFAULT_COLS);
+  assert.deepEqual(normalizeCols(['time', 'host', 'host', 'nope', 7]), ['host', 'path', 'time']);
+  assert.deepEqual(normalizeCols(['tags']), ['path', 'tags']);
+  const r = rng(3);
+  for (let n = 0; n < 500; n++) {
+    const pool = [...COLS.map((c) => c.key), 'zzz', 5, null];
+    const got = normalizeCols(Array.from({ length: Math.floor(r() * 8) }, () => pool[Math.floor(r() * pool.length)]));
+    assert.ok(got.includes('path'));
+    assert.equal(new Set(got).size, got.length);
+  }
+  assert.ok(template(['id', 'path']).includes('minmax(8rem, 1fr)'));
+});
+
+test('highlights are reserved tags and stay out of the editable tag list', () => {
+  assert.equal(highlightOf(['x', 'hl:Red']), 'red');
+  assert.equal(highlightOf(['hl:pink']), null);
+  assert.equal(highlightOf(undefined), null);
+  assert.deepEqual(plainTags(['a', 'hl:red', 'HL:blue', 'b']), ['a', 'b']);
+  assert.equal(HL_COLORS.length, 6);
+});
+
+test('clicking a header: descending, ascending, then back to the id order', () => {
+  let s = { key: 'id' as const, asc: false } as { key: import('../src/lib/histcols.ts').SortKey; asc: boolean };
+  s = nextSort(s, 'status');
+  assert.deepEqual(s, { key: 'status', asc: false });
+  s = nextSort(s, 'status');
+  assert.deepEqual(s, { key: 'status', asc: true });
+  s = nextSort(s, 'status');
+  assert.deepEqual(s, { key: 'id', asc: false });
+  s = nextSort(s, 'id');
+  assert.deepEqual(s, { key: 'id', asc: true });
+  s = nextSort(s, 'host');
+  assert.deepEqual(s, { key: 'host', asc: false });
+  s = nextSort(s, 'path');
+  assert.deepEqual(s, { key: 'path', asc: false });
 });

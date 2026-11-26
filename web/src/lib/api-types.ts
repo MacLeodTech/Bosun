@@ -249,12 +249,46 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description List recorded flows, newest first. Needs the viewer role or above. */
+        /** @description List recorded flows, newest first unless sorted. Needs the viewer role or above. */
         get: operations["list_flows"];
         put?: never;
         post?: never;
         /** @description Delete flows by id. Needs the tester role or above. */
         delete: operations["delete_flows"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flows/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Check a history query without running it: the recognised terms with their positions, and every mistake. Needs the viewer role or above. */
+        get: operations["check_flow_query"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flows/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Add and remove tags on many flows in one step (tags compare without regard to case; a flow keeps at most 32). Answers how many flows changed. Needs the tester role or above. */
+        post: operations["change_tags"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -276,6 +310,40 @@ export interface paths {
         head?: never;
         /** @description Set tags and note. Needs the tester role or above. */
         patch: operations["annotate_flow"];
+        trace?: never;
+    };
+    "/flows/{id}/csrf-poc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description A cross-site request forgery proof of concept for the recorded request, as an HTML attachment to open in a test browser that is signed in to the target. Only a GET or POST with a form, JSON-object or multipart body can be reproduced; anything else is a 422 that says why. ?auto=1 submits on load. Needs the viewer role. */
+        get: operations["flow_csrf_poc"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/flows/{id}/engage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Comments, scripts, references and URLs in the response, and the parameters of the request, for finding what to test next. Scans up to 2 MiB of each body. Needs the viewer role. */
+        get: operations["flow_engage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/flows/{id}/ws": {
@@ -380,6 +448,42 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/organizer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requests kept for follow-up, newest first, each with its status, note and the flow's summary. Needs the viewer role or above. */
+        get: operations["list_organizer"];
+        put?: never;
+        /** @description Keep requests in the Organizer (ones already there are left alone). Answers how many were new. Needs the tester role or above. */
+        post: operations["add_to_organizer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizer/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Remove an item (the request stays in the history). Needs the tester role or above. */
+        delete: operations["delete_organizer_item"];
+        options?: never;
+        head?: never;
+        /** @description Change an item's status and/or note. Needs the tester role or above. */
+        patch: operations["update_organizer_item"];
         trace?: never;
     };
     "/projects": {
@@ -571,6 +675,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repeater/tabs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The Repeater's tabs as saved in the open project (requests and options; responses are not stored). */
+        get: operations["get_repeater_tabs"];
+        /** @description Replace the Repeater's saved tabs (at most 100). Needs the tester role or above. */
+        put: operations["put_repeater_tabs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repeater/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Open a WebSocket with a raw handshake, send frames exactly as described (any opcode, reserved bits, FIN and mask), listen for a while, then close. The handshake is recorded as a flow with source repeater and the frames as its messages. Passes the scope gate. A refused or failed connection comes back as a reply with an error. Needs the tester role or above. */
+        post: operations["repeater_ws"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules": {
         parameters: {
             query?: never;
@@ -582,6 +721,24 @@ export interface paths {
         get: operations["get_rules"];
         /** @description Replace the rules (audited). Needs the tester role or above. */
         put: operations["put_rules"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/saved-filters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The project's saved history filters. Needs the viewer role or above. */
+        get: operations["get_saved_filters"];
+        /** @description Replace the saved filters. Every query must be valid. Needs the tester role or above. */
+        put: operations["put_saved_filters"];
         post?: never;
         delete?: never;
         options?: never;
@@ -835,6 +992,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AddedCount: {
+            /** Format: int64 */
+            added: number;
+        };
         Annotate: {
             note?: string | null;
             tags?: string[] | null;
@@ -878,6 +1039,15 @@ export interface components {
             fingerprint_sha256: string;
             pem: string;
             spki_sha256: string;
+        };
+        ChangeTags: {
+            add?: string[];
+            ids: components["schemas"]["i64"][];
+            remove?: string[];
+        };
+        ChangedCount: {
+            /** Format: int64 */
+            changed: number;
         };
         /** @description The project that is open. */
         CurrentProject: {
@@ -947,9 +1117,27 @@ export interface components {
         };
         /** @enum {string} */
         Direction: "client_to_server" | "server_to_client";
+        EngageReport: {
+            /** @description What the response holds: comments, scripts, links, forms, resources, URLs and quoted paths. */
+            findings: components["schemas"]["Finding"][];
+            /** @description The parameters of the request: query, form body and JSON body. */
+            params: components["schemas"]["Param"][];
+            /** @description The scanned body was longer than the scan limit (or the decoded body was cut). */
+            truncated: boolean;
+            /** @description The response has a Content-Encoding Bosun cannot undo, so only the request side is reported. */
+            undecoded?: string | null;
+        };
         Error: {
             error: string;
         };
+        Finding: {
+            kind: components["schemas"]["FindingKind"];
+            /** @description Byte offset into the text that was scanned. */
+            offset: number;
+            value: string;
+        };
+        /** @enum {string} */
+        FindingKind: "comment" | "inline_script" | "script_src" | "link" | "form_action" | "resource" | "url" | "path";
         /** @description A flow without its bodies: its summary, and each stored message's head and size. */
         FlowMeta: components["schemas"]["FlowSummary"] & {
             original_request?: components["schemas"]["PartInfo"] | null;
@@ -1088,6 +1276,38 @@ export interface components {
          * @enum {string}
          */
         Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "sha256" | "sha512";
+        OrganizerAdd: {
+            flow_ids: components["schemas"]["i64"][];
+        };
+        OrganizerChange: {
+            note?: string | null;
+            status?: components["schemas"]["OrganizerStatus"] | null;
+        };
+        /** @description A request kept in the Organizer, with the summary of the flow it points at. */
+        OrganizerItem: {
+            /** Format: int64 */
+            added_ms: number;
+            flow: components["schemas"]["FlowSummary"];
+            flow_id: components["schemas"]["i64"];
+            /** Format: int64 */
+            id: number;
+            note: string;
+            status: components["schemas"]["OrganizerStatus"];
+            /** Format: int64 */
+            updated_ms: number;
+        };
+        /**
+         * @description Where a saved request stands.
+         * @enum {string}
+         */
+        OrganizerStatus: "todo" | "in_progress" | "done" | "ignored";
+        Param: {
+            name: string;
+            value: string;
+            where: components["schemas"]["ParamWhere"];
+        };
+        /** @enum {string} */
+        ParamWhere: "query" | "form" | "json";
         /** @description The head of one stored message and how big it is, which is all the flow overview needs. */
         PartInfo: {
             /**
@@ -1184,6 +1404,11 @@ export interface components {
         };
         /** @description Resource counters (see [`Proxy::stats`]). */
         ProxyStats: {
+            /**
+             * Format: int64
+             * @description Connections closed at once because the proxy was at its connection limit.
+             */
+            connections_refused: number;
             intercept_queued_bytes: number;
             /** Format: int64 */
             intercept_refused: number;
@@ -1199,6 +1424,19 @@ export interface components {
             recorder_records_lost: number;
             /** Format: int64 */
             recorder_write_failures: number;
+        };
+        /**
+         * @description What a history query means: each recognised term with its place in the text, and every mistake. Nothing is
+         *     run. A front end uses this for chips and messages while the person types.
+         */
+        QueryCheck: {
+            errors: components["schemas"]["QueryError"][];
+            terms: components["schemas"]["TermSpan"][];
+        };
+        QueryError: {
+            end: number;
+            message: string;
+            start: number;
         };
         RenameProject: {
             name: string;
@@ -1218,6 +1456,11 @@ export interface components {
         };
         /** @enum {string} */
         RuleTarget: "request_first_line" | "request_header" | "request_body" | "response_first_line" | "response_header" | "response_body";
+        /** @description A history query kept under a name, for the whole project. */
+        SavedFilter: {
+            name: string;
+            query: string;
+        };
         /** @enum {string} */
         Scheme: "http" | "https";
         /** @description One include or exclude rule, as the user writes it. */
@@ -1375,6 +1618,34 @@ export interface components {
         Stopped: {
             stopped: boolean;
         };
+        /**
+         * @description The Repeater's tabs as the page keeps them. The server stores them as the page wrote them and looks only at their
+         *     count and shape, so the page can add a field without a server change.
+         */
+        TabsDoc: {
+            /**
+             * Format: int64
+             * @description Id of the tab that was open.
+             */
+            active?: number;
+            /**
+             * Format: int64
+             * @description The id the next new tab gets.
+             */
+            next?: number;
+            /** @description One object per tab (target, request text, options). Responses are not stored. */
+            tabs: unknown[];
+        };
+        /** @description A recognised term, for showing as a chip: where it is in the query and what it says. */
+        TermSpan: {
+            end: number;
+            /** @description `host`, `method`, `status`, `text`, ... */
+            key: string;
+            /** @description The term as written, including a leading `-`. */
+            label: string;
+            /** @description Byte offsets into the query. */
+            start: number;
+        };
         TicketBody: {
             /** @description The single-use ticket an embedded engine printed for its parent. */
             ticket: string;
@@ -1409,6 +1680,53 @@ export interface components {
             role: components["schemas"]["Role"];
             username: string;
         };
+        WsBody: {
+            /** @description Frames to send, in order, once the server has answered `101`. */
+            frames?: components["schemas"]["WsFrameIn"][];
+            host: string;
+            /**
+             * Format: int32
+             * @description How long to keep listening after the last frame, in milliseconds (at most 10000).
+             */
+            listen_ms?: number;
+            /** Format: int32 */
+            port: number;
+            /** @description The handshake, a raw HTTP/1.1 upgrade request, base64. */
+            request: string;
+            scheme: components["schemas"]["Scheme"];
+            verify_tls?: boolean;
+        };
+        WsFrameIn: {
+            fin?: boolean;
+            /**
+             * @description `random` (the default), `none` (send unmasked, which a compliant client never does) or four bytes as eight
+             *     hex digits.
+             */
+            mask?: string | null;
+            /**
+             * Format: int32
+             * @description 0 continuation, 1 text, 2 binary, 8 close, 9 ping, 10 pong; anything from 0 to 15 is sent as given.
+             */
+            opcode: number;
+            /** @description The payload, base64. */
+            payload?: string;
+            /**
+             * Format: int32
+             * @description The three reserved bits as a number from 0 to 7.
+             */
+            rsv?: number;
+        };
+        WsFrameOut: {
+            direction: components["schemas"]["Direction"];
+            fin: boolean;
+            masked: boolean;
+            /** Format: int32 */
+            opcode: number;
+            /** @description The payload, unmasked, base64. */
+            payload: string;
+            /** Format: int32 */
+            rsv: number;
+        };
         /** @description A WebSocket message seen on an upgraded connection. */
         WsMessage: {
             direction: components["schemas"]["Direction"];
@@ -1423,6 +1741,27 @@ export interface components {
             /** Format: int64 */
             time_ms: number;
             truncated: boolean;
+        };
+        WsReply: {
+            /** @description The server sent a close frame. */
+            closed_by_server: boolean;
+            /** @description Why there is no open connection or why listening stopped early. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description The handshake as a recorded flow; the frames are its messages.
+             */
+            flow_id?: number | null;
+            /** @description Frames sent and received, in the order they happened (sent ones first, then what came back). */
+            frames: components["schemas"]["WsFrameOut"][];
+            in_scope?: boolean | null;
+            /** @description The scope gate or the kill switch stopped it; nothing was sent. */
+            refused: boolean;
+            /** @description The handshake request and the server's answer, base64. */
+            request: string;
+            response: string;
+            /** Format: int32 */
+            status?: number | null;
         };
         /** Format: int64 */
         i64: number;
@@ -2239,6 +2578,14 @@ export interface operations {
                 before?: number;
                 after?: number;
                 limit?: number;
+                /** @description id (default), time, method, host, path, status, size, duration or mime. Ties break on the id. */
+                sort?: string;
+                /** @description Oldest or smallest first. */
+                asc?: boolean;
+                /** @description Rows to skip, for paging a list sorted by something other than id. */
+                offset?: number;
+                /** @description A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400. */
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -2313,6 +2660,124 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    check_flow_query: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueryCheck"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    change_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeTags"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangedCount"];
                 };
             };
             /** @description Bad request */
@@ -2461,6 +2926,118 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    flow_csrf_poc: {
+        parameters: {
+            query?: {
+                /** @description 1 to submit on load */
+                auto?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Flow id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An HTML file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such flow */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The request cannot be reproduced by a form */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    flow_engage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Flow id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngageReport"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such flow */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2895,6 +3472,238 @@ export interface operations {
         };
         responses: {
             /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_organizer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizerItem"][];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    add_to_organizer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizerAdd"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddedCount"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_organizer_item: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    update_organizer_item: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizerChange"];
+            };
+        };
+        responses: {
+            /** @description Changed */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -3775,6 +4584,155 @@ export interface operations {
             };
         };
     };
+    get_repeater_tabs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TabsDoc"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_repeater_tabs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TabsDoc"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TabsDoc"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    repeater_ws: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WsBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WsReply"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     get_rules: {
         parameters: {
             query?: never;
@@ -3851,6 +4809,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MatchRule"][];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_saved_filters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedFilter"][];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_saved_filters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedFilter"][];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedFilter"][];
                 };
             };
             /** @description Bad request */

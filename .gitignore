@@ -6,3 +6,5 @@
 *.bosun-wal
 *.bosun-shm
 .env
+
+/crates/bosun-desktop/gen

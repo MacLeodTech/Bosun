@@ -134,6 +134,294 @@ async fn sessions_tokens_and_accounts() {
 }
 
 #[tokio::test]
+async fn history_queries_run_on_the_server_and_mistakes_are_explained() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/a.css", "Content-Type: text/css\r\n", b"body{}", None);
+    let b = recorded(&s, "/login", "Content-Type: text/plain\r\n", b"hello world", None);
+    let ask = |q: &str| {
+        let c = c.clone();
+        let q = q.to_string();
+        async move {
+            c.flows(&FlowQuery {
+                q: Some(q),
+                ..Default::default()
+            })
+            .await
+            .map(|v| v.into_iter().map(|f| f.id).collect::<Vec<_>>())
+        }
+    };
+    assert_eq!(ask("host:a.test -ext:css").await.unwrap(), vec![b]);
+    assert_eq!(ask("hello or body").await.unwrap(), vec![b, a]);
+    assert_eq!(ask("not hello").await.unwrap(), vec![a]);
+    assert_eq!(ask("size:>1k").await.unwrap(), Vec::<i64>::new());
+    // The query adds to the plain filters.
+    let both = c
+        .flows(&FlowQuery {
+            q: Some("host:a.test".into()),
+            hide_ext: Some("css".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(both.len(), 1);
+    // A mistake is a 400 that says what is wrong; the check endpoint lists them all without running anything.
+    let err = ask("status:banana").await.unwrap_err().to_string();
+    assert!(err.contains("status:"), "{err}");
+    let chk = c
+        .check_flow_query(r#"host:a.test status:banana "two words" (open"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        chk.terms.iter().map(|t| t.key.as_str()).collect::<Vec<_>>(),
+        ["host", "text", "text"]
+    );
+    assert_eq!(chk.errors.len(), 2);
+    assert!(chk.errors[0].start < chk.errors[0].end);
+    // Viewers may ask; anonymous callers may not.
+    assert!(
+        Client::new(url(&s))
+            .unwrap()
+            .check_flow_query("x")
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}
+
+#[tokio::test]
+async fn history_can_be_sorted_and_paged_by_any_column() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/b-second", "Content-Type: text/plain\r\n", b"1", None);
+    let b = recorded(&s, "/a-first", "Content-Type: text/html\r\n", b"22222", None);
+    let d = recorded(&s, "/c-third", "Content-Type: text/css\r\n", b"333", None);
+    let list = |sort: &str, asc: bool, offset: Option<u32>, limit: Option<u32>| {
+        let c = c.clone();
+        let sort = sort.to_string();
+        async move {
+            c.flows(&FlowQuery {
+                sort: Some(sort),
+                asc,
+                offset,
+                limit,
+                ..Default::default()
+            })
+            .await
+            .map(|v| v.into_iter().map(|f| f.id).collect::<Vec<_>>())
+        }
+    };
+    assert_eq!(list("id", false, None, None).await.unwrap(), [d, b, a]);
+    assert_eq!(list("path", true, None, None).await.unwrap(), [b, a, d]);
+    assert_eq!(list("path", false, None, None).await.unwrap(), [d, a, b]);
+    assert_eq!(list("size", false, None, None).await.unwrap(), [b, d, a]);
+    assert_eq!(list("mime", true, None, None).await.unwrap(), [d, b, a]);
+    // Paging a sorted list: the pages join up with nothing missing or repeated.
+    let first = list("path", true, None, Some(2)).await.unwrap();
+    let rest = list("path", true, Some(2), Some(2)).await.unwrap();
+    assert_eq!([first, rest].concat(), [b, a, d]);
+    // An unknown column is a mistake, not a guess.
+    let err = list("id; drop table flows", true, None, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("sort:"), "{err}");
+    assert_eq!(list("id", false, None, None).await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn tags_change_in_bulk_for_testers_only() {
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/a", "Content-Type: text/plain\r\n", b"1", None);
+    let b = recorded(&s, "/b", "Content-Type: text/plain\r\n", b"2", None);
+    assert_eq!(c.change_tags(&[a, b], &["review"], &[]).await.unwrap(), 2);
+    let tagged = |q: &str| {
+        let c = c.clone();
+        let q = q.to_string();
+        async move {
+            c.flows(&FlowQuery {
+                q: Some(q),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .len()
+        }
+    };
+    assert_eq!(tagged("tag:review").await, 2);
+    assert_eq!(c.change_tags(&[a], &[], &["REVIEW"]).await.unwrap(), 1);
+    assert_eq!(tagged("tag:review").await, 1);
+    for bad in [&[][..], &[a][..]] {
+        let tags: &[&str] = if bad.is_empty() { &["x"] } else { &[""] };
+        assert!(c.change_tags(bad, tags, &[]).await.is_err());
+    }
+    assert!(
+        Client::new(url(&s))
+            .unwrap()
+            .change_tags(&[a], &["x"], &[])
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}
+
+#[tokio::test]
+async fn the_organizer_keeps_requests_for_follow_up() {
+    use bosun_client::OrganizerStatus;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let a = recorded(&s, "/a", "Content-Type: text/plain\r\n", b"1", None);
+    let b = recorded(&s, "/b", "Content-Type: text/plain\r\n", b"2", None);
+    assert!(c.organizer().await.unwrap().is_empty());
+    assert_eq!(c.add_to_organizer(&[a, b, a]).await.unwrap(), 2);
+    assert_eq!(c.add_to_organizer(&[a]).await.unwrap(), 0);
+    let list = c.organizer().await.unwrap();
+    assert_eq!(list.iter().map(|i| i.flow_id).collect::<Vec<_>>(), [b, a]);
+    let id = list[0].id;
+    c.update_organizer_item(id, Some(OrganizerStatus::Done), Some("reported"))
+        .await
+        .unwrap();
+    let item = &c.organizer().await.unwrap()[0];
+    assert_eq!(
+        (item.status, item.note.as_str()),
+        (OrganizerStatus::Done, "reported")
+    );
+    assert!(
+        c.update_organizer_item(9999, Some(OrganizerStatus::Done), None)
+            .await
+            .is_err()
+    );
+    assert!(
+        c.update_organizer_item(id, None, Some(&"x".repeat(10_001)))
+            .await
+            .is_err()
+    );
+    // Nothing to add, or far too much, is refused; deleting the flow takes its item along.
+    assert!(c.add_to_organizer(&[]).await.is_err());
+    assert_eq!(c.delete_flows(&[b]).await.unwrap(), 1);
+    assert_eq!(c.organizer().await.unwrap().len(), 1);
+    c.delete_organizer_item(c.organizer().await.unwrap()[0].id)
+        .await
+        .unwrap();
+    assert!(c.organizer().await.unwrap().is_empty());
+    assert!(
+        Client::new(url(&s))
+            .unwrap()
+            .add_to_organizer(&[a])
+            .await
+            .unwrap_err()
+            .is_unauthorized()
+    );
+}
+
+#[tokio::test]
+async fn saved_filters_are_kept_per_project_and_must_be_valid() {
+    use bosun_client::SavedFilter;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    assert!(c.saved_filters().await.unwrap().is_empty());
+    let f = |n: &str, q: &str| SavedFilter {
+        name: n.into(),
+        query: q.into(),
+    };
+    let list = vec![f("  api  ", "host:api.test or tag:x"), f("errors", "status:5xx")];
+    let back = c.put_saved_filters(&list).await.unwrap();
+    assert_eq!(back[0].name, "api", "names are trimmed");
+    assert_eq!(c.saved_filters().await.unwrap(), back);
+    // A filter that would not run is refused, and so are duplicates, empty names and too many.
+    for bad in [
+        vec![f("x", "status:banana")],
+        vec![f("x", "a"), f("x", "b")],
+        vec![f("  ", "a")],
+        vec![f("bad\nname", "a")],
+        (0..51).map(|i| f(&format!("n{i}"), "a")).collect(),
+    ] {
+        assert!(c.put_saved_filters(&bad).await.is_err());
+    }
+    assert_eq!(
+        c.saved_filters().await.unwrap(),
+        back,
+        "a refused write changes nothing"
+    );
+}
+
+#[tokio::test]
+async fn engagement_helpers_report_a_response_and_build_a_csrf_page() {
+    use bosun_client::{FindingKind, ParamWhere};
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    let req = b"POST /transfer?src=1 HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nto=bob&amount=5&note=%22%3E%3Cb%3E";
+    let page = b"<html><!-- admin at /old --><script src=\"/app.js\"></script><a href=\"/next\">x</a></html>";
+    let id = common::recorded_exchange(
+        &s,
+        "POST",
+        "/transfer?src=1",
+        req,
+        "Content-Type: text/html\r\n",
+        page,
+        None,
+    );
+
+    let r = c.flow_engage(id).await.unwrap();
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.kind == FindingKind::Comment && f.value == "admin at /old")
+    );
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.kind == FindingKind::ScriptSrc && f.value == "/app.js")
+    );
+    let got: Vec<_> = r.params.iter().map(|p| (p.name.as_str(), p.location)).collect();
+    assert_eq!(
+        got,
+        [
+            ("src", ParamWhere::Query),
+            ("to", ParamWhere::Form),
+            ("amount", ParamWhere::Form),
+            ("note", ParamWhere::Form)
+        ]
+    );
+
+    let html = c.flow_csrf_poc(id, true).await.unwrap();
+    assert!(
+        html.contains("action=\"https://a.test/transfer?src=1\" method=\"post\""),
+        "{html}"
+    );
+    assert!(html.contains("name=\"to\" value=\"bob\"") && html.contains("HTMLFormElement.prototype.submit"));
+    assert!(
+        html.contains("value=\"&quot;&gt;&lt;b&gt;\""),
+        "values are escaped: {html}"
+    );
+    assert!(!c.flow_csrf_poc(id, false).await.unwrap().contains("<script>"));
+
+    // A GET page cannot be a PUT, and a missing flow is a 404; neither route is open to the signed-out.
+    let put = common::recorded_exchange(
+        &s,
+        "PUT",
+        "/x",
+        b"PUT /x HTTP/1.1\r\nHost: a.test\r\n\r\n",
+        "",
+        b"",
+        None,
+    );
+    assert!(c.flow_csrf_poc(put, false).await.is_err());
+    assert!(c.flow_engage(9999).await.is_err());
+    // Signed out, neither route answers.
+    let anon = reqwest::Client::new();
+    for what in ["csrf-poc", "engage"] {
+        let r = anon
+            .get(format!("{}/api/v1/flows/{id}/{what}", url(&s)))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "{what}");
+    }
+}
+
+#[tokio::test]
 async fn history_bodies_annotations_and_sitemap() {
     let s = stack(true).await;
     let c = admin(&s).await;
@@ -546,10 +834,20 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/auth/sso", "sso_config"),
         ("post", "/auth/password", "change_password"),
         ("get", "/flows", "flows"),
+        ("get", "/flows/query", "check_flow_query"),
+        ("get", "/saved-filters", "saved_filters"),
+        ("put", "/saved-filters", "put_saved_filters"),
         ("delete", "/flows", "delete_flows"),
+        ("post", "/flows/tags", "change_tags"),
+        ("get", "/organizer", "organizer"),
+        ("post", "/organizer", "add_to_organizer"),
+        ("patch", "/organizer/{id}", "update_organizer_item"),
+        ("delete", "/organizer/{id}", "delete_organizer_item"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),
         ("get", "/flows/{id}/ws", "ws_messages"),
+        ("get", "/flows/{id}/engage", "flow_engage"),
+        ("get", "/flows/{id}/csrf-poc", "flow_csrf_poc"),
         ("get", "/flows/{id}/{part}/body", "flow_body"),
         ("get", "/sitemap", "site_map"),
         ("get", "/scope", "scope"),
@@ -570,6 +868,9 @@ fn the_client_covers_every_documented_operation() {
         ("post", "/repeater/send", "repeater_send"),
         ("get", "/repeater/settings", "repeater_settings"),
         ("put", "/repeater/settings", "put_repeater_settings"),
+        ("post", "/repeater/ws", "repeater_ws"),
+        ("get", "/repeater/tabs", "repeater_tabs"),
+        ("put", "/repeater/tabs", "put_repeater_tabs"),
         ("get", "/ca", "ca_info"),
         ("get", "/ca/cert.pem", "ca_pem"),
         ("post", "/browser/launch", "launch_browser"),

@@ -2,10 +2,12 @@
 // audit log and the role checks still apply, and no target content is kept in the page beyond what is shown.
 
 import { api } from './api';
-import { bytesToText, flowUrl } from './bytes';
-import { buildCurl } from './curl';
-import { concat, loadPart, type PartName } from './flowbody';
+import { b64ToBytes, bytesToText, flowUrl } from './bytes';
+import { parseRequest, toCurl, toHar, toSnippet, type HarInput, type HarMessage, type Snippet } from './export';
+import { prefs } from './prefs.svelte';
+import { concat, fetchRange, loadPart, type PartName } from './flowbody';
 import { historyView as v } from './historyView.svelte';
+import { inbox } from './inbox.svelte';
 import { toasts } from './toasts.svelte';
 import { withText } from './query';
 import { workspace } from './workspace.svelte';
@@ -47,16 +49,81 @@ export async function copyUrls(ids: number[]) {
   }
 }
 
-export async function copyAsCurl(id: number) {
+const redactNote = () => (prefs.exportSecrets ? '' : ' (cookie and authorization values replaced by REDACTED)');
+
+/** Copy one request as a command or a code snippet. Secrets are redacted unless the person has asked to keep them. */
+export async function copyRequestAs(id: number, kind: 'curl' | 'curl-powershell' | Snippet) {
   try {
     const m = await fetchMeta(id);
     const t = await messageText(m, 'request');
-    if (!t || !t.complete) return say('This request is too large to turn into a cURL command.');
-    const parts = bytesToText(t.head).text;
+    if (!t || !t.complete) return say('This request is too large to copy as code.');
     const body = bytesToText(t.body);
-    const cmd = buildCurl(parts, body.text, m.scheme, body.mode !== 'utf8');
-    if (!cmd) return say('This request cannot be written as a cURL command (binary or very large body).');
-    await copy(cmd, 'the cURL command');
+    const r = parseRequest(bytesToText(t.head).text, body.text, m.scheme, body.mode !== 'utf8');
+    if (!r) return say('This request cannot be written as code (a binary or very large body).');
+    const secrets = prefs.exportSecrets;
+    const text = kind === 'curl' ? toCurl(r, 'posix', secrets) : kind === 'curl-powershell' ? toCurl(r, 'powershell', secrets) : toSnippet(r, kind, secrets);
+    const what = kind === 'curl' ? 'the cURL command' : kind === 'curl-powershell' ? 'the PowerShell command' : `the ${kind} snippet`;
+    await copy(text, what + redactNote());
+  } catch (e) {
+    fail(e);
+  }
+}
+
+export const copyAsCurl = (id: number) => copyRequestAs(id, 'curl');
+
+/** How much of one body goes into a HAR file, and how many flows at once. */
+const HAR_BODY_CAP = 2 * 1024 * 1024;
+const HAR_MAX_FLOWS = 500;
+
+async function harMessage(meta: FlowMeta, part: 'request' | 'response', info: FlowMeta['request']): Promise<HarMessage> {
+  const decoded = part === 'response' && !!meta.response_encoding;
+  let body: Uint8Array = new Uint8Array();
+  if (info.body_len > 0) {
+    try {
+      body = (await fetchRange(meta.id, part, 0, HAR_BODY_CAP, decoded)).bytes;
+    } catch {
+      // A decoded view can be missing (an unknown encoding): fall back to the stored bytes.
+      body = (await fetchRange(meta.id, part, 0, HAR_BODY_CAP, false)).bytes;
+    }
+  }
+  return { head: bytesToText(b64ToBytes(info.head)).text, body, bodySize: info.body_len > body.length && !decoded ? info.body_len : undefined };
+}
+
+/** Save the flows as a HAR file (bodies over 2 MiB are cut). */
+export async function exportHar(ids: number[]) {
+  const take = ids.slice(0, HAR_MAX_FLOWS);
+  if (ids.length > take.length) say(`Exporting the first ${HAR_MAX_FLOWS} of ${ids.length} requests.`);
+  try {
+    const entries: HarInput[] = [];
+    for (let i = 0; i < take.length; i += 6) {
+      const batch = await Promise.all(
+        take.slice(i, i + 6).map(async (id): Promise<HarInput> => {
+          const m = await fetchMeta(id);
+          return {
+            startedMs: m.started_ms,
+            durationMs: m.duration_ms ?? null,
+            url: flowUrl(m),
+            method: m.method,
+            httpVersion: m.http_version,
+            request: await harMessage(m, 'request', m.request),
+            response: m.response ? await harMessage(m, 'response', m.response) : null,
+            status: m.status ?? null,
+          };
+        }),
+      );
+      entries.push(...batch);
+    }
+    const har = toHar(entries, prefs.exportSecrets);
+    const blob = new Blob([JSON.stringify(har, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bosun-${entries.length}-requests.har`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    say(`Saved ${entries.length} request${entries.length === 1 ? '' : 's'} as a HAR file${redactNote()}.`);
   } catch (e) {
     fail(e);
   }
@@ -146,4 +213,95 @@ export function deleteFlows(ids: number[]) {
 export function searchHistory(text: string) {
   v.setQuery(withText(v.query, text));
   workspace.open('history');
+}
+
+/** Add and remove tags on flows (the server does it in one step). Returns whether it worked. */
+export async function changeTags(ids: number[], add: string[], remove: string[]): Promise<boolean> {
+  if (!ids.length) return false;
+  try {
+    await api.post('/flows/tags', { ids, add, remove });
+    v.tagged(ids, add, remove);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+/** The text of one message's body, for the Decoder or the Comparer. */
+async function bodyText(id: number, part: 'request' | 'response'): Promise<string | null> {
+  const t = await messageText(await fetchMeta(id), part);
+  if (!t) {
+    say(`This flow has no ${part}.`);
+    return null;
+  }
+  if (!t.complete) say(`The ${part} is large: only its first part was sent.`);
+  const b = bytesToText(t.body);
+  // A body with nothing in it (a GET, say) is the headers' business: send the whole message instead.
+  return b.text || t.text;
+}
+
+/** Put a message body in the Decoder's input. The caller opens the panel. */
+export async function sendToDecoder(id: number, part: 'request' | 'response'): Promise<boolean> {
+  try {
+    const text = await bodyText(id, part);
+    if (text === null) return false;
+    inbox.toDecoder(text);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+/** Put a message in one side of the Comparer. The caller opens the panel. */
+export async function sendToComparer(id: number, part: 'request' | 'response', side: 'a' | 'b'): Promise<boolean> {
+  try {
+    // The whole message, headers and body, since comparing two requests usually means comparing their headers.
+    const t = await messageText(await fetchMeta(id), part);
+    if (!t) {
+      say(`This flow has no ${part}.`);
+      return false;
+    }
+    if (!t.complete) say(`The ${part} is large: only its first part was sent.`);
+    inbox.toComparer(side, t.text);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+/** Keep requests in the Organizer for follow-up. */
+export async function saveToOrganizer(ids: number[]): Promise<void> {
+  try {
+    const r = await api.post<{ added: number }>('/organizer', { flow_ids: ids.slice(0, 1000) });
+    inbox.organizerTick++;
+    say(r.added ? `Saved ${r.added} request${r.added === 1 ? '' : 's'} to the Organizer.` : 'Already in the Organizer.');
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Save a CSRF proof of concept for the request as an HTML file. It is only a download: it is never shown here. */
+export async function downloadCsrfPoc(id: number, auto: boolean): Promise<void> {
+  try {
+    const r = await fetch(`/api/v1/flows/${id}/csrf-poc${auto ? '?auto=1' : ''}`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+    if (!r.ok) {
+      const data: unknown = await r.json().catch(() => null);
+      const err = data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : '';
+      return say(err || `No proof of concept (${r.status}).`);
+    }
+    const url = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: 'application/octet-stream' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `csrf-poc-${id}.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    say(`Saved csrf-poc-${id}.html. Open it in a test browser that is signed in to the target${auto ? '; it submits at once' : ''}.`);
+  } catch (e) {
+    fail(e);
+  }
 }

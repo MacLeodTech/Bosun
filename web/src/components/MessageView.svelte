@@ -3,11 +3,12 @@
   // as markup), or rendered in a fully sandboxed iframe (no scripts, opaque origin, and it inherits this page's CSP).
   import { prefs, type PaneRole, type MessageViewMode } from '../lib/prefs.svelte';
   import { theme } from '../lib/theme.svelte';
-  import { b64ToBytes, bytesToText, fmtSize, hexDump, splitMessage, textToBytes, bytesToB64, type TextMode } from '../lib/bytes';
+  import { b64ToBytes, bytesToText, fmtSize, hexDump, splitMessage, wireBytes, bytesToB64, type TextMode } from '../lib/bytes';
   import { contentTypeOf, detectLang, highlight, splitText, MAX_HIGHLIGHT } from '../lib/highlight';
   import { pretty } from '../lib/pretty';
-  import { buildCurl } from '../lib/curl';
+  import { parseRequest, toCurl } from '../lib/export';
   import CodeView from './CodeView.svelte';
+  import MessageEditor from './MessageEditor.svelte';
 
   let {
     raw,
@@ -100,13 +101,16 @@
   });
 
   let draft = $state('');
+  let draftMode = $state<TextMode>('utf8');
   $effect(() => {
     draft = text.text;
+    draftMode = text.mode;
   });
 
-  function input(e: Event) {
-    draft = (e.currentTarget as HTMLTextAreaElement).value;
-    onEdit?.(bytesToB64(textToBytes(draft, text.mode)));
+  function edited(t: string, m: TextMode) {
+    draft = t;
+    draftMode = m;
+    onEdit?.(bytesToB64(wireBytes(t, m)));
   }
 
   async function copy(what: string, value: string) {
@@ -120,7 +124,10 @@
   }
 
   /** A cURL command for this request. Only for text bodies of a size a command line can hold. */
-  const curl = $derived(role === 'request' && raw ? buildCurl(split.head, split.body, scheme, text.mode !== 'utf8') : null);
+  const curl = $derived.by(() => {
+    const r = role === 'request' && raw ? parseRequest(split.head, split.body, scheme, text.mode !== 'utf8') : null;
+    return r ? toCurl(r, 'posix', prefs.exportSecrets) : null;
+  });
 
   const modes = $derived((['raw', ...(prettyBody ? ['pretty'] : []), 'headers', 'hex', 'render'] as MessageViewMode[]));
 </script>
@@ -145,7 +152,7 @@
     {/if}
     {#if raw !== null && !editable}
       <button class="ghost small" title="Copy the whole message" onclick={() => copy('message', shownText)}>copy</button>
-      {#if curl}<button class="ghost small" title="Copy this request as a cURL command" onclick={() => copy('cURL command', curl)}>cURL</button>{/if}
+      {#if curl}<button class="ghost small" title="Copy this request as a cURL command (cookie and authorization values are replaced unless you keep them: right-click a request in History)" onclick={() => copy('cURL command', curl)}>cURL</button>{/if}
     {/if}
     {#if downloadHref}<a class="small" href={downloadHref} download>download body</a>{/if}
   </div>
@@ -153,7 +160,7 @@
     <div class="empty">No message.</div>
   {:else if view === 'raw' || view === 'pretty'}
     {#if editable}
-      <textarea class="code" spellcheck="false" aria-label={title || 'Message'} value={draft} oninput={input}></textarea>
+      <MessageEditor text={draft} mode={draftMode} label={title || 'Message'} onchange={edited} />
     {:else}
       {#if oversize}<div class="small muted pad">Large message: shown without colour.</div>{/if}
       <CodeView bind:this={code} {lines} wrap={prefs.wrap} label={title || 'Message'} />
@@ -194,7 +201,6 @@
   .msg { display: flex; flex-direction: column; min-height: 0; height: 100%; }
   .msg-bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: .2rem .4rem; border-bottom: 1px solid var(--border-subtle); }
   .code { flex: 1; margin: 0; overflow: auto; padding: .5rem; white-space: pre-wrap; word-break: break-all; }
-  textarea.code { resize: none; border: 0; background: var(--surface-1); color: var(--text-1); }
   .scroll { overflow: auto; flex: 1; }
   .acts { white-space: nowrap; text-align: right; width: 1%; }
   /* The page inside is told the UI's colour scheme (see srcdoc), so a page without its own colours is not a white slab. */

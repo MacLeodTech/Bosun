@@ -91,6 +91,8 @@ pub struct ProxyStats {
     pub memory_budget: usize,
     pub memory_used: usize,
     pub memory_refused: u64,
+    /// Connections closed at once because the proxy was at its connection limit.
+    pub connections_refused: u64,
     pub recorder_bodies_dropped: u64,
     pub recorder_records_dropped: u64,
     pub recorder_write_failures: u64,
@@ -212,6 +214,7 @@ impl Proxy {
             memory_budget: sh.budget.cap(),
             memory_used: sh.budget.used(),
             memory_refused: sh.budget.refused(),
+            connections_refused: sh.limit.refused(),
             recorder_bodies_dropped: active
                 .recorder
                 .stats()

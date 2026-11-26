@@ -52,39 +52,28 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   **To add a tool page:** add its id to `web/src/lib/panelids.ts`, an entry in `web/src/lib/panels.ts`, and register
   its commands with `commands.register([...])` (see `builtin.ts`). Do not add a page to `App.svelte`.
   Items left out of PR #25 are under "UI follow-ups" below.
-- **In flight:** nothing.
+- **In flight (2026-11-25), merge in this order:** #28 (Repeater tabs saved in the project, `/repeater/ws`), #29 (WP-44
+  message editor), #30 (Repeater page WebSocket mode), #31 (`bosun login`, `status`, `repeater send`; the start of WP-26).
+  #30 and #31 are stacked on the earlier ones. Then #32 (recorder under bursts), #33 (WP-75, stacked on #32), and the
+  `wp-43` branch (WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
+  merge `main` into the next branch and regenerate `docs/openapi.json` and `web/src/lib/api-types.ts` if they conflict.
 - **Next, in order** (see the phase plan below):
-  1. Finish WP-41 (the three open items; the CLI one needs WP-26). Small WP-42 leftovers: MD5 and SHA-1 (new
-     dependencies), compression encoders, and `bosun decode` (with WP-26); "Send to Decoder or Comparer" is in WP-43.
-  2. **Phase 3, track A (M2):** WP-44, then WP-43 and WP-45, then WP-77 (copy as curl, HAR export; small,
-     used every day). WP-38 and WP-39 are the M1 follow-ups.
+  1. Small WP-42 leftovers: MD5 and SHA-1 (new dependencies), compression encoders, and `bosun decode` (with WP-26).
+  2. **Phase 3, track A (M2):** the rest of WP-43 and WP-45 (small). WP-38 and WP-39 are the M1 follow-ups.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
      release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
      is built with Tauri for now; WP-18 (WinUI 3) is still planned.
   4. **Owner tasks before v0.2:** look up the pending BOSUN Class 9 filing; an Apple Developer account.
-  5. **After v0.2:** Phase 4 (Intruder, Sequencer, WP-75, WP-76, WP-79), then Phase 5 and on as in the phase plan.
+  5. **After v0.2:** Phase 4 (Intruder, Sequencer, WP-76, WP-79), then Phase 5 and on as in the phase plan.
      Order within a phase is by value: pick the package that unblocks the most others (WP-49 unblocks the scanner;
      WP-47 unblocks WP-59 and WP-81).
 - **UI follow-ups (from PR #25; owner: the Linux session unless noted):**
-  1. **Server-side filter (WP-75, Rust).** The History filter line (`web/src/lib/query.ts`: `host:` `method:` `status:`
-     `scope:` `-ext:` and free text, quoted words, comma lists) is parsed in the browser and mapped onto the
-     parameters `/flows` already takes (`text`, `host`, `methods`, `status_min`, `status_max`, `in_scope_only`,
-     `hide_ext`). Move the grammar into Rust behind an endpoint (store, API, client, `openapi.json`, a fuzz target),
-     add the terms the UI cannot do (headers, body text, tags, source, size, time, and/or/not), and keep the current
-     syntax valid. When it lands, the UI swaps `parseQuery` for a call and keeps the chips.
-  2. **Recorder drops requests under a burst.** About 7,000 requests a second through the proxy were stored at only
-     31 to 34 per cent; at about 1,200 a second all 100,000 were stored (found while testing the UI at 100,000
-     rows; the list shows exactly what the server returns). Reproduce with a load generator, find where they are
-     dropped (a bounded channel, a write queue, a batch size), and either fix it or count and report the drops.
-     Add a test at a fixed rate.
-  3. **Scanner and Intruder panels** when WP-47 and WP-49 land: reuse the shared viewer (`MessageView`, `CodeView`,
+  1. **Scanner and Intruder panels** when WP-47 and WP-49 land: reuse the shared viewer (`MessageView`, `CodeView`,
      `DiffView`). The Decoder and Comparer panels are on `main` (PR #26).
-  4. **Tag and note row actions** in History (WP-43), if the API supports them; the row context menu and command
-     registry are ready for them.
-  5. **axe-core scan (WP-73)** with `@axe-core/playwright`: needs the owner's approval for the new dependency
+  2. **axe-core scan (WP-73)** with `@axe-core/playwright`: needs the owner's approval for the new dependency
      (pinned, `npm audit` in CI). Until then the e2e suite has an in-page audit.
-  6. **Screen-reader pass** (NVDA, VoiceOver or Orca) on the dock, tabs, menus and table: needs a person.
-  7. **Desktop pop-out and shortcuts.** Pop-out windows work in the browser only; the page cannot tell it is in the
+  3. **Screen-reader pass** (NVDA, VoiceOver or Orca) on the dock, tabs, menus and table: needs a person.
+  4. **Desktop pop-out and shortcuts.** Pop-out windows work in the browser only; the page cannot tell it is in the
      desktop shell. `Alt+1..9` and `Ctrl+Alt+I` replace `Ctrl+1..9` and `Ctrl+Shift+I`, which browsers reserve.
 - **Decisions waiting for the owner:** WP-78 (WireGuard or per-OS local capture), WP-83 (how far SQL injection
   exploitation goes) and WP-86 (AI assistance: scope and cost). Also whether to keep a separate WinUI 3 app (WP-18)
@@ -119,12 +108,11 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 **Phases 0 to 2: done** (repository and CI, hardening, foundation). See `docs/releases.md` for what each delivered.
 
 **Phase 3: manual tools and the front ends. Release v0.2, the first public preview.**
-- Track A, M2 tools: WP-41 (finish), then WP-44, then WP-43 and WP-45. Also WP-38 and WP-39, the M1
+- Track A, M2 tools: WP-41 (finish), then WP-43 and WP-45. Also WP-38 and WP-39, the M1
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
 - Track D, release: WP-69, WP-70 (the first pages), WP-31.
-- Quick win from the gap analysis: WP-77 (copy as curl, HAR export) once WP-43 lands.
 - Owner: look up the pending BOSUN Class 9 filing before v0.2; an Apple Developer account. Windows signing is deferred.
 - Gate: v0.2 for Windows, macOS and Linux; Docker and Podman images; the CLI; security review 3.
 
@@ -201,15 +189,14 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
-| [ ] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
-| [ ] | WP-44 | Message editor (CodeMirror 6, hex, pretty-print) | 3 | M | |
-| [ ] | WP-43 | History, Organizer, Logger and "send to" | 3 | M | WP-35, WP-41 |
-| [ ] | WP-45 | Engagement helpers | 3 | M | WP-41 |
+| [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
+| [ ] | WP-43 | History, Organizer, Logger and "send to" (rest) | 3 | S | WP-35, WP-41 |
+| [ ] | WP-45 | Engagement helpers (rest) | 3 | S | WP-41 |
 | [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
 | [ ] | WP-39 | TOTP second factor | 3 | M | WP-07 |
 | [ ] | WP-23 | Server mode in the engine | 3 | M | WP-03 |
@@ -224,7 +211,6 @@ valid in the "Depends on" column.
 | [ ] | WP-69 | Release workflow | 3 | M | WP-09, WP-24 |
 | [ ] | WP-70 | Docs site | 3 | M | WP-13 |
 | [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
-| [ ] | WP-77 | Export: copy as curl, HAR export, code snippets | 3 | S | WP-43 |
 | [ ] | WP-47 | Intruder | 4 | L | WP-40, WP-41 |
 | [ ] | WP-48 | Sequencer | 4 | M | WP-40 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
@@ -232,7 +218,6 @@ valid in the "Depends on" column.
 | [ ] | WP-32 | CA management | 4 | M | |
 | [ ] | WP-33 | Protocol gaps | 4 | M | WP-20 |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
-| [ ] | WP-75 | History query language and saved filters | 4 | M | WP-43 |
 | [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
 | [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
 | [ ] | WP-49 | Passive scanner, findings and the issues view | 5 | L | WP-05, WP-35 |
@@ -424,7 +409,9 @@ Open packages only; finished ones are in `docs/releases.md`.
   - `history list|search|show|export` (HAR and ndjson), `scope get|set|add`, `rules get|set|import`,
     `intercept on|off|queue|forward|drop`, `ca export`, `status`, `events --follow`.
   - Output as tables, `--json` or `--ndjson`; meaningful exit codes; `--quiet`.
-  - Later packages add `repeater send` (M2) and `scan` (M5).
+  - Later packages add `scan` (M5). `repeater send` is done.
+- **Progress (2026-11-25):** `login` (a token in a 0600 profiles file), `status` and `repeater send` exist. The rest
+  of the list, and the OS keychain, are open.
 - **Done when:** integration tests run each command against an engine started in the test.
 
 ### WP-27 to WP-33: performance and depth
@@ -549,39 +536,24 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** API and Playwright tests cover tabs, history, diff and send groups; the CLI command sends a raw
   file.
 - **Progress (2026-11-25):** the first slice is on `main`: connection reuse, HTTP/2 multiplexing, `/repeater/send` and
-  `/repeater/settings`, the `bosun-client` methods and the Repeater page (tabs in `sessionStorage`, history, diff, send
-  groups, the out-of-scope toggle). **Still open:** tabs saved in the project (a migration), WebSocket sends, and
-  `bosun repeater send` (needs the client commands of WP-26).
+  `/repeater/settings`, the `bosun-client` methods and the Repeater page (history, diff, send groups, the out-of-scope
+  toggle) and tabs saved in the project (`/repeater/tabs`, kept in the project's settings table rather than a new
+  table; responses are not saved). WebSocket sends are in the API (`/repeater/ws`: raw handshake, frames with any opcode, flags and mask, a listen window; recorded as a flow with messages). The Repeater page has a WebSocket mode (a frame list per tab, the frames shown as they were sent and
+  received), and `bosun repeater send` sends a raw request file (with `bosun login` and `bosun status` from WP-26 as
+  its base). WP-41 is complete.
 
-#### WP-43 History, Organizer, Logger and "send to" · Phase 3 · M
+#### WP-43 History, Organizer, Logger and "send to": what is left · Phase 3 · S
 
-- **Do:**
-  - **History:** a column chooser, sorting, colour highlights, bulk tag and delete.
-  - **Organizer:** save requests with notes and a status for follow-up (a migration).
-  - **Logger:** every request from every tool, using the `FlowSource` each tool records, with filters.
-  - **"Send to"** Repeater, Intruder, Comparer or Decoder from everywhere a message is shown.
-- **Done when:** Playwright tests cover each view and the send-to menu.
+- **Do:** "Send to Intruder" from every message view (waits for WP-47). A separate Logger panel only if panels become
+  multi-instance (History already shows every source through the Source column and `source:`). The query bar's reuse
+  for Intruder results is in WP-47.
+- **Done when:** a Playwright test sends a request to the Intruder.
 
-#### WP-44 Message editor (CodeMirror 6, hex, pretty-print) · Phase 3 · M
+#### WP-45 Engagement helpers: what is left · Phase 3 · S
 
-- **Do:**
-  - CodeMirror 6 for the raw editor, with HTTP syntax highlighting; a hex editor; pretty-printing of JSON, XML and
-    HTML as text, never rendered.
-  - Check CodeMirror under the strict CSP. It adds its styles with constructed stylesheets or `<style>`
-    elements; if anything is blocked, use `EditorView.cspNonce` with a per-response nonce from the server instead
-    of loosening `style-src`. Record the decision in the threat model.
-  - Large messages stay responsive (load bodies in pages from WP-12's endpoints).
-- **Done when:** a Playwright test edits and sends a message, and the CSP header is unchanged or only gains a
-  nonce.
-- **Progress (2026-11-25, PR #25):** the read-only viewer is done and shared (`MessageView`, `CodeView`, `DiffView`:
-  HTTP, JSON, XML and HTML tokeniser, pretty-print as text, windowed rendering of large bodies, diff). Still open:
-  the editable CodeMirror editor and the hex editor.
-
-#### WP-45 Engagement helpers · Phase 3 · M
-
-- **Do:** generate a CSRF proof of concept (as a file to download, never rendered in the UI's origin), find
-  comments and scripts, find references, and analyse a target (parameters and endpoints from history).
-- **Done when:** unit tests on recorded fixtures; the PoC download has `Content-Disposition: attachment`.
+- **Do:** analyse a target across the whole history: the distinct endpoints and parameters of a host, with counts.
+  (The per-request Findings panel, the parameter list and the CSRF proof of concept are done.)
+- **Done when:** unit tests on recorded fixtures; a Playwright test opens the analysis for a host.
 
 #### WP-46 Optional `legacy-tls` backend · Phase 4 · M
 
@@ -844,19 +816,6 @@ From `docs/competitive-analysis.md` (2026-11-25), which compares Bosun with Burp
 others. Every package here follows the platform contracts above. Packages that decode or parse untrusted input get a
 fuzz target; ones that send traffic go through the gate.
 
-#### WP-75 History query language and saved filters · Phase 4 · M
-
-- **Do:**
-  - A small typed filter language over history (host, method, status, headers, body text, tags, source, size, time,
-    with and/or/not), parsed in Rust behind an endpoint so the UI, CLI and plugins share it.
-  - Saved filters per project (a migration), a query bar with autocomplete and a history of past queries.
-  - The same language drives Logger and Intruder results (WP-43, WP-47).
-  - A fuzz target for the parser; queries run against the store with a time and row limit, never string-built SQL.
-- **Done when:** the grammar is documented; unit and property tests cover it; a Playwright test saves and re-runs a filter.
-- **Progress (2026-11-25):** the UI half exists in `web/src/lib/query.ts` (a client-side parser mapped onto the `/flows`
-  parameters, a filter bar with chips, the default hide-static-files query). The Rust grammar, endpoint, saved filters,
-  fuzz target and the extra terms are still to do; see "UI follow-ups" at the top.
-
 #### WP-76 Map Local, Map Remote and throttling · Phase 4 · M
 
 - **Do:**
@@ -866,13 +825,6 @@ fuzz target; ones that send traffic go through the gate.
   - Map Remote's new target goes through `Gate::check`; Map Local reads only from a directory the user picked, with
     no path traversal (tested).
 - **Done when:** tests cover each rule type, the path-traversal case, and an out-of-scope Map Remote target being refused.
-
-#### WP-77 Export: copy as curl, HAR export, code snippets · Phase 3 · S
-
-- **Do:** copy a request as `curl` (quoted safely for POSIX shells and PowerShell), export selected flows as HAR, and
-  generate snippets for a few languages. Secrets (cookies, authorization headers) are redacted unless the user ticks
-  a box. HAR import is in WP-60.
-- **Done when:** golden tests for each format, including hostile header values; once WP-60 lands, an exported HAR file imports back unchanged.
 
 #### WP-78 Proxy modes: reverse proxy, WireGuard or local capture, TLS key log · Phase 9 · L
 
@@ -966,7 +918,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
 
 - [ ] Bundle Chrome for Testing with the desktop installers (download, verify by SHA-256, keep it updated): **WP-21**
 - [ ] Optional TOTP second factor for UI accounts → **WP-39**
-- [ ] History: column chooser, sorting, colour highlights, bulk tag/delete, "send to" menu (wired up in M2) → **WP-43**
 - [ ] Response interception rules (intercept only when the response matches a condition) → **WP-38**
 - [ ] Proxy listener management in the UI (several listeners, per-listener options) and a live-config reload → **WP-38**
 - [ ] Request/response size and timing stats in history → **WP-38**
@@ -980,18 +931,14 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] **Repeater**: tabs, per-tab history (back/forward), h1/h2/WebSocket, raw bytes, "update Content-Length",
   follow redirects (optional), response diff with the previous send, send groups (in order or in parallel,
   single-packet attack for race conditions) → **WP-41**
-- [ ] **Organizer**: save requests with notes and status for follow-up → **WP-43**
-- [ ] **Logger**: every request from every tool (not just the proxy), with filters → **WP-43**
-- [ ] "Send to Repeater, Intruder, Comparer or Decoder" everywhere a message is shown → **WP-43**
+- [ ] **Logger** as its own panel (History already lists every source) → **WP-43**
+- [ ] "Send to Intruder" (Repeater, Comparer and Decoder are done) → **WP-43**
 - [ ] Request editor with syntax highlighting (CodeMirror 6), a hex editor, and pretty-printing of JSON, XML and
   HTML (as text, never rendered) → **WP-44**
-- [ ] Engagement helpers: generate a CSRF PoC, find comments and scripts, find references, analyse a target
-  (parameters and endpoints) → **WP-45**
+- [ ] Engagement helpers: analyse a target across the history (parameters and endpoints) → **WP-45**
 - [ ] The scope gate enforced for every tool request (refuse out-of-scope, a per-host rate limit, the stop switch),
   with pinned addresses: **WP-10** must land first
-- [ ] Typed history filters with saved queries and a query bar → **WP-75**
 - [ ] Map Local, Map Remote and throttling → **WP-76**
-- [ ] Copy as curl, HAR export and code snippets → **WP-77**
 - [ ] gRPC, Protobuf and GraphQL-aware views and rules → **WP-79**
 - [ ] A command palette, and one message viewer shared by every tool → **WP-80**
 

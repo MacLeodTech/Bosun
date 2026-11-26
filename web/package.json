@@ -18,5 +18,10 @@
     "svelte-check": "4.7.8",
     "typescript": "6.0.3",
     "vite": "8.3.8"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.11.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.44.0"
   }
 }

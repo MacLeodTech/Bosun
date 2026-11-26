@@ -22,6 +22,8 @@ const MAX_BLOB: u64 = 128 * 1024 * 1024;
 const MAX_WS_PAYLOAD: u64 = 4 * 1024 * 1024;
 /// How much decoded text per flow goes into the search index.
 const INDEX_TEXT_LIMIT: usize = 64 * 1024;
+/// The longest a history query may run.
+const QUERY_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// A finished flow, ready to be written.
 #[derive(Debug, Clone)]
@@ -57,7 +59,102 @@ pub struct NewWsMessage {
     pub truncated: bool,
 }
 
-/// History filter. Every field is optional; results are newest first.
+/// What the history list is ordered by. Ties break on the id, in the same direction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowSort {
+    #[default]
+    Id,
+    Time,
+    Method,
+    Host,
+    Path,
+    Status,
+    Size,
+    Duration,
+    Mime,
+}
+
+impl FlowSort {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "id" => Self::Id,
+            "time" => Self::Time,
+            "method" => Self::Method,
+            "host" => Self::Host,
+            "path" => Self::Path,
+            "status" => Self::Status,
+            "size" => Self::Size,
+            "duration" => Self::Duration,
+            "mime" => Self::Mime,
+            _ => return None,
+        })
+    }
+
+    /// The column, from a fixed list: never text from a caller.
+    fn column(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Time => "started_ms",
+            Self::Method => "method",
+            Self::Host => "host",
+            Self::Path => "path",
+            Self::Status => "status",
+            Self::Size => "response_len",
+            Self::Duration => "duration_ms",
+            Self::Mime => "mime",
+        }
+    }
+}
+
+/// Where a saved request stands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizerStatus {
+    #[default]
+    Todo,
+    InProgress,
+    Done,
+    Ignored,
+}
+
+impl OrganizerStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::InProgress => "in_progress",
+            Self::Done => "done",
+            Self::Ignored => "ignored",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        match s {
+            "in_progress" => Self::InProgress,
+            "done" => Self::Done,
+            "ignored" => Self::Ignored,
+            _ => Self::Todo,
+        }
+    }
+}
+
+/// A request kept in the Organizer, with the summary of the flow it points at.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct OrganizerItem {
+    pub id: i64,
+    pub flow_id: FlowId,
+    pub status: OrganizerStatus,
+    pub note: String,
+    pub added_ms: i64,
+    pub updated_ms: i64,
+    pub flow: FlowSummary,
+}
+
+/// The most items the Organizer lists, and the longest note.
+pub const MAX_ORGANIZER_ITEMS: usize = 5_000;
+pub const MAX_ORGANIZER_NOTE: usize = 10_000;
+
+/// History filter. Every field is optional; results are newest first unless `sort` says otherwise.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlowFilter {
     /// Full-text (substring) search over the request line, headers and decoded text bodies.
@@ -76,6 +173,18 @@ pub struct FlowFilter {
     /// Only flows with an id above this (for polling for new ones).
     pub after_id: Option<FlowId>,
     pub limit: Option<u32>,
+    /// The order of the results. The default is the id, newest first.
+    #[serde(default)]
+    pub sort: FlowSort,
+    /// Oldest or smallest first.
+    #[serde(default)]
+    pub ascending: bool,
+    /// Rows to skip, for paging through a sorted list (the id order pages with `before_id`).
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// A parsed history query (see [`crate::query`]), combined with the fields above by `and`.
+    #[serde(default)]
+    pub query: Option<crate::query::Expr>,
 }
 
 /// A host and the paths seen on it, for the site map.
@@ -173,6 +282,22 @@ const MIGRATIONS: &[migrate::Migration] = &[
             INSERT INTO blobs_v2 (hash, size, data) SELECT hash, size, data FROM blobs;
             DROP TABLE blobs;
             ALTER TABLE blobs_v2 RENAME TO blobs;
+        "#,
+    },
+    migrate::Migration {
+        version: 3,
+        rebuild: false,
+        what: "the Organizer: requests kept for follow-up, with a status and a note",
+        // One row per flow. No foreign key (the store does not switch them on): deleting a flow deletes its item.
+        sql: r#"
+            CREATE TABLE organizer (
+                id INTEGER PRIMARY KEY,
+                flow_id INTEGER NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'todo',
+                note TEXT NOT NULL DEFAULT '',
+                added_ms INTEGER NOT NULL,
+                updated_ms INTEGER NOT NULL
+            );
         "#,
     },
 ];
@@ -598,6 +723,18 @@ impl Project {
                 args.push(V::Text(format!("%.{}", e.to_ascii_lowercase())));
             }
         }
+        if let Some(q) = &f.query {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+            let (cond, params) = crate::query::compile(q, now);
+            sql.push_str(" AND ");
+            sql.push_str(&cond);
+            args.extend(params.into_iter().map(|p| match p {
+                crate::query::Param::Text(t) => V::Text(t),
+                crate::query::Param::Int(i) => V::Integer(i),
+            }));
+        }
         if let Some(b) = f.before_id {
             sql.push_str(" AND id < ?");
             args.push(V::Integer(b));
@@ -606,12 +743,40 @@ impl Project {
             sql.push_str(" AND id > ?");
             args.push(V::Integer(a));
         }
-        sql.push_str(" ORDER BY id DESC LIMIT ?");
+        let dir = if f.ascending { "ASC" } else { "DESC" };
+        // Missing values (no response yet) go last in either direction.
+        let col = f.sort.column();
+        if f.sort == FlowSort::Id {
+            sql.push_str(&format!(" ORDER BY id {dir} LIMIT ?"));
+        } else {
+            sql.push_str(&format!(" ORDER BY {col} IS NULL, {col} {dir}, id {dir} LIMIT ?"));
+        }
         args.push(V::Integer(f.limit.unwrap_or(200).clamp(1, 5000).into()));
-        let conn = self.db.read()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(args), summary_from_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        if let Some(o) = f.offset.filter(|o| *o > 0) {
+            sql.push_str(" OFFSET ?");
+            args.push(V::Integer(o.into()));
+        }
+        let mut conn = self.db.read()?;
+        // A query may not hold the connection for long: past the deadline SQLite stops it with an error.
+        let deadline = std::time::Instant::now() + QUERY_TIME;
+        conn.progress_handler(20_000, Some(move || std::time::Instant::now() > deadline))?;
+        let rows = conn.prepare(&sql).and_then(|mut stmt| {
+            stmt.query_map(params_from_iter(args), summary_from_row)
+                .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+        });
+        let _ = conn.progress_handler(20_000, None::<fn() -> bool>);
+        match rows {
+            Ok(r) => Ok(r),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::OperationInterrupted =>
+            {
+                Err(StoreError::Conflict(format!(
+                    "the query took longer than {} seconds; narrow it down",
+                    QUERY_TIME.as_secs()
+                )))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Summaries for specific flows, in id order.
@@ -688,6 +853,138 @@ impl Project {
         Ok(n > 0)
     }
 
+    /// Add and remove tags on many flows in one transaction. Tags compare without regard to case; a flow keeps at
+    /// most `max_tags` (extra additions are dropped). Returns how many flows changed.
+    pub fn change_tags(
+        &self,
+        ids: &[FlowId],
+        add: &[String],
+        remove: &[String],
+        max_tags: usize,
+    ) -> Result<usize, StoreError> {
+        let mut conn = self.db.write();
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        for id in ids {
+            let Some(old): Option<String> = tx
+                .query_row("SELECT tags FROM flows WHERE id = ?1", [id], |r| r.get(0))
+                .optional()?
+            else {
+                continue;
+            };
+            let old: Vec<String> = serde_json::from_str(&old).unwrap_or_default();
+            let mut next: Vec<String> = old
+                .iter()
+                .filter(|t| !remove.iter().any(|r| r.eq_ignore_ascii_case(t)))
+                .cloned()
+                .collect();
+            for a in add {
+                if next.len() < max_tags && !next.iter().any(|t| t.eq_ignore_ascii_case(a)) {
+                    next.push(a.clone());
+                }
+            }
+            if next != old {
+                tx.execute(
+                    "UPDATE flows SET tags = ?1 WHERE id = ?2",
+                    params![serde_json::to_string(&next).map_err(StoreError::Json)?, id],
+                )?;
+                changed += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    /// Keep these flows in the Organizer (ones already there are left as they are). Returns how many were added.
+    pub fn organizer_add(&self, ids: &[FlowId], now_ms: i64) -> Result<usize, StoreError> {
+        let mut conn = self.db.write();
+        let tx = conn.transaction()?;
+        let mut room =
+            MAX_ORGANIZER_ITEMS.saturating_sub(
+                tx.query_row("SELECT count(*) FROM organizer", [], |r| r.get::<_, i64>(0))? as usize,
+            );
+        let mut added = 0;
+        for id in ids {
+            if room == 0 {
+                break;
+            }
+            let n = tx.execute(
+                "INSERT INTO organizer (flow_id, added_ms, updated_ms)
+                 SELECT id, ?2, ?2 FROM flows WHERE id = ?1
+                 ON CONFLICT(flow_id) DO NOTHING",
+                params![id, now_ms],
+            )?;
+            added += n;
+            room -= n;
+        }
+        tx.commit()?;
+        Ok(added)
+    }
+
+    /// Newest first.
+    pub fn organizer_list(&self) -> Result<Vec<OrganizerItem>, StoreError> {
+        let rows: Vec<(i64, FlowId, String, String, i64, i64)> = {
+            let conn = self.db.read()?;
+            let mut stmt = conn.prepare(
+                "SELECT id, flow_id, status, note, added_ms, updated_ms FROM organizer ORDER BY id DESC LIMIT ?1",
+            )?;
+            let it = stmt.query_map([MAX_ORGANIZER_ITEMS as i64], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })?;
+            it.collect::<Result<_, _>>()?
+        };
+        let ids: Vec<FlowId> = rows.iter().map(|r| r.1).collect();
+        let flows: std::collections::HashMap<FlowId, FlowSummary> =
+            self.summaries(&ids)?.into_iter().map(|f| (f.id, f)).collect();
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, flow_id, status, note, added_ms, updated_ms)| {
+                Some(OrganizerItem {
+                    id,
+                    flow_id,
+                    status: OrganizerStatus::parse(&status),
+                    note,
+                    added_ms,
+                    updated_ms,
+                    flow: flows.get(&flow_id)?.clone(),
+                })
+            })
+            .collect())
+    }
+
+    /// Change an item's status and/or note. False if there is no such item.
+    pub fn organizer_update(
+        &self,
+        id: i64,
+        status: Option<OrganizerStatus>,
+        note: Option<&str>,
+        now_ms: i64,
+    ) -> Result<bool, StoreError> {
+        let conn = self.db.write();
+        let mut n = 0;
+        if let Some(s) = status {
+            n = conn.execute(
+                "UPDATE organizer SET status = ?1, updated_ms = ?2 WHERE id = ?3",
+                params![s.as_str(), now_ms, id],
+            )?;
+        }
+        if let Some(note) = note {
+            n = conn.execute(
+                "UPDATE organizer SET note = ?1, updated_ms = ?2 WHERE id = ?3",
+                params![note, now_ms, id],
+            )?;
+        }
+        Ok(n > 0)
+    }
+
+    pub fn organizer_delete(&self, id: i64) -> Result<bool, StoreError> {
+        Ok(self
+            .db
+            .write()
+            .execute("DELETE FROM organizer WHERE id = ?1", [id])?
+            > 0)
+    }
+
     /// Delete flows (and blobs nothing refers to any more).
     pub fn delete_flows(&self, ids: &[FlowId]) -> Result<usize, StoreError> {
         let mut conn = self.db.write();
@@ -695,6 +992,7 @@ impl Project {
         let mut n = 0;
         for id in ids {
             tx.execute("DELETE FROM flow_text WHERE rowid = ?1", [id])?;
+            tx.execute("DELETE FROM organizer WHERE flow_id = ?1", [id])?;
             n += tx.execute("DELETE FROM flows WHERE id = ?1", [id])?;
         }
         tx.execute(
@@ -1650,5 +1948,172 @@ mod tests {
         assert!(err.to_string().contains(&std::process::id().to_string()), "{err}");
         drop(first);
         Project::open(&path).unwrap();
+    }
+
+    /// Run a query line against a project and return the matching paths, newest first.
+    fn ask(p: &Project, q: &str) -> Vec<String> {
+        let parsed = crate::query::parse(q);
+        assert!(parsed.errors.is_empty(), "{q}: {:?}", parsed.errors);
+        let list = p
+            .list_flows(&FlowFilter {
+                query: parsed.expr,
+                ..Default::default()
+            })
+            .unwrap();
+        list.into_iter().map(|f| f.path).collect()
+    }
+
+    #[test]
+    fn the_organizer_keeps_requests_with_a_status_and_a_note() {
+        let p = Project::open_in_memory().unwrap();
+        let flows: Vec<_> = (0..3)
+            .map(|i| flow(&p, "a.test", &format!("/{i}"), 200, "x"))
+            .collect();
+        p.write_batch(&flows, &[]).unwrap();
+        let ids: Vec<_> = flows.iter().map(|f| f.id).collect();
+        // Adding twice keeps one item per flow; an unknown flow is not added.
+        assert_eq!(p.organizer_add(&[ids[0], ids[1], ids[0], 9999], 5).unwrap(), 2);
+        assert_eq!(p.organizer_add(&[ids[0]], 6).unwrap(), 0);
+        let list = p.organizer_list().unwrap();
+        assert_eq!(
+            list.iter().map(|i| i.flow.path.as_str()).collect::<Vec<_>>(),
+            ["/1", "/0"]
+        );
+        assert!(
+            list.iter()
+                .all(|i| i.status == OrganizerStatus::Todo && i.note.is_empty())
+        );
+        let id = list[1].id;
+        assert!(
+            p.organizer_update(id, Some(OrganizerStatus::InProgress), Some("check the cookie"), 9)
+                .unwrap()
+        );
+        assert!(
+            !p.organizer_update(12345, Some(OrganizerStatus::Done), None, 9)
+                .unwrap()
+        );
+        let item = &p.organizer_list().unwrap()[1];
+        assert_eq!(
+            (item.status, item.note.as_str(), item.updated_ms),
+            (OrganizerStatus::InProgress, "check the cookie", 9)
+        );
+        // Deleting the flow takes its item with it; deleting an item leaves the flow.
+        p.delete_flows(&[ids[0]]).unwrap();
+        assert_eq!(p.organizer_list().unwrap().len(), 1);
+        assert!(p.organizer_delete(p.organizer_list().unwrap()[0].id).unwrap());
+        assert!(p.organizer_list().unwrap().is_empty());
+        assert_eq!(p.summaries(&[ids[1]]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tags_change_in_bulk_without_case_duplicates_and_within_the_cap() {
+        let p = Project::open_in_memory().unwrap();
+        let flows: Vec<_> = (0..3)
+            .map(|i| flow(&p, "a.test", &format!("/{i}"), 200, "x"))
+            .collect();
+        p.write_batch(&flows, &[]).unwrap();
+        let ids: Vec<_> = flows.iter().map(|f| f.id).collect();
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(p.change_tags(&ids, &s(&["Review", "review"]), &[], 4).unwrap(), 3);
+        let tags = |id| p.summaries(&[id]).unwrap()[0].tags.clone();
+        assert_eq!(tags(ids[0]), ["Review"], "one tag, whatever the case");
+        // Adding again changes nothing; removing is case-insensitive; the cap holds.
+        assert_eq!(p.change_tags(&ids, &s(&["REVIEW"]), &[], 4).unwrap(), 0);
+        assert_eq!(
+            p.change_tags(&ids[..1], &s(&["a", "b", "c", "d"]), &[], 4)
+                .unwrap(),
+            1
+        );
+        assert_eq!(tags(ids[0]), ["Review", "a", "b", "c"]);
+        assert_eq!(p.change_tags(&ids, &[], &s(&["review"]), 4).unwrap(), 3);
+        assert_eq!(tags(ids[1]), Vec::<String>::new());
+        // Ids that do not exist are skipped.
+        assert_eq!(p.change_tags(&[9999], &s(&["x"]), &[], 4).unwrap(), 0);
+    }
+
+    #[test]
+    fn the_query_language_runs_against_the_store() {
+        let p = Project::open_in_memory().unwrap();
+        let mut a = flow(&p, "a.in.test", "/login", 200, "<p>welcome back</p>");
+        a.request = b"GET /login HTTP/1.1\r\nHost: a.in.test\r\nX-Api-Key: k-777\r\n\r\n".to_vec();
+        let b = flow(&p, "b.out.test", "/img/logo.png", 404, "nope");
+        let mut c = flow(&p, "a.in.test", "/admin", 302, "moved");
+        c.method = "POST".into();
+        c.started_ms = 10_000_000_000_000;
+        let mut d = flow(&p, "c.in.test", "/pending", 0, "");
+        d.status = None; // no response yet
+        d.response = None;
+        p.write_batch(&[a.clone(), b.clone(), c.clone(), d.clone()], &[])
+            .unwrap();
+        p.set_annotations(a.id, Some(&["Interesting".to_string()]), Some("check this"))
+            .unwrap();
+
+        assert_eq!(ask(&p, ""), ["/pending", "/admin", "/img/logo.png", "/login"]);
+        assert_eq!(ask(&p, "host:a.in.test"), ["/admin", "/login"]);
+        assert_eq!(
+            ask(&p, "host:b.out.test,c.in.test"),
+            ["/pending", "/img/logo.png"]
+        );
+        assert_eq!(ask(&p, "method:post"), ["/admin"]);
+        assert_eq!(ask(&p, "status:4xx or status:302"), ["/admin", "/img/logo.png"]);
+        assert_eq!(ask(&p, "status:>=300"), ["/admin", "/img/logo.png"]);
+        assert_eq!(ask(&p, "scope:out"), ["/img/logo.png"]);
+        assert_eq!(ask(&p, "-ext:png"), ["/pending", "/admin", "/login"]);
+        assert_eq!(ask(&p, "ext:png"), ["/img/logo.png"]);
+        // NOT keeps flows that have no status at all.
+        assert_eq!(ask(&p, "not status:4xx"), ["/pending", "/admin", "/login"]);
+        assert_eq!(ask(&p, "-(host:a.in.test or host:b.out.test)"), ["/pending"]);
+        assert_eq!(ask(&p, "welcome"), ["/login"]);
+        assert_eq!(ask(&p, "login or moved"), ["/admin", "/login"]);
+        assert_eq!(ask(&p, "header:x-api-key"), ["/login"]);
+        assert_eq!(ask(&p, "header:x-api-key=k-777"), ["/login"]);
+        assert!(ask(&p, "header:x-api-key=other").is_empty());
+        assert_eq!(ask(&p, "tag:interesting"), ["/login"]);
+        assert_eq!(ask(&p, "has:note"), ["/login"]);
+        assert_eq!(ask(&p, "note:check"), ["/login"]);
+        assert_eq!(ask(&p, "has:response"), ["/admin", "/img/logo.png", "/login"]);
+        assert_eq!(ask(&p, "size:>10"), ["/admin", "/img/logo.png", "/login"]);
+        assert!(ask(&p, "size:>1m").is_empty());
+        assert_eq!(ask(&p, "source:proxy port:443 scheme:https mime:html").len(), 3);
+        assert_eq!(ask(&p, "path:/img"), ["/img/logo.png"]);
+        // Time: `c` started far in the future, the rest at the start of 1970.
+        assert_eq!(ask(&p, "since:1d"), ["/admin"]);
+        assert_eq!(
+            ask(&p, "until:2000-01-01"),
+            ["/pending", "/img/logo.png", "/login"]
+        );
+        // Combined with the plain fields.
+        let parsed = crate::query::parse("host:a.in.test");
+        let list = p
+            .list_flows(&FlowFilter {
+                query: parsed.expr,
+                methods: Some(vec!["GET".into()]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn hostile_query_text_cannot_change_the_statement() {
+        let p = Project::open_in_memory().unwrap();
+        let a = flow(&p, "a.in.test", "/one", 200, "x");
+        p.write_batch(std::slice::from_ref(&a), &[]).unwrap();
+        for q in [
+            "host:\"a'; DROP TABLE flows; --\"",
+            "\"') OR 1=1 --\"",
+            "tag:\"x') OR ('1'='1\"",
+            "header:\"x%_\\\"",
+            "note:%",
+        ] {
+            let parsed = crate::query::parse(q);
+            p.list_flows(&FlowFilter {
+                query: parsed.expr,
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        assert_eq!(p.flow_count().unwrap(), 1);
+        assert_eq!(ask(&p, "note:%"), Vec::<String>::new());
     }
 }

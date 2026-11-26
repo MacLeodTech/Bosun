@@ -74,3 +74,17 @@ path = "fuzz_targets/codec.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "history_query"
+path = "fuzz_targets/history_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engage"
+path = "fuzz_targets/engage.rs"
+test = false
+doc = false
+bench = false

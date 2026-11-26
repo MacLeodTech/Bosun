@@ -83,6 +83,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
   output as `<span>` elements, never as markup built from the body. The render frame is told the UI's colour scheme
   through one `<meta name="color-scheme">` that the UI writes (after the doctype, so the page's rendering mode
   does not change); the `sandbox` attribute and the CSP are untouched.
+- *The message editor (CodeMirror 6).* CodeMirror writes its styles into a `<style>` element, which `style-src 'self'`
+  blocks. In a shadow root it adopts a constructed stylesheet instead, which the policy does not govern, so the editor
+  lives in one and the policy stays exactly as it was: no nonce, no `unsafe-inline`, and the e2e test checks the
+  header. Target text is only the editor's document and span class names, never markup. Window shortcuts read the
+  event's composed path, because inside a shadow root `event.target` is the host. Chromium's own editing can try to
+  write an inline `style` attribute when typing replaces a selection; that is blocked (`style-src-attr`), and nothing
+  depends on it.
 - *Requests moved between tools.* Dragging requests, the palette, context menus and shortcuts all pass flow **ids**,
   never message bodies; a receiving tool fetches by id through the API, so the scope gate, role checks and audit
   still apply. A request sent to the Repeater travels through `sessionStorage` (as it already did) and is removed
@@ -174,7 +181,24 @@ This document says what is protected, from whom, and how. Code comments refer ba
   also bounds idle keep-alive connections), HTTP/2 limits (100 concurrent streams, 64 KiB header list, keep-alive
   pings) and a cap on concurrent connections (`proxy.max_connections` 1024, `api.max_connections` 256). Past the
   cap, new connections are closed at once and existing ones keep working. Keep the caps well under half the
-  process's open-file limit: a proxied connection also holds an upstream socket.
+  process's open-file limit: a proxied connection also holds an upstream socket. Refused proxy connections are
+  counted (`connections_refused` in `/proxy` stats): they never become flows, so a load test that opens more than
+  the cap will see fewer flows in History than requests sent.
+- *History queries.* The query language (`docs/query-language.md`) is parsed in Rust and compiled to an SQL
+  condition that uses bound parameters only: no query text is ever part of the statement. Length, term count and
+  nesting are capped, a query that runs over five seconds is interrupted, and the result size is capped like any
+  listing. The parser has a fuzz target that also runs what it produces against a real project (it found that a NUL
+  character cut a bound full-text phrase short).
+- *Copies and exports.* A recorded request carries other people's secrets (session cookies, bearer tokens). "Copy as
+  cURL, PowerShell, Python, JavaScript or Go" and the HAR export replace the values of `Authorization`, `Cookie`,
+  `Set-Cookie`, API-key and CSRF headers with `REDACTED` (cookie names stay) unless the person ticks "Keep cookies and
+  authorization values", a preference of that browser that starts off. Values go into shell and code text only through
+  quoting that the tests check against a real shell, and the HAR file is built in the browser from the same API calls
+  the viewer makes (bodies over 2 MiB are cut), so the scope gate, roles and audit log are not bypassed. Query strings are
+  not redacted: a token in a URL is exported as it was recorded.
+- *Organizer and tags.* Notes, tags and the status of kept requests are text a tester wrote; they are shown as text.
+  Bulk tag changes and the Organizer need the tester role, are capped (5,000 flows per call, 32 tags of 64 characters),
+  and are not audited because they change no scope, rule, account or token.
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
 
 ### Elevation of privilege
@@ -226,13 +250,22 @@ This document says what is protected, from whom, and how. Code comments refer ba
   capped (very different large inputs are reported coarsely) and the work runs off the async threads. The codecs are
   in `bosun-codec` (no I/O), covered by property tests and the `codec` fuzz target. Output is data for display as text;
   the UI never renders it as HTML.
-- *The Repeater API (`/repeater/send`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
+- *The client commands (`bosun login`, `status`, `repeater send`).* They are clients of the API like any other: the
+  server checks the role, the scope gate, the audit and the recording, so the CLI adds no way around them. `login` reads
+  the password from stdin, makes a 90-day API token and signs the session out again; the token is kept in
+  `profiles.json` in the client directory, created readable by its owner only (0600 on Unix; Windows relies on the
+  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. An OS keychain is not used yet.
+- *The Repeater API (`/repeater/send`, `/repeater/ws`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
   the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
   unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a
   project is opened, and changing it is audited. Each send is audited (target, count, mode) and recorded as a flow
   with source `repeater`, so nothing the Repeater sends is hidden from history. The kill switch stops it. Counts
   are capped (100; 50 for a single-packet batch), and so are the request (4 MiB) and, by the engine, the
-  response. The UI keeps tabs in `sessionStorage` only, because a request can hold credentials.
+  response. `/repeater/ws` takes the same role, gate, audit and recording: the handshake goes through the gate with
+  the Repeater's policy, and frames are capped (100 sent, 1 MiB each, 200 read, at most 10 s of listening) and
+  stored as the flow's messages. A connection lasts one call and is closed before it returns. Tabs are saved in the project (`/repeater/tabs`, viewer to read, tester to write: at most 100 tabs and 8 MiB,
+  each an object; responses are not stored). A request can hold credentials, but so does every flow in the same file,
+  and the project file is already the place those live, with its permissions, export and backup rules.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a

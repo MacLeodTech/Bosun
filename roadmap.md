@@ -188,7 +188,7 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-23, WP-25, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-23, WP-25, WP-28, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
@@ -208,7 +208,6 @@ valid in the "Depends on" column.
 | [ ] | WP-47 | Intruder (rest) | 4 | M | WP-40, WP-41 |
 | [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
 | [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
-| [ ] | WP-28 | Proxy hot path | 4 | M | WP-05 |
 | [ ] | WP-33 | Protocol gaps | 4 | M | WP-20 |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
 | [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
@@ -388,22 +387,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Indexes for host search (for example a reversed-host column) and extensions (an `ext` column).
   - Criterion benchmarks at 1 million flows, tracked in CI as part of the footprint budgets.
 - **Done when:** a v1 project migrates, the benchmarks run in CI, and the measured storage saving is noted here.
-
-#### WP-28 Proxy hot path · Phase 4 · M
-
-- **Why:**
-  - Each message is copied about three times, and `new_flow` re-parses the full request and response to get
-    values already known.
-  - Request bodies are always fully buffered.
-  - Flow ids are reserved for flows that won't be recorded.
-- **Do:**
-  - Pass the method, path and status through instead of re-parsing.
-  - Keep bodies as `Bytes` (no copies).
-  - Stream request bodies (with a capped tee for recording) when neither intercept nor a request-body rule needs
-    them buffered.
-  - Reserve an id only when recording.
-  - Criterion throughput and latency benchmarks.
-- **Done when:** the benchmarks show the improvement and the proxy tests still pass.
 
 #### WP-29 Encrypted projects · Phase 5 · L
 

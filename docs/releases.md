@@ -9,6 +9,13 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
+- **WP-28 Proxy hot path** (`wp-43`, 2026-11-26). `new_flow` no longer re-parses (method, path, version and status are
+  passed through); bodies stay `Bytes`; a request that isn't recorded, held or touched by a rule isn't serialised; request
+  bodies stream with a capped tee for the record when intercept and request-body rules don't need them (413 and 503
+  admission kept); flow ids are reserved only for recorded or held flows. Criterion benchmarks in
+  `crates/bosun-proxy/benches`: 4 MiB upload 5.2 to 1.8 ms, 4 MiB download 8.3 to 6.9 ms, small GET unchanged (~167 µs).
+  Left: a streamed request recorded before its upload ends is stored with only the part captured so far.
+
 - **WP-23 Server mode** (`wp-43`, 2026-11-26). `GET /healthz` and `bosun healthcheck` (with `api.tls` on it only checks
   that the port accepts connections); `BOSUN_ADMIN_USER`, `BOSUN_ADMIN_PASSWORD_FILE` and
   `BOSUN_BOOTSTRAP_TOKEN_FILE` create the first admin and a full API token at start-up (audited; ignored once any user

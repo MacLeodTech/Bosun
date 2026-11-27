@@ -465,6 +465,15 @@ const MIGRATIONS: &[migrate::Migration] = &[
             );
         "#,
     },
+    migrate::Migration {
+        version: 11,
+        rebuild: false,
+        what: "flows.ext: the lower-case extension of the last path segment, indexed for extension filters",
+        sql: r#"
+            ALTER TABLE flows ADD COLUMN ext TEXT GENERATED ALWAYS AS (CASE WHEN instr(substr(base_path, length(rtrim(base_path, replace(base_path, '/', ''))) + 1), '.') > 0 THEN lower(substr(substr(base_path, length(rtrim(base_path, replace(base_path, '/', ''))) + 1), length(rtrim(substr(base_path, length(rtrim(base_path, replace(base_path, '/', ''))) + 1), replace(substr(base_path, length(rtrim(base_path, replace(base_path, '/', ''))) + 1), '.', ''))) + 1)) ELSE '' END) VIRTUAL;
+            CREATE INDEX flows_ext ON flows(ext);
+        "#,
+    },
 ];
 
 /// The schema objects in a database as (type, name, sql), ignoring SQLite's own bookkeeping tables.
@@ -890,8 +899,8 @@ impl Project {
                 .iter()
                 .filter(|e| e.chars().all(|c| c.is_ascii_alphanumeric()) && !e.is_empty())
             {
-                sql.push_str(" AND lower(base_path) NOT LIKE ?");
-                args.push(V::Text(format!("%.{}", e.to_ascii_lowercase())));
+                sql.push_str(" AND ext <> ?");
+                args.push(V::Text(e.to_ascii_lowercase()));
             }
         }
         if let Some(q) = &f.query {
@@ -1850,6 +1859,42 @@ mod tests {
             .execute("UPDATE blobs SET data = ?1, size = 50", [short])
             .unwrap();
         assert!(p.flow_meta(id).is_err());
+    }
+
+    #[test]
+    fn ext_is_the_extension_of_the_last_segment_and_is_indexed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        {
+            let mut c = Connection::open(&path).unwrap();
+            c.pragma_update(None, "foreign_keys", "ON").unwrap();
+            migrate::run(&mut c, &MIGRATIONS[..10]).unwrap();
+            c.execute("INSERT INTO blobs (hash, size, data) VALUES (x'aa', 1, x'00')", []).unwrap();
+            for (i, bp) in ["/a/App.JS", "/v1.2/users", "/x.tar.gz", "/", "/noext"].iter().enumerate() {
+                c.execute(
+                    "INSERT INTO flows (id, source, started_ms, scheme, host, port, method, path, base_path,
+                        http_version, request_len, in_scope, edited, req_blob)
+                     VALUES (?1, 'proxy', 1, 'http', 'a.test', 80, 'GET', ?2, ?2, 'HTTP/1.1', 1, 1, 0, x'aa')",
+                    params![i as i64 + 1, bp],
+                )
+                .unwrap();
+            }
+        }
+        let p = Project::open(&path).unwrap();
+        let c = Connection::open(&path).unwrap();
+        let exts: Vec<String> = c
+            .prepare("SELECT ext FROM flows ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(exts, ["js", "", "gz", "", ""]);
+        let plan: String = c
+            .query_row("EXPLAIN QUERY PLAN SELECT id FROM flows WHERE ext = 'js'", [], |r| r.get(3))
+            .unwrap();
+        assert!(plan.contains("flows_ext"), "{plan}");
+        drop(p);
     }
 
     #[test]

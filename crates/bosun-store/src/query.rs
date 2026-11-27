@@ -832,8 +832,8 @@ fn term(t: &Term, now: i64, sql: &mut String, args: &mut Vec<Param>) {
         Term::Status(rs) => any_of(rs, sql, |r, sql| range("status", r, sql, args)),
         Term::Scope(b) => sql.push_str(if *b { "in_scope = 1" } else { "in_scope = 0" }),
         Term::Ext(es) => any_of(es, sql, |e, sql| {
-            sql.push_str("lower(base_path) LIKE ? ESCAPE '\\'");
-            args.push(Param::Text(format!("%.{e}")));
+            sql.push_str("ext = ?");
+            args.push(Param::Text(e.clone()));
         }),
         Term::Source(s) => {
             sql.push_str("source = ?");

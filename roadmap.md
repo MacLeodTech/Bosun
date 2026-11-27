@@ -364,6 +364,7 @@ Open packages only; finished ones are in `docs/releases.md`.
     them up in the background.
   - Write the v1-to-v2 migration with the framework from WP-35, tested on a real v1 file.
   - Indexes for host search (for example a reversed-host column) and extensions (an `ext` column).
+    - **Done:** `ext` (migration 11, a generated column with an index). **Open:** host search; `host:` means "contains", which no index can serve. Decide: keep it, or match the host and its subdomains through a reversed-host index.
   - Criterion benchmarks at 1 million flows, tracked in CI as part of the footprint budgets.
 - **Done when:** a v1 project migrates, the benchmarks run in CI, and the measured storage saving is noted here.
 

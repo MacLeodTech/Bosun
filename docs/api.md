@@ -52,6 +52,14 @@ which is open). Everyone can list; the rest need the admin role and is audited.
 Status codes: 409 (name taken, project open or locked by another process), 422 (not a usable Bosun project, or
 from a newer Bosun), 413 (too large).
 
+## The credential vault
+
+`/vault` holds named secrets (kinds `password`, `token`, `api_key`, `auth_config`, `client_cert_password`, `oast_key`,
+`other`). `GET /vault` (viewer) lists id, name, kind, timestamps and a masked hint; no response ever carries the
+secret. `POST /vault`, `PATCH /vault/{id}` (rename, re-kind, replace the secret) and `DELETE /vault/{id}` need the admin
+role and are audited by name (`vault.create`, `vault.update`, `vault.delete`). Other features refer to an entry by its
+id. 400 (bad name, kind or secret), 404, 409 (name taken, or 500 entries).
+
 ## Embedded mode
 
 `bosun serve --embedded` is for a desktop app that starts the engine as a child process. It listens on loopback only

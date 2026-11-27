@@ -1733,6 +1733,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vault": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The vault's named secrets: id, name, kind, timestamps and a masked hint. The secret itself is never returned. Needs the viewer role or above. */
+        get: operations["list_vault"];
+        put?: never;
+        /** @description Store a named secret, sealed with the data key. Needs the admin role; audited as `vault.create` (by name, never by value). */
+        post: operations["create_vault_entry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vault/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Delete an entry. Needs the admin role; audited as `vault.delete`. */
+        delete: operations["delete_vault_entry"];
+        options?: never;
+        head?: never;
+        /** @description Rename an entry, change its kind or replace its secret (left out keeps it). Needs the admin role; audited as `vault.update`. */
+        patch: operations["update_vault_entry"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3569,6 +3605,36 @@ export interface components {
             id: number;
             role: components["schemas"]["Role"];
             username: string;
+        };
+        VaultCreate: {
+            /** @description One of `password`, `token`, `api_key`, `auth_config`, `client_cert_password`, `oast_key`, `other`. */
+            kind: string;
+            /** @description A unique name, 1 to 100 characters. */
+            name: string;
+            /** @description The secret. Stored sealed; never returned. */
+            secret: string;
+        };
+        /** @description What a list shows: no secret. */
+        VaultEntry: {
+            /** Format: int64 */
+            created_ms: number;
+            /** @description A masked hint such as `••••ab`; never enough to recover the secret. */
+            hint: string;
+            /** Format: int64 */
+            id: number;
+            kind: string;
+            name: string;
+            /** Format: int64 */
+            updated_ms: number;
+        };
+        VaultList: {
+            entries: components["schemas"]["VaultEntry"][];
+        };
+        VaultUpdate: {
+            kind?: string | null;
+            name?: string | null;
+            /** @description A new secret; leave out to keep the current one. */
+            secret?: string | null;
         };
         /** @enum {string} */
         Verdict: "not_random" | "poor" | "good" | "excellent";
@@ -10867,6 +10933,224 @@ export interface operations {
             };
             /** @description That user has no second factor */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_vault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    create_vault_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultEntry"];
+                };
+            };
+            /** @description Bad name, kind or secret */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The name is taken, or the vault is full */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_vault_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Entry id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such entry */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    update_vault_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Entry id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultEntry"];
+                };
+            };
+            /** @description Bad name, kind or secret */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such entry */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The name is taken */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

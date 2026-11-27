@@ -206,6 +206,15 @@ This document says what is protected, from whom, and how. Code comments refer ba
   chosen by target content. A PEM or PKCS#12 upload is untrusted input: 64 KiB cap, parsing off the async workers,
   a key that does not match its certificate refused, fuzzed (`client_cert`). Anything running as the same OS user can
   still read the data key (see above), and a target that asks for a certificate learns the subject of ours.
+- *Credential vault (WP-68).* Named secrets (auth configs, passwords, tokens, later OAST keys) in the project table
+  `vault`. Each secret is sealed with the data key, with a purpose bound to its row id, before it reaches the project
+  file, so a copied or exported project holds ciphertext only. No endpoint returns a secret: lists and results carry
+  id, name, kind, timestamps and a hint (the last two characters of a secret of 12 or more, otherwise a fixed mask).
+  Features refer to an entry by id and open it server-side (`vault::open_secret`). Writes need the admin role and are
+  audited by name, never by value; secrets are limited to 64 KiB and 500 entries. A secret is plain text in the
+  request that creates or replaces it (use TLS off loopback), and anything running as the same OS user can still read
+  the data key. The PKCS#12 password of a client certificate is not stored (it is used once to unpack the file), so
+  there is nothing of WP-33 to move into the vault.
 - *The CA key at rest.* Sealed with ChaCha20-Poly1305 under a 32-byte data key that lives apart from it:
   `BOSUN_DATA_KEY`, a mounted secret file, or `data.key` (0600). Files and directories are created 0600/0700, and
   the key file's permissions are checked on load.

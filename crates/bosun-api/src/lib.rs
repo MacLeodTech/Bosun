@@ -21,6 +21,7 @@ pub mod intruder;
 pub mod issues;
 pub mod listeners;
 pub mod maprules;
+pub mod vault;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
@@ -511,6 +512,11 @@ pub fn router(st: AppState) -> Router {
         .route("/intruder/attacks/{id}/stop", post(intruder::stop))
         .route("/client-certs", get(clientcerts::list).post(clientcerts::add))
         .route("/client-certs/{id}", axum::routing::delete(clientcerts::delete))
+        .route("/vault", get(vault::list).post(vault::create))
+        .route(
+            "/vault/{id}",
+            axum::routing::patch(vault::update).delete(vault::delete),
+        )
         .route("/checks", get(checks::list).post(checks::add))
         .route("/checks/validate", post(checks::validate_only))
         .route(

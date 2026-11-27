@@ -8822,6 +8822,263 @@
           }
         }
       }
+    },
+    "/vault": {
+      "get": {
+        "tags": [
+          "vault"
+        ],
+        "description": "The vault's named secrets: id, name, kind, timestamps and a masked hint. The secret itself is never returned. Needs the viewer role or above.",
+        "operationId": "list_vault",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "vault"
+        ],
+        "description": "Store a named secret, sealed with the data key. Needs the admin role; audited as `vault.create` (by name, never by value).",
+        "operationId": "create_vault_entry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VaultCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad name, kind or secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is taken, or the vault is full",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vault/{id}": {
+      "delete": {
+        "tags": [
+          "vault"
+        ],
+        "description": "Delete an entry. Needs the admin role; audited as `vault.delete`.",
+        "operationId": "delete_vault_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Entry id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "vault"
+        ],
+        "description": "Rename an entry, change its kind or replace its secret (left out keeps it). Needs the admin role; audited as `vault.update`.",
+        "operationId": "update_vault_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Entry id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VaultUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad name, kind or secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -14626,6 +14883,102 @@
           }
         }
       },
+      "VaultCreate": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "secret"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "One of `password`, `token`, `api_key`, `auth_config`, `client_cert_password`, `oast_key`, `other`."
+          },
+          "name": {
+            "type": "string",
+            "description": "A unique name, 1 to 100 characters."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The secret. Stored sealed; never returned."
+          }
+        }
+      },
+      "VaultEntry": {
+        "type": "object",
+        "description": "What a list shows: no secret.",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "hint",
+          "created_ms",
+          "updated_ms"
+        ],
+        "properties": {
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hint": {
+            "type": "string",
+            "description": "A masked hint such as `••••ab`; never enough to recover the secret."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "VaultList": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VaultEntry"
+            }
+          }
+        }
+      },
+      "VaultUpdate": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A new secret; leave out to keep the current one."
+          }
+        }
+      },
       "Verdict": {
         "type": "string",
         "enum": [
@@ -14900,6 +15253,9 @@
     },
     {
       "name": "clientcerts"
+    },
+    {
+      "name": "vault"
     },
     {
       "name": "sequencer"

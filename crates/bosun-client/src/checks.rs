@@ -36,6 +36,22 @@ pub(crate) struct ClientCertList {
     pub certs: Vec<ClientCert>,
 }
 
+/// A vault entry as listed: never the secret.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultEntry {
+    pub id: i64,
+    pub name: String,
+    pub kind: String,
+    pub hint: String,
+    pub created_ms: i64,
+    pub updated_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct VaultList {
+    pub entries: Vec<VaultEntry>,
+}
+
 /// The outcome of `Client::validate_check`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckValidation {

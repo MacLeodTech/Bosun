@@ -1075,6 +1075,45 @@ impl Client {
             .await
     }
 
+    // --- credential vault --------------------------------------------------------------------------------------
+
+    /// The vault's entries: never the secrets.
+    pub async fn vault(&self) -> Result<Vec<VaultEntry>> {
+        Ok(self
+            .json::<VaultList>(self.req(Method::GET, "/vault"))
+            .await?
+            .entries)
+    }
+
+    /// Store a named secret (needs the admin role). `kind` is one of `password`, `token`, `api_key`,
+    /// `auth_config`, `client_cert_password`, `oast_key`, `other`.
+    pub async fn create_vault_entry(&self, name: &str, kind: &str, secret: &str) -> Result<VaultEntry> {
+        self.json(
+            self.req(Method::POST, "/vault")
+                .json(&json!({ "name": name, "kind": kind, "secret": secret })),
+        )
+        .await
+    }
+
+    /// Rename, re-kind or replace the secret of an entry; `None` leaves a field as it is.
+    pub async fn update_vault_entry(
+        &self,
+        id: i64,
+        name: Option<&str>,
+        kind: Option<&str>,
+        secret: Option<&str>,
+    ) -> Result<VaultEntry> {
+        self.json(
+            self.req(Method::PATCH, &format!("/vault/{id}"))
+                .json(&json!({ "name": name, "kind": kind, "secret": secret })),
+        )
+        .await
+    }
+
+    pub async fn delete_vault_entry(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/vault/{id}"))).await
+    }
+
     // --- custom checks ---------------------------------------------------------------------------------------
 
     pub async fn checks(&self) -> Result<Vec<CustomCheck>> {

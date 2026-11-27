@@ -12,6 +12,7 @@ pub mod query;
 
 pub use app::{ApiToken, AppDb, AuditEntry, Role, Session, SessionInfo, TokenScope, TotpRow, User};
 pub use project::checks::{MAX_CHECKS, StoredCheck};
+pub use project::vault::{MAX_VAULT_ENTRIES, VaultEntry};
 pub use project::clientcerts::{ClientCertMeta, ClientCertRow, MAX_CLIENT_CERTS};
 pub use project::intruder::{MAX_ATTACKS, NewAttack, StoredAttack, StoredRow};
 pub use project::issues::{

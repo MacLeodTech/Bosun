@@ -1551,3 +1551,30 @@ test('map rules: Map Local answers from a file, and a path outside the directory
   await page.getByRole('navigation').getByRole('button', { name: 'Match & replace' }).click();
   await expect(page.getByLabel('Map rule 1: directory')).toHaveValue(dir);
 });
+
+test('vault: a secret is stored, shown as a masked hint only, replaced and deleted', async () => {
+  const secret = 'e2e-vault-secret-VALUE-1234567890';
+  await page.getByRole('navigation').getByRole('button', { name: 'Vault' }).click();
+  const vp = page.getByRole('tabpanel', { name: 'Vault', exact: true });
+  await vp.getByLabel('Vault entry name').fill('e2e api key');
+  await vp.getByLabel('Vault entry kind').selectOption('api_key');
+  await vp.getByLabel('Vault entry secret').fill(secret);
+  await vp.getByRole('button', { name: 'Add to vault' }).click();
+  await expect(vp.getByRole('status')).toContainText('Stored');
+  const table = vp.getByRole('table', { name: 'Vault entries' });
+  await expect(table).toContainText('e2e api key');
+  await expect(table).toContainText('••••90');
+  // The secret is not on the page, and the API does not return it.
+  await expect(page.locator('body')).not.toContainText(secret);
+  const listed = await page.evaluate(async () => (await fetch('/api/v1/vault', { credentials: 'same-origin' })).text());
+  expect(listed).toContain('e2e api key');
+  expect(listed).not.toContain(secret);
+
+  await vp.getByRole('button', { name: 'Replace secret of e2e api key' }).click();
+  await vp.getByLabel('New secret for e2e api key').fill('another-secret-value-ABCDEF');
+  await vp.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(table).toContainText('••••EF');
+
+  await vp.getByRole('button', { name: 'Delete e2e api key' }).click();
+  await expect(vp.getByText('The vault is empty.')).toBeVisible();
+});

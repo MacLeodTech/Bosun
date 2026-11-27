@@ -163,6 +163,7 @@ pub mod clientcerts;
 pub mod intruder;
 pub mod issues;
 pub mod maprules;
+pub mod vault;
 
 /// The most items the Organizer lists, and the longest note.
 pub const MAX_ORGANIZER_ITEMS: usize = 5_000;
@@ -445,6 +446,22 @@ const MIGRATIONS: &[migrate::Migration] = &[
             CREATE TABLE map_rules (
                 position INTEGER PRIMARY KEY,
                 spec TEXT NOT NULL
+            );
+        "#,
+    },
+    migrate::Migration {
+        version: 10,
+        rebuild: false,
+        what: "credential vault (named secrets sealed with the data key by the API layer)",
+        sql: r#"
+            CREATE TABLE vault (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                kind TEXT NOT NULL,
+                sealed BLOB NOT NULL,
+                hint TEXT NOT NULL,
+                created_ms INTEGER NOT NULL,
+                updated_ms INTEGER NOT NULL
             );
         "#,
     },

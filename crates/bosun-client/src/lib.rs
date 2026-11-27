@@ -14,7 +14,7 @@
 //! cookie and sends the CSRF token for you.
 
 mod checks;
-pub use checks::ClientCert;
+pub use checks::{ClientCert, VaultEntry};
 mod client;
 mod error;
 mod events;

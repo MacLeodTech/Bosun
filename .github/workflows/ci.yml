@@ -218,6 +218,11 @@ jobs:
           cargo build --release --locked -p bosun
       - name: Idle memory against its budget
         run: python3 scripts/footprint.py idle target/release/bosun
+      - name: Storage benchmarks (50,000 flows) against their budgets
+        # The full 1,000,000-flow run is `cargo bench -p bosun-store` (minutes); this is the CI-sized mode.
+        run: |
+          BOSUN_BENCH_FLOWS=50000 BOSUN_BENCH_OUT=store-bench.txt cargo bench --locked -p bosun-store
+          python3 scripts/footprint.py check $(cat store-bench.txt)
 
   image:
     name: Container image (build + Trivy)

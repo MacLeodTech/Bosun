@@ -10,6 +10,41 @@
       "budget": 60,
       "baseline": 40.0,
       "unit": "MB"
+    },
+    "store_bytes_per_flow": {
+      "budget": 9000,
+      "baseline": 5954,
+      "unit": "B"
+    },
+    "store_message_bytes_per_flow": {
+      "budget": 600,
+      "baseline": 315,
+      "unit": "B"
+    },
+    "store_insert_flows_per_s": {
+      "budget": 1000,
+      "unit": "flows/s",
+      "higher_is_better": true
+    },
+    "store_list_latest_ms": {
+      "budget": 20,
+      "unit": "ms"
+    },
+    "store_list_ext_ms": {
+      "budget": 50,
+      "unit": "ms"
+    },
+    "store_list_scope_status_ms": {
+      "budget": 50,
+      "unit": "ms"
+    },
+    "store_get_flow_ms": {
+      "budget": 10,
+      "unit": "ms"
+    },
+    "store_delete_1000_ms": {
+      "budget": 5000,
+      "unit": "ms"
     }
   }
 }

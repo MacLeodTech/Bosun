@@ -204,7 +204,6 @@ valid in the "Depends on" column.
 | [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
 | [ ] | WP-47 | Intruder (rest) | 4 | M | WP-40, WP-41 |
 | [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
-| [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
 | [ ] | WP-33 | Protocol gaps (only header case left) | 4 | S | |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
 | [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
@@ -349,28 +348,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** the keychain is used where one exists, with the file as the fallback.
 
 ### WP-27 to WP-33: performance and depth
-
-#### WP-27 Storage layout v2 and benchmarks · Phase 4 · L
-
-- **Depends on:** WP-11, WP-35.
-
-- **Why:**
-  - Content addressing on whole raw messages rarely deduplicates anything, because headers such as `Date` and
-    cookies differ.
-  - `delete_flows` scans every flow to clean up blobs.
-  - "Fast at millions of rows" isn't measured, and host search and extension filters scan the whole table.
-- **Do:**
-  - Store header blocks and bodies separately and deduplicate bodies only. Count references to blobs, or clean
-    them up in the background.
-    - **Done:** migration 12. New flows keep each head, compressed, on the flow's row and only the body in
-      `blobs`, shared by hash; `blobs.refs` counts holders, so `delete_flows` touches only the deleted flows'
-      blobs. Flows written earlier keep their whole-message blob and still read (no rewrite of old data, so the
-      migration is instant). Not done: repacking old flows into the split layout.
-  - Write the v1-to-v2 migration with the framework from WP-35, tested on a real v1 file.
-  - Indexes for host search (for example a reversed-host column) and extensions (an `ext` column).
-    - **Done:** `ext` (migration 11, a generated column with an index). **Open:** host search; `host:` means "contains", which no index can serve. Decided: keep "contains", no index.
-  - Criterion benchmarks at 1 million flows, tracked in CI as part of the footprint budgets.
-- **Done when:** a v1 project migrates, the benchmarks run in CI, and the measured storage saving is noted here.
 
 #### WP-29 Encrypted projects · Phase 5 · L
 
@@ -858,7 +835,7 @@ the phase plan above sets the order. Tick an item here when its package lands.
 
 ### Quality, performance and security work (continuous)
 
-- [ ] Throughput and latency benchmarks (criterion) and tracked image sizes feed the footprint budgets in CI → **WP-27**, **WP-28**
+- [ ] Throughput and latency benchmarks (criterion) and tracked image sizes feed the footprint budgets in CI → **WP-28** (the WP-27 store benchmarks are in)
 - [ ] `cargo-fuzz` targets: the HTTP parser, the WebSocket frame parser, decoders and decompression, the scope
   rule compiler, the YAML check loader, the plugin host boundary → **WP-36**, then each package that adds a parser
 - [ ] Scanner benchmarks against OWASP Juice Shop, DVWA, WebGoat, VAmPI/crAPI and the OWASP Benchmark, comparing

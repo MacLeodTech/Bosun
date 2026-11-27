@@ -22,6 +22,11 @@ bosun-model.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "store"
+harness = false
 
 [lints]
 workspace = true

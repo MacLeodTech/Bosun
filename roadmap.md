@@ -205,7 +205,6 @@ valid in the "Depends on" column.
 | [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
 | [ ] | WP-33 | Protocol gaps (only header case left) | 4 | S | |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
-| [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
 | [ ] | WP-50 | `bosun-checks`: more ZAP ports and library entries | 5 | S | WP-49 |
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
 | [ ] | WP-73 | Accessibility and keyboard shortcuts | 5 | M | WP-44 |
@@ -621,17 +620,6 @@ fuzz target; ones that send traffic go through the gate.
 - **Done when:** a test client through each mode is recorded and the scope gate still applies; the key log decrypts a
   captured session in a test; the threat model covers the new listener and the key file.
 
-#### WP-79 gRPC, Protobuf and GraphQL-aware views and rules · Phase 4 · M
-
-- **Do:**
-  - Decode gRPC and Protobuf (with a user-supplied schema, or schema-less field numbers), and edit and re-send them.
-  - GraphQL-aware matching and editing by operation name; query and variables shown separately.
-  - Decoders respect WP-06's size caps and have fuzz targets.
-- **Done when:** a recorded gRPC call shows decoded fields; a rule fires on a GraphQL operation name.
-- **Progress (2026-11-27, `wp-79`):** schema-less Protobuf and gRPC frames as text and back, GraphQL query and variables
-  apart, the Pretty view for them, a GraphQL operation name on body rules, fuzz target `grpc_graphql`. Still open: a
-  user-supplied `.proto` schema, compressed gRPC messages, and editing gRPC in the Repeater.
-
 #### WP-80 Command palette and one shared message viewer · Phase 5 · M
 
 - **Do:**
@@ -723,7 +711,7 @@ the phase plan above sets the order. Tick an item here when its package lands.
 - [ ] The scope gate enforced for every tool request (refuse out-of-scope, a per-host rate limit, the stop switch),
   with pinned addresses: **WP-10** must land first
 - [ ] Map Local, Map Remote and throttling → **WP-76**
-- [ ] gRPC, Protobuf and GraphQL-aware views and rules → **WP-79**
+- [x] gRPC, Protobuf and GraphQL-aware views and rules → **WP-79**
 - [ ] A command palette, and one message viewer shared by every tool → **WP-80**
 
 ### M3 Intruder and Sequencer

@@ -594,3 +594,8 @@ This document says what is protected, from whom, and how. Code comments refer ba
   skips strings and comments and counts brackets, so a keyword inside a string never names an operation. A match rule
   with an operation name fires only when the body names that operation; it adds no new reach, since rules already
   rewrite any body. Decoded text is shown as text in the viewer, never as markup.
+  The `.proto` schema is untrusted text too (it can be pasted from anywhere): `bosun_codec::schema` reads it with a size
+  cap (256 KiB), caps on messages, fields and nesting, and no recursion without that cap; it never opens a file,
+  follows an `import` or runs anything. `POST /decoder/apply` parses a schema only in memory, per request, off the
+  async threads. Compressed gRPC messages are unpacked with the caller's output limit, like the Decoder's other
+  decompressors, so a bomb is refused. `PUT /proto/schema` needs the tester role and is audited.

@@ -256,3 +256,76 @@ async fn graphql_bodies_show_query_and_variables_and_rules_keep_their_operation(
     let r = c.put(s.url("/rules")).header("x-csrf-token", &csrf).json(&bad).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
 }
+
+const SHOP: &str = r#"
+    syntax = "proto3";
+    package shop.v1;
+    message Item { int32 id = 1; string name = 2; }
+    message Reply { Item item = 1; bool ok = 2; }
+    service Shop { rpc Get (Item) returns (Reply); }
+"#;
+
+fn out(v: &Value, step: usize) -> Vec<u8> {
+    B64.decode(v["steps"][step]["output"].as_str().unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn a_schema_names_fields_by_call_and_direction_and_is_kept_in_the_project() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    // The project keeps one schema; it must parse.
+    let r = c.put(s.url("/proto/schema")).header("x-csrf-token", &csrf).json(&json!({ "source": "message {" })).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    let r = c.put(s.url("/proto/schema")).header("x-csrf-token", &csrf).json(&json!({ "source": SHOP })).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let saved: Value = c.get(s.url("/proto/schema")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(saved["calls"], json!(["/shop.v1.Shop/Get"]), "{saved}");
+    assert!(saved["messages"].as_array().unwrap().iter().any(|m| m == "shop.v1.Item"), "{saved}");
+
+    // A gRPC request frame and a response frame: the call's path picks the message for each direction.
+    let frame = |msg: &[u8], flag: u8| {
+        let mut f = vec![flag];
+        f.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        f.extend_from_slice(msg);
+        f
+    };
+    let req = frame(&[0x08, 0x07, 0x12, 2, b'h', b'i'], 0);
+    let resp = frame(&[0x0a, 2, 0x08, 0x07, 0x10, 1], 0);
+    let ask = |body: &[u8], response: bool| {
+        json!({ "input": b(body), "ops": ["grpc_decode"], "schema": SHOP, "rpc": "/shop.v1.Shop/Get", "response": response })
+    };
+    let (st, v) = post(&s, &c, &csrf, "/decoder/apply", ask(&req, false)).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(String::from_utf8(out(&v, 0)).unwrap(), "@message\nid: 7\nname: \"hi\"\n");
+    let (_, v) = post(&s, &c, &csrf, "/decoder/apply", ask(&resp, true)).await;
+    assert_eq!(String::from_utf8(out(&v, 0)).unwrap(), "@message\nitem {\n  id: 7\n}\nok: true\n");
+    // An unknown call is decoded without names; an unknown message or a broken schema is a 400.
+    let (_, v) = post(&s, &c, &csrf, "/decoder/apply", json!({ "input": b(&req), "ops": ["grpc_decode"], "schema": SHOP, "rpc": "/x.Y/Z" })).await;
+    assert_eq!(String::from_utf8(out(&v, 0)).unwrap(), "@message\n1: 7\n2: \"hi\"\n");
+    let (st, _) = post(&s, &c, &csrf, "/decoder/apply", json!({ "input": b(&req), "ops": ["grpc_decode"], "schema": SHOP, "message": "Nope" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = post(&s, &c, &csrf, "/decoder/apply", json!({ "input": b(&req), "ops": ["grpc_decode"], "schema": "message {" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    // Edit by field name and send it back as a gzip-compressed message.
+    let text = "@message compressed gzip\nid: 8\nname: \"yo\"\n";
+    let (st, v) = post(
+        &s,
+        &c,
+        &csrf,
+        "/decoder/apply",
+        json!({ "input": b(text.as_bytes()), "ops": ["grpc_encode", "grpc_decode"], "schema": SHOP, "message": "Item" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let framed = out(&v, 0);
+    assert_eq!(framed[0], 1, "flagged compressed");
+    assert_eq!(&framed[5..7], &[0x1f, 0x8b], "gzip");
+    assert_eq!(String::from_utf8(out(&v, 1)).unwrap(), text);
+
+    // An empty source clears it.
+    let r = c.put(s.url("/proto/schema")).header("x-csrf-token", &csrf).json(&json!({ "source": "" })).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let cleared: Value = c.get(s.url("/proto/schema")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(cleared["source"], "");
+}

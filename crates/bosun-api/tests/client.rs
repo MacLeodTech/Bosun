@@ -624,6 +624,14 @@ async fn scope_rules_proxy_and_ca() {
         .is_err()
     );
 
+    // The project's .proto schema: kept, listed by message and call, refused when it does not parse.
+    let src = "package a; message M { int32 x = 1; } service S { rpc Go (M) returns (M); }";
+    let saved = c.put_proto_schema(src).await.unwrap();
+    assert_eq!(saved.calls, ["/a.S/Go"]);
+    assert_eq!(c.proto_schema().await.unwrap(), saved);
+    assert_eq!(c.put_proto_schema("message {").await.unwrap_err().status(), Some(400));
+    assert_eq!(c.put_proto_schema("").await.unwrap().source, "");
+
     let want = InterceptSettings {
         requests: true,
         responses: true,
@@ -981,6 +989,8 @@ fn the_client_covers_every_documented_operation() {
         ("put", "/scope", "put_scope"),
         ("get", "/rules", "rules"),
         ("put", "/rules", "put_rules"),
+        ("get", "/proto/schema", "proto_schema"),
+        ("put", "/proto/schema", "put_proto_schema"),
         ("get", "/map-rules", "map_rules"),
         ("put", "/map-rules", "put_map_rules"),
         ("get", "/intercept", "intercept"),

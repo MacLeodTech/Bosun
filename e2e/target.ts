@@ -37,6 +37,12 @@ export function startTarget(port: number): Promise<http.Server> {
       // About 190 KiB of compact JSON: 2,500 records, and tens of thousands of lines once pretty-printed.
       const items = Array.from({ length: 2500 }, (_, i) => ({ id: i, name: `item-${i}`, tags: ['a', 'b'], ok: i % 2 === 0, score: i * 1.5, note: null }));
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ items }));
+    } else if (url.pathname === '/shop.v1.Shop/Get') {
+      // A gRPC response: one message (1: 7, 2: "hi") and the trailers frame.
+      const msg = Buffer.from([0x08, 0x07, 0x12, 0x02, 0x68, 0x69]);
+      const trailers = Buffer.from('grpc-status: 0\r\n');
+      const frame = (flag: number, p: Buffer) => Buffer.concat([Buffer.from([flag, 0, 0, 0, p.length]), p]);
+      res.writeHead(200, { 'content-type': 'application/grpc-web+proto' }).end(Buffer.concat([frame(0, msg), frame(0x80, trailers)]));
     } else if (url.pathname === '/hits') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(hits));
     } else if (url.pathname === '/seq-random' || url.pathname === '/seq-counter') {

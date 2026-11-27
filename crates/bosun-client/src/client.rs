@@ -517,6 +517,17 @@ impl Client {
         self.json(self.req(Method::PUT, "/rules").json(rules)).await
     }
 
+    /// The project's `.proto` schema (empty source when there is none).
+    pub async fn proto_schema(&self) -> Result<ProtoSchema> {
+        self.json(self.req(Method::GET, "/proto/schema")).await
+    }
+
+    /// Replace the project's `.proto` schema; an empty `source` clears it. A schema that does not parse is refused.
+    pub async fn put_proto_schema(&self, source: &str) -> Result<ProtoSchema> {
+        self.json(self.req(Method::PUT, "/proto/schema").json(&serde_json::json!({ "source": source })))
+            .await
+    }
+
     /// The Map Local, Map Remote and throttle rules, in the order they are tried.
     pub async fn map_rules(&self) -> Result<Vec<MapRule>> {
         self.json(self.req(Method::GET, "/map-rules")).await

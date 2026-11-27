@@ -64,6 +64,7 @@ pub const SETTING_SAVED_FILTERS: &str = "saved_filters";
 pub const SETTING_INTERCEPT: &str = "intercept";
 pub const SETTING_RESPONSE_FILTER: &str = "intercept_response_filter";
 pub const SETTING_REPEATER_TABS: &str = "repeater_tabs";
+pub const SETTING_PROTO_SCHEMA: &str = "proto_schema";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -485,6 +486,7 @@ pub fn router(st: AppState) -> Router {
         .route("/projects/{name}/rename", post(projects::rename))
         .route("/projects/{name}/export", get(projects::export))
         .route("/projects/{name}/backup", post(projects::backup))
+        .route("/proto/schema", get(h::get_proto_schema).put(h::put_proto_schema))
         .route("/decoder/apply", post(codec::decode))
         .route("/decoder/smart", post(codec::smart))
         .route("/comparer/diff", post(codec::compare))

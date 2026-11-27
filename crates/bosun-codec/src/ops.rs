@@ -9,6 +9,7 @@ use sha2::Digest;
 use utoipa::ToSchema;
 
 use crate::CodecError;
+use crate::schema::Typed;
 
 /// One step of a chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
@@ -110,7 +111,7 @@ impl Op {
     }
 }
 
-fn bounded(mut r: impl Read, limit: usize, what: &'static str) -> Result<Vec<u8>, CodecError> {
+pub(crate) fn bounded(mut r: impl Read, limit: usize, what: &'static str) -> Result<Vec<u8>, CodecError> {
     let mut out = Vec::new();
     r.by_ref()
         .take(limit as u64 + 1)
@@ -365,6 +366,11 @@ fn jwt_decode(input: &[u8]) -> Result<Vec<u8>, CodecError> {
 
 /// Run one step. `limit` bounds the output.
 pub fn apply(op: Op, input: &[u8], limit: usize) -> Result<Vec<u8>, CodecError> {
+    apply_with(op, input, limit, None)
+}
+
+/// [`apply`] with a schema, which the protobuf and gRPC operations use to name fields.
+pub fn apply_with(op: Op, input: &[u8], limit: usize, typed: Option<Typed<'_>>) -> Result<Vec<u8>, CodecError> {
     let out = match op {
         Op::UrlEncode => {
             check(input.len().saturating_mul(3), limit.saturating_mul(1)).or_else(|e| {
@@ -442,10 +448,10 @@ pub fn apply(op: Op, input: &[u8], limit: usize) -> Result<Vec<u8>, CodecError> 
         Op::Sha1 => hex_of(&sha1::Sha1::digest(input)),
         Op::Sha256 => hex_of(&sha2::Sha256::digest(input)),
         Op::Sha512 => hex_of(&sha2::Sha512::digest(input)),
-        Op::ProtobufDecode => crate::proto::decode_text(input, limit)?.into_bytes(),
-        Op::ProtobufEncode => crate::proto::encode_text(input, limit)?,
-        Op::GrpcDecode => crate::proto::grpc_decode(input, limit)?.into_bytes(),
-        Op::GrpcEncode => crate::proto::grpc_encode(input, limit)?,
+        Op::ProtobufDecode => crate::proto::decode_text_with(input, limit, typed)?.into_bytes(),
+        Op::ProtobufEncode => crate::proto::encode_text_with(input, limit, typed)?,
+        Op::GrpcDecode => crate::proto::grpc_decode_with(input, limit, typed)?.into_bytes(),
+        Op::GrpcEncode => crate::proto::grpc_encode_with(input, limit, typed)?,
         Op::GraphqlDecode => crate::graphql::decode_text(input, limit)?.into_bytes(),
     };
     check(out.len(), limit)?;
@@ -464,10 +470,20 @@ fn hex_of(d: &[u8]) -> Vec<u8> {
 /// Run a chain and return the output of every step (so the UI can show each stage). A failing step stops
 /// the chain; the outputs so far are returned with the error.
 pub fn apply_chain(ops: &[Op], input: &[u8], limit: usize) -> (Vec<Vec<u8>>, Option<(usize, CodecError)>) {
+    apply_chain_with(ops, input, limit, None)
+}
+
+/// [`apply_chain`] with a schema for its protobuf and gRPC steps.
+pub fn apply_chain_with(
+    ops: &[Op],
+    input: &[u8],
+    limit: usize,
+    typed: Option<Typed<'_>>,
+) -> (Vec<Vec<u8>>, Option<(usize, CodecError)>) {
     let mut outs: Vec<Vec<u8>> = Vec::with_capacity(ops.len());
     for (i, op) in ops.iter().enumerate() {
         let prev: &[u8] = outs.last().map_or(input, Vec::as_slice);
-        match apply(*op, prev, limit) {
+        match apply_with(*op, prev, limit, typed) {
             Ok(o) => outs.push(o),
             Err(e) => return (outs, Some((i, e))),
         }

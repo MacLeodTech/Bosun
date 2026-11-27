@@ -227,6 +227,7 @@
           <MessageView
             title={selected.response_truncated ? 'Response (truncated)' : 'Response'}
             role="response"
+            rpcPath={selected.path.split(/[?#]/)[0]}
             onFilterHeader={filterBy}
             evidence={evidenceFor('response')}
             raw={toB64(resp)}

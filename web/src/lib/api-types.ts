@@ -546,7 +546,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes) on base64 input. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role. */
+        /** @description Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes, protobuf, gRPC, GraphQL) on base64 input. The protobuf and gRPC steps take an optional .proto schema (and a message or a gRPC call path) to show field names and types. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role. */
         post: operations["decoder_apply"];
         delete?: never;
         options?: never;
@@ -1241,6 +1241,24 @@ export interface paths {
         put?: never;
         /** @description Rename a project that is not open. Needs the admin role or above; audited. */
         post: operations["rename_project"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proto/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The project's .proto schema, with the messages and gRPC calls it defines. Needs the viewer role or above. */
+        get: operations["get_proto_schema"];
+        /** @description Replace the project's .proto schema (up to 256 KiB; empty clears it). It must parse. Audited. Needs the tester role or above. */
+        put: operations["put_proto_schema"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2395,8 +2413,19 @@ export interface components {
         DecodeBody: {
             /** @description The input, base64. */
             input: string;
+            /** @description The message the schema describes (its full name, or a short one that is unique). */
+            message?: string | null;
             /** @description The steps to run, in order. */
             ops: components["schemas"]["Op"][];
+            /** @description With `rpc`: use the call's response message (default: its request). */
+            response?: boolean;
+            /**
+             * @description Instead of `message`: a gRPC call's path (`/package.Service/Method`), which names the request and response
+             *     messages in the schema.
+             */
+            rpc?: string | null;
+            /** @description A `.proto` schema (up to 256 KiB) for the protobuf and gRPC steps, so they show field names and types. */
+            schema?: string | null;
         };
         DecodeReply: {
             error?: components["schemas"]["StepError"] | null;
@@ -3254,6 +3283,19 @@ export interface components {
             projects: components["schemas"]["ProjectInfo"][];
             /** @description Names last opened, newest first. */
             recent: string[];
+        };
+        /** @description The project's `.proto` schema, as the Decoder, the message viewer and the Repeater use it. */
+        ProtoSchema: {
+            /** @description The gRPC calls it defines, as paths (`/package.Service/Method`). */
+            calls?: string[];
+            /** @description The full names of the messages it defines. */
+            messages?: string[];
+            /** @description The `.proto` source (empty when none is set). */
+            source: string;
+        };
+        ProtoSchemaBody: {
+            /** @description The `.proto` source (up to 256 KiB); empty clears it. */
+            source: string;
         };
         /** @enum {string} */
         Protocol: "http1" | "h2";
@@ -9173,6 +9215,95 @@ export interface operations {
             };
             /** @description Conflict (name taken, project locked or open) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_proto_schema: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProtoSchema"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    put_proto_schema: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProtoSchemaBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProtoSchema"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

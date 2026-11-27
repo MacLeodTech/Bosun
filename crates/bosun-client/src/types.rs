@@ -254,6 +254,17 @@ pub enum RuleTarget {
     ResponseBody,
 }
 
+/// The project's `.proto` schema, with the messages and gRPC calls it defines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtoSchema {
+    pub source: String,
+    #[serde(default)]
+    pub messages: Vec<String>,
+    /// gRPC call paths (`/package.Service/Method`).
+    #[serde(default)]
+    pub calls: Vec<String>,
+}
+
 /// A match-and-replace rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchRule {

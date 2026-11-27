@@ -2274,7 +2274,7 @@
         "tags": [
           "decoder"
         ],
-        "description": "Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes) on base64 input. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role.",
+        "description": "Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes, protobuf, gRPC, GraphQL) on base64 input. The protobuf and gRPC steps take an optional .proto schema (and a message or a gRPC call path) to show field names and types. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role.",
         "operationId": "decoder_apply",
         "requestBody": {
           "content": {
@@ -6274,6 +6274,106 @@
           },
           "409": {
             "description": "Conflict (name taken, project locked or open)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proto/schema": {
+      "get": {
+        "tags": [
+          "decoder"
+        ],
+        "description": "The project's .proto schema, with the messages and gRPC calls it defines. Needs the viewer role or above.",
+        "operationId": "get_proto_schema",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtoSchema"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "decoder"
+        ],
+        "description": "Replace the project's .proto schema (up to 256 KiB; empty clears it). It must parse. Audited. Needs the tester role or above.",
+        "operationId": "put_proto_schema",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtoSchemaBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtoSchema"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
             "content": {
               "application/json": {
                 "schema": {
@@ -11185,12 +11285,37 @@
             "type": "string",
             "description": "The input, base64."
           },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The message the schema describes (its full name, or a short one that is unique)."
+          },
           "ops": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Op"
             },
             "description": "The steps to run, in order."
+          },
+          "response": {
+            "type": "boolean",
+            "description": "With `rpc`: use the call's response message (default: its request)."
+          },
+          "rpc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Instead of `message`: a gRPC call's path (`/package.Service/Method`), which names the request and response\nmessages in the schema."
+          },
+          "schema": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A `.proto` schema (up to 256 KiB) for the protobuf and gRPC steps, so they show field names and types."
           }
         }
       },
@@ -13875,6 +14000,45 @@
               "type": "string"
             },
             "description": "Names last opened, newest first."
+          }
+        }
+      },
+      "ProtoSchema": {
+        "type": "object",
+        "description": "The project's `.proto` schema, as the Decoder, the message viewer and the Repeater use it.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "calls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The gRPC calls it defines, as paths (`/package.Service/Method`)."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The full names of the messages it defines."
+          },
+          "source": {
+            "type": "string",
+            "description": "The `.proto` source (empty when none is set)."
+          }
+        }
+      },
+      "ProtoSchemaBody": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The `.proto` source (up to 256 KiB); empty clears it."
           }
         }
       },

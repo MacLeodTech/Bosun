@@ -559,6 +559,53 @@ test('viewer: a large JSON body is pretty-printed, windowed, searchable and scro
   await page.keyboard.press('Escape');
 });
 
+test('viewer: a gRPC response shows its fields, a project schema names them, and the Repeater edits the frames as text', async () => {
+  await viaProxy(PROXY_PORT, `${TARGET}/shop.v1.Shop/Get`);
+  await openFlow('/shop.v1.Shop/Get');
+  const resp = page.locator('.msg').nth(1);
+  await resp.getByRole('button', { name: 'pretty', exact: true }).click();
+  const code = resp.getByRole('textbox', { name: 'Response' });
+  await expect(code).toContainText('1: 7');
+  await expect(code).toContainText('2: "hi"');
+  await expect(code).toContainText('@trailers');
+
+  // A schema, kept in the project, gives the fields their names.
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('button', { name: 'Decoder' }).click();
+  const dp = page.getByRole('tabpanel', { name: 'Decoder', exact: true });
+  await dp.locator('summary').click();
+  await dp.getByLabel('Protobuf schema').fill(
+    'syntax = "proto3"; package shop.v1; message Item { int32 id = 1; string name = 2; } service Shop { rpc Get (Item) returns (Item); }',
+  );
+  await dp.getByRole('button', { name: 'Save to project' }).click();
+  await expect(dp.getByText('Saved to the project.')).toBeVisible();
+  await openFlow('/shop.v1.Shop/Get');
+  const named = page.locator('.msg').nth(1);
+  await named.getByRole('button', { name: 'pretty', exact: true }).click();
+  await expect(named.getByRole('textbox', { name: 'Response' })).toContainText('name: "hi"');
+
+  // In the Repeater a gRPC request is edited as text and goes out as frames.
+  await nav.getByRole('button', { name: 'Repeater' }).click();
+  const rp = page.getByRole('tabpanel', { name: 'Repeater', exact: true });
+  await rp.getByRole('button', { name: '+', exact: true }).click();
+  await rp.getByLabel('Scheme').selectOption('http');
+  await rp.getByLabel('Host', { exact: true }).fill('127.0.0.1');
+  await rp.getByLabel('Port').fill(String(TARGET_PORT));
+  const editor = rp.getByLabel('Request', { exact: true });
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('POST /shop.v1.Shop/Get HTTP/1.1\nHost: 127.0.0.1\nContent-Type: application/grpc\n\n');
+  await rp.getByRole('button', { name: 'gRPC', exact: true }).click();
+  const decoded = rp.getByLabel('Request (gRPC messages)');
+  await decoded.click();
+  await page.keyboard.type('@message\nid: 9\nname: "yo"\n');
+  await rp.getByRole('button', { name: 'hex', exact: true }).click();
+  await expect(rp.getByLabel('Request', { exact: true })).toHaveValue(/00 00 00 00 06 08 09 12 02 79 6f/);
+  // Back in the gRPC view the frames read as text again.
+  await rp.getByRole('button', { name: 'gRPC', exact: true }).click();
+  await expect(rp.getByLabel('Request (gRPC messages)')).toContainText('name: "yo"');
+});
+
 test('viewer: the edited request shows what changed, and a header can filter the history', async () => {
   await openFlow('/echo');
   await page.getByRole('button', { name: 'Changes' }).click();

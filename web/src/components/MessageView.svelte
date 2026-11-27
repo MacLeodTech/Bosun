@@ -8,6 +8,8 @@
   import { pretty } from '../lib/pretty';
   import { parseRequest, toCurl } from '../lib/export';
   import { api } from '../lib/api';
+  import { grpcSteps, requestPath } from '../lib/protoview';
+  import { protoSchema } from '../lib/protoschema.svelte';
   import { marks, type Range } from '../lib/evidence';
   import CodeView from './CodeView.svelte';
   import MessageEditor from './MessageEditor.svelte';
@@ -26,6 +28,7 @@
     scheme = '',
     onFilterHeader,
     evidence = [],
+    rpcPath,
   }: {
     raw: string | null;
     decodedBody?: string | null;
@@ -48,6 +51,8 @@
     onFilterHeader?: (name: string, value: string) => void;
     /** Byte ranges of the stored message to highlight (the passive scanner's evidence). */
     evidence?: Range[];
+    /** The call's path when this is a response (a response does not carry it); a request has it in its first line. */
+    rpcPath?: string;
   } = $props();
 
   let localView = $state<MessageViewMode>('raw');
@@ -77,20 +82,27 @@
   const ct = $derived((contentTypeOf(split.head) ?? '').toLowerCase());
   const protoOps = $derived.by((): string[] | null => {
     if (editable) return null;
-    if (/^application\/grpc-web-text/.test(ct)) return ['base64_decode', 'grpc_decode'];
-    if (/^application\/grpc/.test(ct)) return ['grpc_decode'];
+    const g = grpcSteps(ct);
+    if (g) return g.decode;
     if (ct.includes('json') && /^\s*[[{][\s\S]{0,4096}"(query|operationName)"\s*:/.test(split.body)) return ['graphql_decode'];
     return null;
   });
+  // With a project schema, a gRPC body shows field names: the call's path says which messages.
+  const callPath = $derived(rpcPath ?? requestPath(split.head));
+  protoSchema.ensure();
   let protoText = $state<string | null>(null);
   $effect(() => {
     const ops = protoOps;
     const body = decoded ?? parts.body;
+    const call = callPath;
+    const isResponse = role === 'response';
     protoText = null;
     if (!ops || !body.length || body.length > (1 << 20)) return;
     let live = true;
     api
-      .post<{ steps: { output: string }[]; error: unknown }>('/decoder/apply', { input: bytesToB64(body), ops })
+      .post<{ steps: { output: string }[]; error: unknown }>('/decoder/apply', {
+        input: bytesToB64(body), ops, ...(ops.includes('grpc_decode') ? protoSchema.forCall(call, isResponse) : {}),
+      })
       .then((r) => {
         const last = r.steps[ops.length - 1];
         if (live && !r.error && last) protoText = bytesToText(b64ToBytes(last.output)).text;

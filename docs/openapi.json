@@ -9524,6 +9524,147 @@
           }
         }
       },
+      "AuthzCell": {
+        "type": "object",
+        "required": [
+          "identity",
+          "verdict",
+          "body_len",
+          "similarity"
+        ],
+        "properties": {
+          "body_len": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identity": {
+            "type": "string"
+          },
+          "similarity": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0 to 100 against the owner's body.",
+            "minimum": 0
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/AuthzVerdict"
+          }
+        }
+      },
+      "AuthzFinding": {
+        "type": "object",
+        "required": [
+          "kind",
+          "label",
+          "owner",
+          "identity",
+          "similarity"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AuthzFindingKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "similarity": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AuthzFindingKind": {
+        "type": "string",
+        "enum": [
+          "broken_access_control",
+          "missing_authentication"
+        ]
+      },
+      "AuthzOptions": {
+        "type": "object",
+        "properties": {
+          "similarity_percent": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How alike two bodies must be (0 to 100) for the answers to count as the same.",
+            "default": 90,
+            "minimum": 0
+          },
+          "verify_tls": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "AuthzRow": {
+        "type": "object",
+        "required": [
+          "label",
+          "owner",
+          "cells"
+        ],
+        "properties": {
+          "cells": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthzCell"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there are no comparisons (the owner's own request did not succeed)."
+          }
+        }
+      },
+      "AuthzVerdict": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "same",
+          "allowed",
+          "denied",
+          "different",
+          "error"
+        ]
+      },
       "BackupInfo": {
         "type": "object",
         "required": [
@@ -9735,47 +9876,6 @@
               "type": "string"
             },
             "description": "The tokens from index `from` on."
-          }
-        }
-      },
-      "Cell": {
-        "type": "object",
-        "required": [
-          "identity",
-          "verdict",
-          "body_len",
-          "similarity"
-        ],
-        "properties": {
-          "body_len": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "identity": {
-            "type": "string"
-          },
-          "similarity": {
-            "type": "integer",
-            "format": "int32",
-            "description": "0 to 100 against the owner's body.",
-            "minimum": 0
-          },
-          "status": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "verdict": {
-            "$ref": "#/components/schemas/Verdict"
           }
         }
       },
@@ -10756,44 +10856,34 @@
         "type": "object",
         "required": [
           "kind",
-          "label",
-          "owner",
-          "identity",
-          "similarity"
+          "value",
+          "offset"
         ],
         "properties": {
-          "identity": {
-            "type": "string"
-          },
           "kind": {
             "$ref": "#/components/schemas/FindingKind"
           },
-          "label": {
-            "type": "string"
-          },
-          "owner": {
-            "type": "string"
-          },
-          "similarity": {
+          "offset": {
             "type": "integer",
-            "format": "int32",
+            "description": "Byte offset into the text that was scanned.",
             "minimum": 0
           },
-          "status": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
+          "value": {
+            "type": "string"
           }
         }
       },
       "FindingKind": {
         "type": "string",
         "enum": [
-          "broken_access_control",
-          "missing_authentication"
+          "comment",
+          "inline_script",
+          "script_src",
+          "link",
+          "form_action",
+          "resource",
+          "url",
+          "path"
         ]
       },
       "FipsBlock": {
@@ -11807,7 +11897,7 @@
           "options": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Options"
+                "$ref": "#/components/schemas/AuthzOptions"
               },
               {
                 "type": "null"
@@ -11896,13 +11986,13 @@
           "findings": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Finding"
+              "$ref": "#/components/schemas/AuthzFinding"
             }
           },
           "rows": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Row"
+              "$ref": "#/components/schemas/AuthzRow"
             }
           }
         }
@@ -12055,13 +12145,50 @@
       },
       "Options": {
         "type": "object",
+        "description": "The resource pool and the sending options.",
         "properties": {
-          "similarity_percent": {
+          "concurrency": {
             "type": "integer",
             "format": "int32",
-            "description": "How alike two bodies must be (0 to 100) for the answers to count as the same.",
-            "default": 90,
+            "description": "Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.",
+            "default": 5,
             "minimum": 0
+          },
+          "delay_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The least time between the starts of two requests, milliseconds, whatever the concurrency.",
+            "default": 0,
+            "minimum": 0
+          },
+          "max_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Stop after this many requests (at most one million).",
+            "default": null,
+            "minimum": 0
+          },
+          "retries": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How often a request that could not be sent or got no answer is tried again (0 to 10).",
+            "default": 0,
+            "minimum": 0
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The longest one request may take, seconds (1 to 300).",
+            "default": 30,
+            "minimum": 0
+          },
+          "update_content_length": {
+            "type": "boolean",
+            "description": "Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.",
+            "default": true
           },
           "verify_tls": {
             "type": "boolean",
@@ -13681,30 +13808,94 @@
       },
       "Row": {
         "type": "object",
+        "description": "The outcome of one request.",
         "required": [
-          "label",
-          "owner",
-          "cells"
+          "index",
+          "payloads",
+          "length",
+          "time_ms",
+          "matches",
+          "extracts",
+          "attempts"
         ],
         "properties": {
-          "cells": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Cell"
-            }
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many tries it took (1 when the first worked).",
+            "minimum": 0
           },
-          "label": {
-            "type": "string"
-          },
-          "owner": {
-            "type": "string"
-          },
-          "skipped": {
+          "error": {
             "type": [
               "string",
               "null"
+            ]
+          },
+          "extracts": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "One entry per grep extract rule."
+          },
+          "flow_id": {
+            "type": [
+              "integer",
+              "null"
             ],
-            "description": "Why there are no comparisons (the owner's own request did not succeed)."
+            "format": "int64",
+            "description": "The recorded flow, when something was sent."
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Which request of the attack (0-based).",
+            "minimum": 0
+          },
+          "length": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Response size in bytes.",
+            "minimum": 0
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "boolean"
+            },
+            "description": "One entry per grep match rule."
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The payloads used, as text (bytes that are not UTF-8 are replaced)."
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The position that was attacked, for a sniper attack.",
+            "minimum": 0
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "time_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

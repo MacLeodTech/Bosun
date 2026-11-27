@@ -18,6 +18,7 @@ import Import from '../pages/Import.svelte';
 import Rules from '../pages/Rules.svelte';
 import Target from '../pages/Target.svelte';
 import Projects from '../pages/Projects.svelte';
+import AuthMatrix from '../pages/AuthMatrix.svelte';
 import Vault from '../pages/Vault.svelte';
 import Settings from '../pages/Settings.svelte';
 import { shell } from './shell.svelte';
@@ -50,6 +51,7 @@ export const panels: PanelDef[] = [
   { id: 'rules', title: 'Match & replace', component: Rules },
   { id: 'target', title: 'Target', component: Target },
   { id: 'projects', title: 'Projects', component: Projects },
+  { id: 'authmatrix', title: 'Access matrix', component: AuthMatrix },
   { id: 'vault', title: 'Vault', component: Vault },
   { id: 'settings', title: 'Settings', component: Settings },
 ];

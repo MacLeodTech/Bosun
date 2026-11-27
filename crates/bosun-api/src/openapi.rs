@@ -686,6 +686,7 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("get", "/crawl/crawls"),
     ("get", "/crawl/crawls/{id}"),
     ("post", "/crawl/crawls/{id}/stop"),
+    ("post", "/auth-matrix"),
     ("post", "/scan/scans"),
     ("get", "/scan/scans"),
     ("get", "/scan/checks"),

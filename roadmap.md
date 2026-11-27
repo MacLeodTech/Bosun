@@ -213,7 +213,7 @@ valid in the "Depends on" column.
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
 | [ ] | WP-54 | Active scan engine and the testbed | 6 | L | WP-40, WP-49, WP-50 |
 | [ ] | WP-55 | Core active checks (rest: out-of-band variants via WP-59, wider JWT/GraphQL/XXE coverage, prototype pollution is non-destructive by default, decide) | 6 | S | WP-54 |
-| [ ] | WP-56 | `bosun-auth` and the authorisation matrix (rest: API, UI and vault wiring, recorded browser logins, token refresh calls) | 6 | M | WP-54, WP-68 |
+| [ ] | WP-56 | `bosun-auth` and the authorisation matrix (rest: login-macro credentials from the vault, recorded browser logins, token refresh calls, matrix findings as issues) | 6 | M | WP-54, WP-68 |
 | [ ] | WP-57 | `bosun scan` (rest: consume `scan_*` events in the client, drive a `--no-ui` engine, scope SARIF to the scan, container recipes untested in CI) | 6 | S | WP-25, WP-26, WP-51, WP-54 |
 | [ ] | WP-72 | Scanner benchmarks against ZAP | 6 | M | WP-55 |
 | [ ] | WP-81 | Content and parameter discovery | 6 | M | WP-47, WP-52 |

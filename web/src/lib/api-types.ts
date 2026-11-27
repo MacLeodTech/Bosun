@@ -1908,6 +1908,50 @@ export interface components {
             time_ms: number;
             username?: string | null;
         };
+        AuthzCell: {
+            body_len: number;
+            error?: string | null;
+            identity: string;
+            /**
+             * Format: int32
+             * @description 0 to 100 against the owner's body.
+             */
+            similarity: number;
+            /** Format: int32 */
+            status?: number | null;
+            verdict: components["schemas"]["AuthzVerdict"];
+        };
+        AuthzFinding: {
+            identity: string;
+            kind: components["schemas"]["AuthzFindingKind"];
+            label: string;
+            owner: string;
+            /** Format: int32 */
+            similarity: number;
+            /** Format: int32 */
+            status?: number | null;
+        };
+        /** @enum {string} */
+        AuthzFindingKind: "broken_access_control" | "missing_authentication";
+        AuthzOptions: {
+            /**
+             * Format: int32
+             * @description How alike two bodies must be (0 to 100) for the answers to count as the same.
+             * @default 90
+             */
+            similarity_percent: number;
+            /** @default false */
+            verify_tls: boolean;
+        };
+        AuthzRow: {
+            cells: components["schemas"]["AuthzCell"][];
+            label: string;
+            owner: string;
+            /** @description Why there are no comparisons (the owner's own request did not succeed). */
+            skipped?: string | null;
+        };
+        /** @enum {string} */
+        AuthzVerdict: "owner" | "same" | "allowed" | "denied" | "different" | "error";
         BackupInfo: {
             /** @description The backup file, in the `backups` folder of the projects directory. */
             path: string;
@@ -1998,19 +2042,6 @@ export interface components {
             target: string;
             /** @description The tokens from index `from` on. */
             tokens: string[];
-        };
-        Cell: {
-            body_len: number;
-            error?: string | null;
-            identity: string;
-            /**
-             * Format: int32
-             * @description 0 to 100 against the owner's body.
-             */
-            similarity: number;
-            /** Format: int32 */
-            status?: number | null;
-            verdict: components["schemas"]["Verdict"];
         };
         ChangeTags: {
             add?: string[];
@@ -2293,17 +2324,13 @@ export interface components {
         /** @enum {string} */
         EvidencePart: "request" | "response";
         Finding: {
-            identity: string;
             kind: components["schemas"]["FindingKind"];
-            label: string;
-            owner: string;
-            /** Format: int32 */
-            similarity: number;
-            /** Format: int32 */
-            status?: number | null;
+            /** @description Byte offset into the text that was scanned. */
+            offset: number;
+            value: string;
         };
         /** @enum {string} */
-        FindingKind: "broken_access_control" | "missing_authentication";
+        FindingKind: "comment" | "inline_script" | "script_src" | "link" | "form_action" | "resource" | "url" | "path";
         FipsBlock: {
             long_run: components["schemas"]["FipsTest"];
             monobit: components["schemas"]["FipsTest"];
@@ -2652,7 +2679,7 @@ export interface components {
         };
         MatrixBody: {
             identities: components["schemas"]["MatrixIdentity"][];
-            options?: components["schemas"]["Options"] | null;
+            options?: components["schemas"]["AuthzOptions"] | null;
             probes: components["schemas"]["MatrixProbe"][];
         };
         MatrixIdentity: {
@@ -2675,8 +2702,8 @@ export interface components {
             owner: string;
         };
         MatrixResult: {
-            findings: components["schemas"]["Finding"][];
-            rows: components["schemas"]["Row"][];
+            findings: components["schemas"]["AuthzFinding"][];
+            rows: components["schemas"]["AuthzRow"][];
         };
         Me: {
             /** @description Present for cookie sessions: send it as `x-csrf-token` on changes. */
@@ -2712,13 +2739,43 @@ export interface components {
          * @enum {string}
          */
         Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "gzip_encode" | "deflate_encode" | "brotli_encode" | "zstd_encode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "md5" | "sha1" | "sha256" | "sha512";
+        /** @description The resource pool and the sending options. */
         Options: {
             /**
              * Format: int32
-             * @description How alike two bodies must be (0 to 100) for the answers to count as the same.
-             * @default 90
+             * @description Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.
+             * @default 5
              */
-            similarity_percent: number;
+            concurrency: number;
+            /**
+             * Format: int64
+             * @description The least time between the starts of two requests, milliseconds, whatever the concurrency.
+             * @default 0
+             */
+            delay_ms: number;
+            /**
+             * Format: int64
+             * @description Stop after this many requests (at most one million).
+             * @default null
+             */
+            max_requests: number | null;
+            /**
+             * Format: int32
+             * @description How often a request that could not be sent or got no answer is tried again (0 to 10).
+             * @default 0
+             */
+            retries: number;
+            /**
+             * Format: int64
+             * @description The longest one request may take, seconds (1 to 300).
+             * @default 30
+             */
+            timeout_secs: number;
+            /**
+             * @description Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.
+             * @default true
+             */
+            update_content_length: boolean;
             /** @default false */
             verify_tls: boolean;
         };
@@ -3172,12 +3229,44 @@ export interface components {
         RoleBody: {
             role: components["schemas"]["Role"];
         };
+        /** @description The outcome of one request. */
         Row: {
-            cells: components["schemas"]["Cell"][];
-            label: string;
-            owner: string;
-            /** @description Why there are no comparisons (the owner's own request did not succeed). */
-            skipped?: string | null;
+            /**
+             * Format: int32
+             * @description How many tries it took (1 when the first worked).
+             */
+            attempts: number;
+            error?: string | null;
+            /** @description One entry per grep extract rule. */
+            extracts: (string | null)[];
+            /**
+             * Format: int64
+             * @description The recorded flow, when something was sent.
+             */
+            flow_id?: number | null;
+            /**
+             * Format: int64
+             * @description Which request of the attack (0-based).
+             */
+            index: number;
+            /**
+             * Format: int64
+             * @description Response size in bytes.
+             */
+            length: number;
+            /** @description One entry per grep match rule. */
+            matches: boolean[];
+            /** @description The payloads used, as text (bytes that are not UTF-8 are replaced). */
+            payloads: string[];
+            /**
+             * Format: int32
+             * @description The position that was attacked, for a sniper attack.
+             */
+            position?: number | null;
+            /** Format: int32 */
+            status?: number | null;
+            /** Format: int64 */
+            time_ms: number;
         };
         /** @enum {string} */
         RuleTarget: "request_first_line" | "request_header" | "request_body" | "response_first_line" | "response_header" | "response_body";

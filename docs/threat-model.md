@@ -206,6 +206,10 @@ This document says what is protected, from whom, and how. Code comments refer ba
   chosen by target content. A PEM or PKCS#12 upload is untrusted input: 64 KiB cap, parsing off the async workers,
   a key that does not match its certificate refused, fuzzed (`client_cert`). Anything running as the same OS user can
   still read the data key (see above), and a target that asks for a certificate learns the subject of ours.
+- *Authorisation matrix (WP-56).* `POST /auth-matrix` is tester-only and audited. Account headers may name vault
+  entries, which are opened server-side and used only as request headers to hosts the scope gate allows; they are not
+  returned, logged or written to the audit entry (it holds counts only). A secret with a line break is refused, so a
+  vault value cannot inject headers. The replayed requests are recorded as flows like any Repeater send.
 - *Credential vault (WP-68).* Named secrets (auth configs, passwords, tokens, later OAST keys) in the project table
   `vault`. Each secret is sealed with the data key, with a purpose bound to its row id, before it reaches the project
   file, so a copied or exported project holds ciphertext only. No endpoint returns a secret: lists and results carry

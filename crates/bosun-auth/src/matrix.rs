@@ -21,6 +21,7 @@ pub const MAX_IDENTITIES: usize = 20;
 /// An account: a name and the headers that make a request be that account (`Cookie`, `Authorization`, an API key).
 /// The headers replace whatever the recorded request carried for them.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
+#[schema(as = AuthzIdentity)]
 pub struct Identity {
     pub name: String,
     pub headers: Vec<(String, String)>,
@@ -39,6 +40,7 @@ pub struct Probe {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(default)]
+#[schema(as = AuthzOptions)]
 pub struct Options {
     /// How alike two bodies must be (0 to 100) for the answers to count as the same.
     pub similarity_percent: u8,
@@ -56,6 +58,7 @@ impl Default for Options {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = AuthzVerdict)]
 pub enum Verdict {
     /// The owner's own answer: the baseline.
     Owner,
@@ -72,6 +75,7 @@ pub enum Verdict {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, ToSchema)]
+#[schema(as = AuthzCell)]
 pub struct Cell {
     pub identity: String,
     pub verdict: Verdict,
@@ -83,6 +87,7 @@ pub struct Cell {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, ToSchema)]
+#[schema(as = AuthzRow)]
 pub struct Row {
     pub label: String,
     pub owner: String,
@@ -93,6 +98,7 @@ pub struct Row {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = AuthzFindingKind)]
 pub enum FindingKind {
     /// Another account read or did what only the owner should (IDOR, horizontal or vertical).
     BrokenAccessControl,
@@ -101,6 +107,7 @@ pub enum FindingKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, ToSchema)]
+#[schema(as = AuthzFinding)]
 pub struct Finding {
     pub kind: FindingKind,
     pub label: String,

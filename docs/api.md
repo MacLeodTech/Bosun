@@ -60,6 +60,15 @@ secret. `POST /vault`, `PATCH /vault/{id}` (rename, re-kind, replace the secret)
 role and are audited by name (`vault.create`, `vault.update`, `vault.delete`). Other features refer to an entry by its
 id. 400 (bad name, kind or secret), 404, 409 (name taken, or 500 entries).
 
+## The authorisation matrix
+
+`POST /auth-matrix` (tester; audited as `authmatrix.run`) replays recorded flows as each given account and as nobody,
+and compares every answer with the owner's. Body: `identities` (name plus `headers`, or `vault` entries naming a
+`vault_id`, the `header` to set and an optional `prefix`), `probes` (`flow_id`, `owner`, `allowed`, `label`) and
+`options`. Up to 20 identities and 200 probes. Vault secrets are opened on the server and never returned or audited.
+Every send goes through the scope gate. The answer has `rows` (one cell per account) and `findings` (broken access
+control, or no login needed). 400 (bad names or headers, missing vault entry), 404 (no such flow).
+
 ## Embedded mode
 
 `bosun serve --embedded` is for a desktop app that starts the engine as a child process. It listens on loopback only

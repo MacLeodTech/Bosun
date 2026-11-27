@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bosun_auth::{Identity, Options, Probe, Row, run};
 use bosun_model::{FlowId, Target};
-use bosun_store::Role;
+use bosun_store::{Confidence, NewIssue, Role, Severity};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -67,12 +67,17 @@ pub struct MatrixBody {
     pub probes: Vec<MatrixProbe>,
     #[serde(default)]
     pub options: Option<Options>,
+    /// Save each finding as an issue (rule `authz-matrix`) that points at the probe's recorded flow.
+    #[serde(default)]
+    pub save_issues: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MatrixResult {
     pub rows: Vec<Row>,
     pub findings: Vec<bosun_auth::Finding>,
+    /// Issues saved (0 unless `save_issues` was set).
+    pub issues_saved: usize,
 }
 
 fn bad(msg: &str) -> Response {
@@ -172,8 +177,16 @@ pub async fn matrix(State(st): State<AppState>, caller: Caller, Json(b): Json<Ma
     }
 
     let mut probes = Vec::new();
+    let mut origins = Vec::new();
     for (spec, flow) in b.probes.iter().zip(flows) {
         let f = flow.ok_or_else(|| reject(StatusCode::NOT_FOUND, "no such flow"))?;
+        origins.push((
+            spec.flow_id,
+            f.summary.scheme.as_str().to_string(),
+            f.summary.host.clone(),
+            f.summary.port,
+            f.summary.path.split('?').next().unwrap_or("/").to_string(),
+        ));
         probes.push(Probe {
             label: spec
                 .label
@@ -201,6 +214,85 @@ pub async fn matrix(State(st): State<AppState>, caller: Caller, Json(b): Json<Ma
     )
     .await
     .map_err(|e| bad(&e))?;
-    let findings = rows.iter().flat_map(Row::findings).collect();
-    Ok(Json(MatrixResult { rows, findings }).into_response())
+    let findings: Vec<bosun_auth::Finding> = rows.iter().flat_map(Row::findings).collect();
+    let mut issues_saved = 0;
+    if b.save_issues {
+        let mut issues = Vec::new();
+        for (row, (flow_id, scheme, host, port, path)) in rows.iter().zip(origins) {
+            for f in row.findings() {
+                issues.push(issue_of(&f, flow_id, &scheme, &host, port, &path));
+            }
+        }
+        issues_saved = issues.len();
+        if !issues.is_empty() {
+            let p = st.project();
+            tokio::task::spawn_blocking(move || p.scan_commit(&[], &issues))
+                .await
+                .map_err(|_| {
+                    reject(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal error (see the server log)",
+                    )
+                })?
+                .map_err(|e| {
+                    tracing::error!(error = %e, "could not save the matrix findings");
+                    reject(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal error (see the server log)",
+                    )
+                })?;
+        }
+    }
+    Ok(Json(MatrixResult {
+        rows,
+        findings,
+        issues_saved,
+    })
+    .into_response())
+}
+
+fn issue_of(
+    f: &bosun_auth::Finding,
+    flow_id: FlowId,
+    scheme: &str,
+    host: &str,
+    port: u16,
+    path: &str,
+) -> NewIssue {
+    let anonymous = f.kind == bosun_auth::FindingKind::MissingAuthentication;
+    let who = if anonymous {
+        "nobody (no login)"
+    } else {
+        f.identity.as_str()
+    };
+    NewIssue {
+        rule: "authz-matrix".into(),
+        title: if anonymous {
+            format!("Missing authentication: \"{}\" answers without a login", f.label)
+        } else {
+            format!(
+                "Broken access control: {} can reach \"{}\" ({}'s)",
+                f.identity, f.label, f.owner
+            )
+        },
+        severity: Severity::High,
+        confidence: Confidence::Firm,
+        flow_id,
+        scheme: scheme.into(),
+        host: host.into(),
+        port,
+        path: path.into(),
+        detail: format!(
+            "The request recorded as {}, replayed as {who}, got status {:?} and a body {}% like the owner's.",
+            f.owner, f.status, f.similarity
+        ),
+        evidence: Vec::new(),
+        remediation:
+            "Check on the server that the account asking is allowed to read this object or use this function."
+                .into(),
+        cwe: vec![if anonymous { 306 } else { 639 }],
+        owasp: vec!["A01:2021".into()],
+        fingerprint: format!("authz-matrix|{}|{host}|{path}|{}", f.identity, f.label),
+        time_ms: bosun_model::now_ms(),
+    }
 }

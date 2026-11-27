@@ -183,7 +183,7 @@
         "tags": [
           "scan"
         ],
-        "description": "The authorisation matrix: replay recorded flows as each of the given accounts and as nobody, and compare each answer with the owner's. An account that gets the same answer and is neither the owner nor listed in allowed is a finding (broken access control; missing authentication for no login). Account headers are given inline or taken from a vault entry opened on the server. Every send goes through the scope gate. Up to 200 probes and 20 accounts. Needs the tester role or above; audited.",
+        "description": "The authorisation matrix: replay recorded flows as each of the given accounts and as nobody, and compare each answer with the owner's. An account that gets the same answer and is neither the owner nor listed in allowed is a finding (broken access control; missing authentication for no login). Account headers are given inline or taken from a vault entry opened on the server. Every send goes through the scope gate. Up to 200 probes and 20 accounts. With save_issues each finding is also saved as an issue. Needs the tester role or above; audited.",
         "operationId": "auth_matrix",
         "requestBody": {
           "content": {
@@ -9782,6 +9782,78 @@
           }
         }
       },
+      "CaptureSpec": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Every cookie the answer sets.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cookies"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The first capture group of `pattern` on the body, sent as `header: {prefix}{value}`.",
+            "required": [
+              "pattern",
+              "header",
+              "kind"
+            ],
+            "properties": {
+              "header": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "body"
+                ]
+              },
+              "pattern": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A response header, sent as `header: {prefix}{value}`.",
+            "required": [
+              "from",
+              "header",
+              "kind"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "header": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "header"
+                ]
+              },
+              "prefix": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "What to keep from the login answer."
+      },
       "CaptureStarted": {
         "type": "object",
         "required": [
@@ -10446,6 +10518,17 @@
             ],
             "description": "Do not fetch what `robots.txt` disallows (default true)."
           },
+          "session": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionSpec",
+                "description": "Sign in before the crawl and again whenever the session ends (vault entries may fill the login)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "start": {
             "type": "array",
             "items": {
@@ -10851,6 +10934,32 @@
           "request",
           "response"
         ]
+      },
+      "ExpirySpec": {
+        "type": "object",
+        "description": "When an answer means the session has ended (default: status 401, or a redirect to a `login` page).",
+        "properties": {
+          "body_contains": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "redirect_contains": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        }
       },
       "Finding": {
         "type": "object",
@@ -11800,6 +11909,45 @@
         ],
         "description": "The answer to a password sign-in: a session, or a request for the second factor (no session yet)."
       },
+      "LoginSpec": {
+        "type": "object",
+        "description": "The login request.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Each `Name: value`."
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Default `POST`."
+          },
+          "url": {
+            "type": "string",
+            "description": "Absolute `http` or `https` URL of the login endpoint."
+          }
+        }
+      },
       "MapKind": {
         "type": "string",
         "enum": [
@@ -11909,6 +12057,10 @@
             "items": {
               "$ref": "#/components/schemas/MatrixProbe"
             }
+          },
+          "save_issues": {
+            "type": "boolean",
+            "description": "Save each finding as an issue (rule `authz-matrix`) that points at the probe's recorded flow."
           }
         }
       },
@@ -11980,7 +12132,8 @@
         "type": "object",
         "required": [
           "rows",
-          "findings"
+          "findings",
+          "issues_saved"
         ],
         "properties": {
           "findings": {
@@ -11988,6 +12141,11 @@
             "items": {
               "$ref": "#/components/schemas/AuthzFinding"
             }
+          },
+          "issues_saved": {
+            "type": "integer",
+            "description": "Issues saved (0 unless `save_issues` was set).",
+            "minimum": 0
           },
           "rows": {
             "type": "array",
@@ -14167,6 +14325,17 @@
             "description": "The most requests the scan may send (1 to 200000, default 5000).",
             "minimum": 0
           },
+          "session": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionSpec",
+                "description": "Sign in before the scan and again whenever the session ends (vault entries may fill the login)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "strength": {
             "type": [
               "string",
@@ -14526,6 +14695,31 @@
           "user_id": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "SessionSpec": {
+        "type": "object",
+        "required": [
+          "login",
+          "capture"
+        ],
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/CaptureSpec"
+          },
+          "expiry": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExpirySpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "login": {
+            "$ref": "#/components/schemas/LoginSpec"
           }
         }
       },

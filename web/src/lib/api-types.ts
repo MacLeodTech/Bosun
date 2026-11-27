@@ -47,7 +47,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description The authorisation matrix: replay recorded flows as each of the given accounts and as nobody, and compare each answer with the owner's. An account that gets the same answer and is neither the owner nor listed in allowed is a finding (broken access control; missing authentication for no login). Account headers are given inline or taken from a vault entry opened on the server. Every send goes through the scope gate. Up to 200 probes and 20 accounts. Needs the tester role or above; audited. */
+        /** @description The authorisation matrix: replay recorded flows as each of the given accounts and as nobody, and compare each answer with the owner's. An account that gets the same answer and is neither the owner nor listed in allowed is a finding (broken access control; missing authentication for no login). Account headers are given inline or taken from a vault entry opened on the server. Every send goes through the scope gate. Up to 200 probes and 20 accounts. With save_issues each finding is also saved as an issue. Needs the tester role or above; audited. */
         post: operations["auth_matrix"];
         delete?: never;
         options?: never;
@@ -2004,6 +2004,23 @@ export interface components {
             update_content_length?: boolean;
             verify_tls?: boolean;
         };
+        /** @description What to keep from the login answer. */
+        CaptureSpec: {
+            /** @enum {string} */
+            kind: "cookies";
+        } | {
+            header: string;
+            /** @enum {string} */
+            kind: "body";
+            pattern: string;
+            prefix?: string;
+        } | {
+            from: string;
+            header: string;
+            /** @enum {string} */
+            kind: "header";
+            prefix?: string;
+        };
         CaptureStarted: {
             /** Format: int64 */
             id: number;
@@ -2205,6 +2222,7 @@ export interface components {
             max_pages?: number | null;
             /** @description Do not fetch what `robots.txt` disallows (default true). */
             respect_robots?: boolean | null;
+            session?: components["schemas"]["SessionSpec"] | null;
             /** @description Where to begin: absolute `http` or `https` URLs (at least one). */
             start: string[];
             /** @description Send `GET` forms with the values the page gives them (default true). */
@@ -2323,6 +2341,12 @@ export interface components {
         };
         /** @enum {string} */
         EvidencePart: "request" | "response";
+        /** @description When an answer means the session has ended (default: status 401, or a redirect to a `login` page). */
+        ExpirySpec: {
+            body_contains?: string | null;
+            redirect_contains?: string | null;
+            statuses?: number[];
+        };
         Finding: {
             kind: components["schemas"]["FindingKind"];
             /** @description Byte offset into the text that was scanned. */
@@ -2642,6 +2666,17 @@ export interface components {
         };
         /** @description The answer to a password sign-in: a session, or a request for the second factor (no session yet). */
         LoginReply: components["schemas"]["Me"] | components["schemas"]["SecondFactor"];
+        /** @description The login request. */
+        LoginSpec: {
+            body?: string | null;
+            content_type?: string | null;
+            /** @description Each `Name: value`. */
+            headers?: string[];
+            /** @description Default `POST`. */
+            method?: string | null;
+            /** @description Absolute `http` or `https` URL of the login endpoint. */
+            url: string;
+        };
         /** @enum {string} */
         MapKind: "map_local" | "map_remote" | "throttle";
         /** @description One rule as saved. The fields a kind does not use are ignored. */
@@ -2681,6 +2716,8 @@ export interface components {
             identities: components["schemas"]["MatrixIdentity"][];
             options?: components["schemas"]["AuthzOptions"] | null;
             probes: components["schemas"]["MatrixProbe"][];
+            /** @description Save each finding as an issue (rule `authz-matrix`) that points at the probe's recorded flow. */
+            save_issues?: boolean;
         };
         MatrixIdentity: {
             /** @description Headers that make a request be this account. */
@@ -2703,6 +2740,8 @@ export interface components {
         };
         MatrixResult: {
             findings: components["schemas"]["AuthzFinding"][];
+            /** @description Issues saved (0 unless `save_issues` was set). */
+            issues_saved: number;
             rows: components["schemas"]["AuthzRow"][];
         };
         Me: {
@@ -3348,6 +3387,7 @@ export interface components {
              * @description The most requests the scan may send (1 to 200000, default 5000).
              */
             max_requests?: number | null;
+            session?: components["schemas"]["SessionSpec"] | null;
             /** @description `low`, `medium` (default) or `high`: more insertion points and probes. */
             strength?: string | null;
             /** @description The requests to test (1 to 2000). */
@@ -3476,6 +3516,11 @@ export interface components {
             id: string;
             /** Format: int64 */
             user_id: number;
+        };
+        SessionSpec: {
+            capture: components["schemas"]["CaptureSpec"];
+            expiry?: components["schemas"]["ExpirySpec"] | null;
+            login: components["schemas"]["LoginSpec"];
         };
         SetupBody: {
             code: string;

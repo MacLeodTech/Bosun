@@ -3,7 +3,7 @@
 
 import { api } from './api';
 import { commands, type Command } from './commands.svelte';
-import { copyAsCurl, copyMessage, copyRequestAs, copyUrls, deleteFlows, analyseHost, downloadCsrfPoc, exportHar, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToIntruder, sendToRepeater } from './flowactions';
+import { copyAsCurl, copyMessage, copyRequestAs, copyUrls, deleteFlows, analyseHost, downloadCsrfPoc, exportHar, saveToOrganizer, scopeHosts, sendToComparer, sendToDecoder, sendToIntruder, sendToMatrix, sendToRepeater } from './flowactions';
 import { SNIPPETS } from './export';
 import { historyView } from './historyView.svelte';
 import { panels } from './panels';
@@ -114,6 +114,15 @@ export function registerBuiltins(): () => void {
       when: (c) => tester() && c.flows.length > 0,
       run: async (c) => {
         if (await sendToIntruder(c.flows)) workspace.open('intruder');
+      },
+    },
+    {
+      id: 'flow.matrix',
+      title: 'Send to access matrix',
+      group: 'Request',
+      when: (c) => tester() && c.flows.length > 0,
+      run: async (c) => {
+        if (await sendToMatrix(c.flows)) workspace.open('authmatrix');
       },
     },
     ...(['request', 'response'] as const).map((part): Command => ({

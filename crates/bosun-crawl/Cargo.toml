@@ -11,6 +11,7 @@ publish.workspace = true
 bosun-model.workspace = true
 bosun-scope.workspace = true
 bosun-http.workspace = true
+bosun-auth.workspace = true
 tokio.workspace = true
 serde.workspace = true
 thiserror.workspace = true

@@ -60,6 +60,18 @@ secret. `POST /vault`, `PATCH /vault/{id}` (rename, re-kind, replace the secret)
 role and are audited by name (`vault.create`, `vault.update`, `vault.delete`). Other features refer to an entry by its
 id. 400 (bad name, kind or secret), 404, 409 (name taken, or 500 entries).
 
+## Signed-in scans and crawls
+
+`POST /scan/scans` and `POST /crawl/crawls` take an optional `session`: `login` (`url`, `method` default `POST`, `headers`,
+`body`, `content_type`), `capture` (`{kind: "cookies"}`, `{kind: "body", pattern, header, prefix}` or
+`{kind: "header", from, header, prefix}`) and `expiry` (`statuses`, `redirect_contains`, `body_contains`; default 401 or a
+redirect to a login page). The first request signs in; every request then carries the session's headers, and an answer that
+means the session ended signs in again and repeats the request. The login may name vault entries as `{{vault:ID}}`,
+`{{vault:ID|url}}` (percent-encoded) or `{{vault:ID|json}}` (escaped for a JSON string); they are opened on the server and
+only go into the login request. A failed sign-in ends the scan (state `failed`, with the reason) or stops the crawl, and is
+not tried again, so a wrong password cannot lock the account. At most 25 sign-ins per run. 400 for a missing vault entry,
+a bad pattern or header.
+
 ## The authorisation matrix
 
 `POST /auth-matrix` (tester; audited as `authmatrix.run`) replays recorded flows as each given account and as nobody,
@@ -67,7 +79,8 @@ and compares every answer with the owner's. Body: `identities` (name plus `heade
 `vault_id`, the `header` to set and an optional `prefix`), `probes` (`flow_id`, `owner`, `allowed`, `label`) and
 `options`. Up to 20 identities and 200 probes. Vault secrets are opened on the server and never returned or audited.
 Every send goes through the scope gate. The answer has `rows` (one cell per account) and `findings` (broken access
-control, or no login needed). 400 (bad names or headers, missing vault entry), 404 (no such flow).
+control, or no login needed). With `save_issues: true` each finding is also saved as an issue (rule `authz-matrix`,
+pointing at the probe's recorded flow, once per account and request), and `issues_saved` counts them. 400 (bad names or headers, missing vault entry), 404 (no such flow).
 
 ## Embedded mode
 

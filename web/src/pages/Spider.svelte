@@ -5,7 +5,7 @@
   // Everything from the target is shown as text.
   // Progress arrives as `crawl_*` events on the event stream; a slow poll stays on as a fallback in case the stream
   // is down. The page list is fetched incrementally (`from`), so an event only says "there is more".
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
   import type { components } from '../lib/api-types';
@@ -22,6 +22,10 @@
   let robots = $state(true);
   let sitemap = $state(true);
   let postForms = $state(false);
+  let signIn = $state(false);
+  let loginUrl = $state('http://');
+  let loginBody = $state('user=&pass=');
+  let vault = $state<{ id: number; name: string }[]>([]);
   let error = $state('');
   let status = $state<Detail | null>(null);
   let pages = $state<Page[]>([]);
@@ -64,6 +68,8 @@
     try {
       const i = await api.post<{ id: number }>('/crawl/crawls', {
         start: [url.trim()], max_depth: depth, max_pages: maxPages, respect_robots: robots, use_sitemap: sitemap, submit_post_forms: postForms,
+        // Sign in with the login request (cookies kept), and again when the session ends. A password is a vault entry.
+        session: signIn ? { login: { url: loginUrl.trim(), body: loginBody }, capture: { kind: 'cookies' } } : undefined,
       });
       status = { id: i.id, state: 'running' } as Detail;
       timer = setInterval(() => void poll(i.id), 5000);
@@ -78,6 +84,9 @@
     try { await api.post(`/crawl/crawls/${status.id}/stop`); } catch (e) { fail(e); }
   }
 
+  onMount(async () => {
+    try { vault = (await api.get<{ entries: { id: number; name: string }[] }>('/vault')).entries; } catch { vault = []; }
+  });
   onDestroy(() => { stopTimer(); off(); });
 </script>
 
@@ -92,6 +101,17 @@
   <label class="small"><input type="checkbox" bind:checked={robots} /> Respect robots.txt</label>
   <label class="small"><input type="checkbox" bind:checked={sitemap} /> Read sitemaps</label>
   <label class="small"><input type="checkbox" aria-label="Submit POST forms" bind:checked={postForms} /> Submit POST forms (can change data)</label>
+</div>
+<div class="toolbar">
+  <label class="small"><input type="checkbox" aria-label="Sign in first" bind:checked={signIn} /> Sign in first</label>
+  {#if signIn}
+    <input class="mono grow" aria-label="Login URL" placeholder="https://host/login" bind:value={loginUrl} />
+    <input class="mono grow" aria-label="Login body" autocomplete="off" bind:value={loginBody} />
+    <select aria-label="Add a vault secret to the login body" onchange={(e) => { const v = e.currentTarget.value; if (v) loginBody += `{{vault:${v}|url}}`; e.currentTarget.value = ''; }}>
+      <option value="">add a vault secret…</option>
+      {#each vault as v (v.id)}<option value={String(v.id)}>{v.name}</option>{/each}
+    </select>
+  {/if}
 </div>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 

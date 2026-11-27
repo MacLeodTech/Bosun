@@ -815,9 +815,16 @@ impl Client {
             .await
     }
 
+    /// The authorisation matrix: replay recorded flows as each account and as nobody. `body` is the `MatrixBody` of
+    /// the API: `identities`, `probes` and optionally `options` and `save_issues`. Returns `rows`, `findings` and
+    /// `issues_saved`.
+    pub async fn auth_matrix(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/auth-matrix").json(body)).await
+    }
+
     /// Start an active scan. `body` is the `ScanStartBody` of the API: `targets` (each a `url`, optionally with
     /// `method`, `headers`, `body`, `content_type`) and optionally `checks`, `strength`, `concurrency`, `delay_ms`,
-    /// `max_requests`. Returns the scan as it starts.
+    /// `max_requests`, and `session` (a login macro that keeps the scan signed in). Returns the scan as it starts.
     pub async fn scan_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
         self.json(self.req(Method::POST, "/scan/scans").json(body)).await
     }

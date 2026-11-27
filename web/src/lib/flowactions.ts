@@ -344,3 +344,24 @@ export async function downloadCsrfPoc(id: number, auto: boolean): Promise<void> 
     fail(e);
   }
 }
+
+/** Key of the flows waiting for the Access matrix: `{ id, label }[]` in session storage. */
+export const MATRIX_STASH = 'bosun.matrix.probes';
+
+/** Add flows to the Access matrix's request list. The panel picks them up when it opens. */
+export async function sendToMatrix(ids: number[]) {
+  const take = ids.slice(0, 50);
+  const items: { id: number; label: string }[] = [];
+  for (const id of take) {
+    try {
+      const m = await fetchMeta(id);
+      items.push({ id, label: `${m.method} ${m.path.split('?')[0]}` });
+    } catch (e) {
+      fail(e);
+    }
+  }
+  if (items.length === 0) return false;
+  const old: { id: number; label: string }[] = JSON.parse(sessionStorage.getItem(MATRIX_STASH) ?? '[]');
+  sessionStorage.setItem(MATRIX_STASH, JSON.stringify([...old, ...items]));
+  return true;
+}

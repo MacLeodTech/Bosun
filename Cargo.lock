@@ -693,6 +693,7 @@ dependencies = [
  "openidconnect",
  "rand 0.10.4",
  "rcgen",
+ "regex",
  "reqwest 0.12.28",
  "rsa",
  "rusqlite",
@@ -801,6 +802,7 @@ dependencies = [
 name = "bosun-crawl"
 version = "0.1.0"
 dependencies = [
+ "bosun-auth",
  "bosun-http",
  "bosun-model",
  "bosun-proxy",

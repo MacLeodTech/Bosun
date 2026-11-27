@@ -28,6 +28,7 @@ pub mod repeater;
 pub mod scan;
 pub mod security;
 pub mod sequencer;
+pub mod sessionspec;
 pub mod sso;
 pub mod totp;
 pub mod vault;

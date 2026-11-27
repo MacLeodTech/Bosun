@@ -952,6 +952,7 @@ fn the_client_covers_every_documented_operation() {
         ("get", "/crawl/crawls", "crawl_list"),
         ("get", "/crawl/crawls/{id}", "crawl_get"),
         ("post", "/crawl/crawls/{id}/stop", "crawl_stop"),
+        ("post", "/auth-matrix", "auth_matrix"),
         ("post", "/scan/scans", "scan_start"),
         ("get", "/scan/scans", "scan_list"),
         ("get", "/scan/checks", "scan_checks"),

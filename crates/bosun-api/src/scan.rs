@@ -143,6 +143,9 @@ pub struct ScanStartBody {
     pub headers: Vec<String>,
     #[serde(default)]
     pub verify_tls: bool,
+    /// Sign in before the scan and again whenever the session ends (vault entries may fill the login).
+    #[serde(default)]
+    pub session: Option<crate::sessionspec::SessionSpec>,
 }
 
 fn header_pair(h: &str) -> Result<(String, String), Response> {
@@ -391,12 +394,19 @@ impl Sink for ApiSink {
     }
 }
 
-async fn run(st: AppState, job: Arc<Job>, opts: Options, targets: Vec<Target>) {
+async fn run(
+    st: AppState,
+    job: Arc<Job>,
+    opts: Options,
+    targets: Vec<Target>,
+    session: Option<Arc<bosun_auth::Session>>,
+) {
     let sink = Arc::new(ApiSink {
         st: st.clone(),
         job: job.clone(),
     });
-    let result = bosun_active::scan(&st.inner.repeater, &opts, &targets, sink, &job.ctl).await;
+    let result =
+        bosun_active::scan_with_session(&st.inner.repeater, &opts, &targets, sink, &job.ctl, session).await;
     let mut stored = Vec::new();
     {
         let mut g = lock(&job.inner);
@@ -406,6 +416,7 @@ async fn run(st: AppState, job: Arc<Job>, opts: Options, targets: Vec<Target>) {
                 g.units_done = r.units_done;
                 g.units_total = r.units_total;
                 g.stopped = r.stopped;
+                g.error = r.session_error.clone();
                 stored = r.findings.iter().filter_map(issue_of).collect();
             }
             Err(e) => g.error = Some(e.to_string()),
@@ -438,6 +449,10 @@ async fn run(st: AppState, job: Arc<Job>, opts: Options, targets: Vec<Target>) {
 pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<ScanStartBody>) -> R {
     caller.require(Role::Tester)?;
     let (opts, targets) = build(&b)?;
+    let session = match &b.session {
+        Some(s) => Some(crate::sessionspec::build(&st, s).await?),
+        None => None,
+    };
     let job = {
         let mut jobs = lock(&st.inner.scans.jobs);
         if jobs.iter().filter(|j| live(j)).count() >= MAX_RUNNING {
@@ -474,11 +489,16 @@ pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<Sca
             &st,
             "scan.start",
             &format!(
-                "scan {}: {} targets, strength {:?}, up to {} requests",
+                "scan {}: {} targets, strength {:?}, up to {} requests{}",
                 job.id,
                 targets.len(),
                 opts.strength,
-                opts.max_requests
+                opts.max_requests,
+                if session.is_some() {
+                    ", signed in by a login macro"
+                } else {
+                    ""
+                }
             ),
         )
         .await;
@@ -487,7 +507,7 @@ pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<Sca
         id: job.id,
         targets: targets.len() as u64,
     });
-    tokio::spawn(run(st.clone(), job, opts, targets));
+    tokio::spawn(run(st.clone(), job, opts, targets, session));
     Ok(Json(out).into_response())
 }
 

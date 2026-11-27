@@ -2,12 +2,13 @@
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
   import { session } from '../lib/session.svelte';
+  import { MATRIX_STASH } from '../lib/flowactions';
 
   interface VaultEntry { id: number; name: string; kind: string; hint: string }
   interface Cell { identity: string; verdict: string; status: number | null; similarity: number; error: string | null }
   interface Row { label: string; owner: string; cells: Cell[]; skipped: string | null }
   interface Finding { kind: string; label: string; owner: string; identity: string; status: number | null }
-  interface Result { rows: Row[]; findings: Finding[] }
+  interface Result { rows: Row[]; findings: Finding[]; issues_saved: number }
   interface Account { name: string; header: string; value: string; vaultId: string; prefix: string }
 
   let accounts = $state<Account[]>([
@@ -19,6 +20,7 @@
   let vault = $state<VaultEntry[]>([]);
   let result = $state<Result | null>(null);
   let busy = $state(false);
+  let saveIssues = $state(false);
   let error = $state('');
 
   const KIND: Record<string, string> = {
@@ -54,7 +56,7 @@
             ? { name: a.name.trim(), vault: [{ vault_id: Number(a.vaultId), header: a.header, prefix: a.prefix }] }
             : { name: a.name.trim(), headers: a.value ? [[a.header, a.value]] : [] },
         );
-      result = await api.post<Result>('/auth-matrix', { identities, probes: probes() });
+      result = await api.post<Result>('/auth-matrix', { identities, probes: probes(), save_issues: saveIssues });
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -66,6 +68,14 @@
   const columns = $derived(result ? [...new Set(result.rows.flatMap((r) => r.cells.map((c) => c.identity)))] : []);
 
   onMount(async () => {
+    // Flows sent from History: one line each, owned by the first account until the tester changes it.
+    const stash: { id: number; label: string }[] = JSON.parse(sessionStorage.getItem(MATRIX_STASH) ?? '[]');
+    if (stash.length > 0) {
+      sessionStorage.removeItem(MATRIX_STASH);
+      const owner = accounts[0]?.name.trim() || 'alice';
+      const lines = stash.map((s) => `${s.id} ${owner} - ${s.label}`).join('\n');
+      probeText = probeText.trim() ? `${probeText.trimEnd()}\n${lines}` : lines;
+    }
     try {
       vault = (await api.get<{ entries: VaultEntry[] }>('/vault')).entries;
     } catch {
@@ -102,6 +112,7 @@
   <h3>Requests</h3>
   <p class="small muted">One per line: <code>flow-id owner [allowed,allowed|-] [label]</code>. Use the flow ids from History.</p>
   <textarea aria-label="Probes" rows="5" bind:value={probeText} placeholder="12 alice - order 1"></textarea>
+  <label class="small"><input type="checkbox" bind:checked={saveIssues} /> Save findings as issues</label>
   <div class="row">
     <button class="primary" onclick={run} disabled={busy || !session.can('tester') || !probeText.trim()}>
       {busy ? 'Running…' : 'Run matrix'}
@@ -110,6 +121,7 @@
 
   {#if result}
     <h3>Findings ({result.findings.length})</h3>
+    {#if result.issues_saved > 0}<p class="small muted">{result.issues_saved} saved as issues.</p>{/if}
     {#if result.findings.length === 0}
       <p class="muted">No account reached something it should not.</p>
     {:else}

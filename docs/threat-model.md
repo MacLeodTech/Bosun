@@ -209,7 +209,15 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Authorisation matrix (WP-56).* `POST /auth-matrix` is tester-only and audited. Account headers may name vault
   entries, which are opened server-side and used only as request headers to hosts the scope gate allows; they are not
   returned, logged or written to the audit entry (it holds counts only). A secret with a line break is refused, so a
-  vault value cannot inject headers. The replayed requests are recorded as flows like any Repeater send.
+  vault value cannot inject headers. The replayed requests are recorded as flows like any Repeater send. With `save_issues` the findings become issues that
+  point at the probe's recorded flow; they hold labels and account names, no credentials.
+- *Signed-in scans and crawls (WP-56).* A `session` on a scan or crawl names a login request whose body and headers may
+  hold `{{vault:ID}}` placeholders. The secrets are opened on the server and appear only in the login request, which
+  goes through the scope gate like every request. The login exchange is not recorded as a flow, so the password is not
+  written to the history; the requests that follow carry the session cookie or token and are recorded like any request,
+  so the history holds a session credential (project data, as sensitive as the target's own traffic). A secret with a
+  line break or NUL is refused. The audit entry says a login macro was used and nothing else. A failed sign-in is never
+  repeated (account lockout), and a run signs in at most 25 times.
 - *Credential vault (WP-68).* Named secrets (auth configs, passwords, tokens, later OAST keys) in the project table
   `vault`. Each secret is sealed with the data key, with a purpose bound to its row id, before it reaches the project
   file, so a copied or exported project holds ciphertext only. No endpoint returns a secret: lists and results carry

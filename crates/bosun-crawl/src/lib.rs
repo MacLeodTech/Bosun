@@ -340,11 +340,54 @@ fn request(u: &Url, o: &Options, body: Option<&[u8]>) -> Vec<u8> {
     out
 }
 
+/// One request, kept signed in when there is a session: its headers replace the `Cookie` and `Authorization`
+/// headers, and an answer that means the session ended signs in again and repeats the request once. A sign-in
+/// that fails stops the crawl (a wrong password must not be tried page after page).
 async fn fetch(
     engine: &Engine,
     u: &Url,
     o: &Options,
     body: Option<&[u8]>,
+    stop: &Stop,
+    session: Option<&bosun_auth::Session>,
+) -> Result<Exchange, Fail> {
+    let raw = request(u, o, body);
+    let Some(session) = session else {
+        return fetch_raw(engine, u, o, raw, stop).await;
+    };
+    let failed = |e: bosun_auth::SessionError| {
+        stop.stop();
+        Fail::Failed(format!("session: {e}"))
+    };
+    let (headers, generation) = session.headers().await.map_err(failed)?;
+    let ex = fetch_raw(engine, u, o, bosun_auth::with_identity(&raw, &headers), stop).await?;
+    let (status, hdrs, text) = look(&ex);
+    if !session.expiry.expired(status, &hdrs, &text) {
+        return Ok(ex);
+    }
+    session.refresh(generation).await.map_err(failed)?;
+    let (headers, _) = session.headers().await.map_err(failed)?;
+    fetch_raw(engine, u, o, bosun_auth::with_identity(&raw, &headers), stop).await
+}
+
+/// Status, lowercased headers and body text of an exchange, for the session's expiry rule.
+fn look(ex: &Exchange) -> (u16, Vec<(String, String)>, String) {
+    let Some((r, body)) = body_of(ex) else {
+        return (ex.status.unwrap_or(0), Vec::new(), String::new());
+    };
+    let headers = r
+        .headers
+        .iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), String::from_utf8_lossy(v).into_owned()))
+        .collect();
+    (r.status, headers, String::from_utf8_lossy(&body).into_owned())
+}
+
+async fn fetch_raw(
+    engine: &Engine,
+    u: &Url,
+    o: &Options,
+    raw: Vec<u8>,
     stop: &Stop,
 ) -> Result<Exchange, Fail> {
     let send = SendOptions {
@@ -357,7 +400,6 @@ async fn fetch(
         max_response: o.max_body,
         reuse: false,
     };
-    let raw = request(u, o, body);
     let target = Target::new(u.scheme, &u.host, u.port);
     let started = Instant::now();
     loop {
@@ -403,6 +445,7 @@ struct Crawler<'a> {
     opts: &'a Options,
     sink: &'a dyn Sink,
     stop: &'a Stop,
+    session: Option<Arc<bosun_auth::Session>>,
     queue: VecDeque<Item>,
     seen: HashSet<(Url, Option<Vec<u8>>)>,
     origins: HashMap<Origin, Robots>,
@@ -418,12 +461,24 @@ pub async fn crawl(
     sink: &dyn Sink,
     stop: &Stop,
 ) -> Result<Report, CrawlError> {
+    crawl_with_session(engine, opts, sink, stop, None).await
+}
+
+/// [`crawl`] kept signed in (see [`bosun_auth::Session`]).
+pub async fn crawl_with_session(
+    engine: &Engine,
+    opts: &Options,
+    sink: &dyn Sink,
+    stop: &Stop,
+    session: Option<Arc<bosun_auth::Session>>,
+) -> Result<Report, CrawlError> {
     opts.validate()?;
     let mut c = Crawler {
         engine,
         opts,
         sink,
         stop,
+        session,
         queue: VecDeque::new(),
         seen: HashSet::new(),
         origins: HashMap::new(),
@@ -458,8 +513,17 @@ impl Crawler<'_> {
                 }
                 last_start = Some(Instant::now());
                 let (engine, opts, stop) = (self.engine.clone(), self.opts.clone(), self.stop.clone());
+                let session = self.session.clone();
                 running.spawn(async move {
-                    let r = fetch(&engine, &item.url, &opts, item.body.as_deref(), &stop).await;
+                    let r = fetch(
+                        &engine,
+                        &item.url,
+                        &opts,
+                        item.body.as_deref(),
+                        &stop,
+                        session.as_deref(),
+                    )
+                    .await;
                     (item, r)
                 });
             }
@@ -752,7 +816,16 @@ impl Crawler<'_> {
     }
 
     async fn get_text(&mut self, u: &Url) -> Option<(String, u16)> {
-        match fetch(self.engine, u, self.opts, None, self.stop).await {
+        match fetch(
+            self.engine,
+            u,
+            self.opts,
+            None,
+            self.stop,
+            self.session.as_deref(),
+        )
+        .await
+        {
             Ok(ex) => {
                 self.report.requests += 1;
                 self.sink.exchange(&ex);

@@ -818,6 +818,18 @@ test('context menu: a row offers its actions, Escape closes it, and Send to Repe
   await expect(rp.getByLabel('Request')).toContainText('GET /hello-history');
 });
 
+test('context menu: Send to Access matrix lists the request as a probe', async () => {
+  await layoutMenu('Reset layout');
+  await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();
+  await applyFilter('');
+  await page.locator('.row', { hasText: '/hello-history' }).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Access matrix', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Access matrix' })).toHaveAttribute('aria-selected', 'true');
+  const mp = page.getByRole('tabpanel', { name: 'Access matrix', exact: true });
+  await expect(mp.getByLabel('Probes')).toHaveValue(/\d+ alice - GET \/hello-history/);
+  await expect(mp.getByRole('button', { name: 'Run matrix' })).toBeEnabled();
+});
+
 test('send to: a response body goes to the Decoder, and a request and a response to the two sides of the Comparer', async () => {
   await layoutMenu('Reset layout');
   await page.getByRole('navigation').getByRole('button', { name: 'HTTP history' }).click();

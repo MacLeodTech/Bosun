@@ -128,6 +128,25 @@ async fn the_matrix_finds_the_planted_idor_with_a_vault_credential_and_is_audite
         "false positive on the safe twin: {v}"
     );
 
+    // Saving the findings makes one issue, once (a second run does not duplicate it).
+    assert_eq!(v["issues_saved"], 0);
+    let mut save = body.clone();
+    save["save_issues"] = json!(true);
+    for _ in 0..2 {
+        let (st, text) = post(&s, &c, &csrf, "/auth-matrix", save.clone()).await;
+        assert_eq!(st, StatusCode::OK, "{text}");
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["issues_saved"], 1);
+    }
+    let issues = c
+        .get(s.url("/issues"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(issues.matches("authz-matrix").count(), 1, "{issues}");
+
     // Validation and a missing vault entry.
     let mut bad = body.clone();
     bad["probes"][0]["owner"] = json!("nobody");

@@ -113,6 +113,9 @@ pub struct CrawlStartBody {
     pub headers: Vec<String>,
     #[serde(default)]
     pub verify_tls: bool,
+    /// Sign in before the crawl and again whenever the session ends (vault entries may fill the login).
+    #[serde(default)]
+    pub session: Option<crate::sessionspec::SessionSpec>,
 }
 
 fn options(b: &CrawlStartBody) -> Result<Options, Response> {
@@ -321,12 +324,12 @@ impl Sink for ApiSink {
     }
 }
 
-async fn run(st: AppState, job: Arc<Job>, opts: Options) {
+async fn run(st: AppState, job: Arc<Job>, opts: Options, session: Option<Arc<bosun_auth::Session>>) {
     let sink = ApiSink {
         st: st.clone(),
         job: job.clone(),
     };
-    let result = bosun_crawl::crawl(&st.inner.repeater, &opts, &sink, &job.stop).await;
+    let result = bosun_crawl::crawl_with_session(&st.inner.repeater, &opts, &sink, &job.stop, session).await;
     let mut g = lock(&job.inner);
     match result {
         Ok(r) => {
@@ -362,6 +365,10 @@ async fn run(st: AppState, job: Arc<Job>, opts: Options) {
 pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<CrawlStartBody>) -> R {
     caller.require(Role::Tester)?;
     let opts = options(&b)?;
+    let session = match &b.session {
+        Some(s) => Some(crate::sessionspec::build(&st, s).await?),
+        None => None,
+    };
     let job = {
         let mut jobs = lock(&st.inner.crawls.jobs);
         if jobs.iter().filter(|j| state_of(j) == CrawlState::Running).count() >= MAX_RUNNING {
@@ -416,7 +423,7 @@ pub async fn start(State(st): State<AppState>, caller: Caller, Json(b): Json<Cra
         id: job.id,
         start: job.start.clone(),
     });
-    tokio::spawn(run(st.clone(), job, opts));
+    tokio::spawn(run(st.clone(), job, opts, session));
     Ok(Json(out).into_response())
 }
 

@@ -637,16 +637,20 @@ dependencies = [
 name = "bosun-active"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "bosun-crawl",
  "bosun-http",
  "bosun-model",
  "bosun-proxy",
  "bosun-scope",
  "bosun-testbed",
+ "hmac 0.13.0",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "tokio",
+ "x509-parser",
 ]
 
 [[package]]
@@ -981,7 +985,14 @@ dependencies = [
 name = "bosun-testbed"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
+ "hmac 0.13.0",
+ "rcgen",
+ "rustls",
+ "serde_json",
+ "sha2 0.11.1",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

@@ -17,6 +17,7 @@ pub const OPEN_REDIRECT: &str = "active-open-redirect";
 pub const CRLF_INJECTION: &str = "active-crlf-injection";
 pub const CORS: &str = "active-cors";
 pub const HOST_HEADER: &str = "active-host-header";
+pub use crate::extra::{DESERIALIZATION, FILE_UPLOAD, GRAPHQL, JWT, PROTOTYPE_POLLUTION, SESSION, TLS, XXE};
 
 /// How long an injected sleep lasts. The answer must take at least this long with the sleep and not with a sleep of
 /// zero, twice.
@@ -54,6 +55,7 @@ pub(crate) async fn run(sh: &Shared, req: &Req, point: &Point) {
         if o.enabled(HOST_HEADER) {
             host_header(sh, req, point).await;
         }
+        crate::extra::whole(sh, req).await;
         return;
     }
     if o.enabled(SQLI_ERROR) {
@@ -85,6 +87,9 @@ pub(crate) async fn run(sh: &Shared, req: &Req, point: &Point) {
     }
     if o.enabled(CRLF_INJECTION) {
         crlf_injection(sh, req, point).await;
+    }
+    if o.enabled(DESERIALIZATION) {
+        crate::extra::deserialization(sh, req, point).await;
     }
 }
 
@@ -163,23 +168,23 @@ async fn xss_reflected(sh: &Shared, req: &Req, point: &Point) {
     });
 }
 
-fn is_html(a: &Answer) -> bool {
+pub(crate) fn is_html(a: &Answer) -> bool {
     a.content_type.is_empty() || a.content_type.contains("html")
 }
 
 /// The fields every finding of the checks below shares.
-struct Hit<'a> {
-    check: &'a str,
-    title: &'a str,
-    severity: Severity,
-    confidence: Confidence,
-    payload: String,
-    detail: String,
-    remediation: &'a str,
-    cwe: u32,
+pub(crate) struct Hit<'a> {
+    pub check: &'a str,
+    pub title: &'a str,
+    pub severity: Severity,
+    pub confidence: Confidence,
+    pub payload: String,
+    pub detail: String,
+    pub remediation: &'a str,
+    pub cwe: u32,
 }
 
-fn report(sh: &Shared, req: &Req, point: &Point, flow_id: i64, h: Hit<'_>) {
+pub(crate) fn report(sh: &Shared, req: &Req, point: &Point, flow_id: i64, h: Hit<'_>) {
     sh.report(Finding {
         check: h.check.into(),
         title: h.title.into(),
@@ -530,7 +535,7 @@ async fn cmd_injection(sh: &Shared, req: &Req, point: &Point) {
 }
 
 /// The start of a system file only a traversal could have made the application read.
-fn file_signature(body: &str) -> Option<&'static str> {
+pub(crate) fn file_signature(body: &str) -> Option<&'static str> {
     if body.contains("root:x:0:0:") || body.contains("root:*:0:0:") {
         Some("/etc/passwd")
     } else if body.contains("; for 16-bit app support")
@@ -692,7 +697,7 @@ async fn crlf_injection(sh: &Shared, req: &Req, point: &Point) {
     }
 }
 
-fn header<'a>(a: &'a Answer, name: &str) -> Option<&'a str> {
+pub(crate) fn header<'a>(a: &'a Answer, name: &str) -> Option<&'a str> {
     a.headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
 }
 

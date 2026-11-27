@@ -113,7 +113,7 @@ async fn a_scan_of_the_testbed_pauses_resumes_finds_issues_and_is_audited() {
         .filter(|c| c["destructive"] == true)
         .map(|c| c["id"].as_str().unwrap())
         .collect();
-    assert_eq!(destructive, ["active-xss-stored"]);
+    assert_eq!(destructive, ["active-xss-stored", "active-file-upload"]);
 }
 
 #[tokio::test]

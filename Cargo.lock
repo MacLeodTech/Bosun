@@ -638,6 +638,7 @@ name = "bosun-active"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "bosun-auth",
  "bosun-crawl",
  "bosun-http",
  "bosun-model",
@@ -709,6 +710,22 @@ dependencies = [
  "tower",
  "tracing",
  "url",
+ "utoipa",
+]
+
+[[package]]
+name = "bosun-auth"
+version = "0.1.0"
+dependencies = [
+ "bosun-http",
+ "bosun-model",
+ "bosun-proxy",
+ "bosun-scope",
+ "bosun-testbed",
+ "regex",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
  "utoipa",
 ]
 

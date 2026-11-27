@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 bosun-model.workspace = true
 bosun-http.workspace = true
+bosun-auth.workspace = true
 bosun-scope.workspace = true
 bosun-crawl.workspace = true
 tokio.workspace = true

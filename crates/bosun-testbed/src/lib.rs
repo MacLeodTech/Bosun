@@ -25,11 +25,14 @@
 //! `POST /graphql` (introspection, suggestions, batching, aliases; `/graphql-safe`), `GET /session/start` (cookie
 //! without flags, adopts a client's session id; `/session/start-safe`), and [`start_tls`] servers (expired,
 //! self-signed, legacy protocols and ciphers; `Good` is the twin).
+//! - The logged-in area (see `auth.rs`): `POST /login`, `/app`, `/app/orders/{id}` (IDOR; `/app/orders-safe/{id}`),
+//!   `/app/admin/users` (no role check; `/app/admin-safe/users`), `/api/token` and `/api/me` (bearer).
 //!
 //! Safe twins (the scanner must stay quiet): `GET /greet?name=` escapes, `GET /safe?id=` never errors, and
 //! `/user-safe`, `/report-safe`, `/notes`, `/render-safe`, `/ping-safe`, `/download-safe`, `/go-safe`, `/lang-safe`,
 //! `/api/profile-safe` (allow list), `/api/public` (`*` without credentials) and `/reset-safe`.
 
+mod auth;
 mod extra;
 
 pub use extra::{STRONG_SECRET, TlsKind, jwt_hs256, start_tls};
@@ -140,6 +143,8 @@ struct State {
     /// The properties a polluted `__proto__` gave every object (`/api/settings`).
     proto: Mutex<Vec<(String, String)>>,
     seq: std::sync::atomic::AtomicU64,
+    /// Signed-in sessions: (token, user), see `auth.rs`.
+    sessions: Mutex<Vec<(String, String)>>,
 }
 
 struct Reply {
@@ -499,7 +504,9 @@ fn route(rq: &Rq<'_>, st: &State, external: Option<&str>) -> Reply {
         ("GET", "/reset-safe") => {
             html("<a href=\"https://testbed.example/reset/confirm?token=abc123\">Reset your password</a>")
         }
-        _ => extra::route(rq, st).unwrap_or_else(|| Reply::new(404, "text/html", "not found")),
+        _ => auth::route(rq, st)
+            .or_else(|| extra::route(rq, st))
+            .unwrap_or_else(|| Reply::new(404, "text/html", "not found")),
     }
 }
 

@@ -213,7 +213,7 @@ valid in the "Depends on" column.
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
 | [ ] | WP-54 | Active scan engine and the testbed | 6 | L | WP-40, WP-49, WP-50 |
 | [ ] | WP-55 | Core active checks (rest: out-of-band variants via WP-59, wider JWT/GraphQL/XXE coverage, prototype pollution is non-destructive by default, decide) | 6 | S | WP-54 |
-| [ ] | WP-56 | `bosun-auth` and the authorisation matrix | 6 | L | WP-54, WP-68 |
+| [ ] | WP-56 | `bosun-auth` and the authorisation matrix (rest: API, UI and vault wiring, recorded browser logins, token refresh calls) | 6 | M | WP-54, WP-68 |
 | [ ] | WP-57 | `bosun scan` (rest: consume `scan_*` events in the client, drive a `--no-ui` engine, scope SARIF to the scan, container recipes untested in CI) | 6 | S | WP-25, WP-26, WP-51, WP-54 |
 | [ ] | WP-72 | Scanner benchmarks against ZAP | 6 | M | WP-55 |
 | [ ] | WP-81 | Content and parameter discovery | 6 | M | WP-47, WP-52 |
@@ -458,6 +458,13 @@ Open packages only; finished ones are in `docs/releases.md`.
     in the encrypted vault (WP-68).
   - A multi-user authorisation matrix for IDOR and access-control testing across accounts.
 - **Done when:** a scan of the testbed's logged-in area stays logged in, and the matrix finds its planted IDOR.
+- **Built so far (engine, tested against the testbed):** `bosun-auth` has the matrix (`matrix::run`: replay a
+  request as each account and as nobody, compare with the owner's answer, findings for broken access control and
+  missing authentication) and `Session` (a login macro that keeps cookies or a token, signs in again when an answer
+  looks expired, and stops after one failed sign-in). `bosun_active::scan_with_session` keeps a scan logged in.
+- **Left:** API endpoints and a UI panel for the matrix; a login macro in the scan and crawl requests that takes
+  its credentials from the vault (`vault::open_secret`); recording a login from the browser; matrix findings
+  saved as issues; fuzz is not needed (nothing here parses untrusted input beyond HTTP responses already handled).
 
 #### WP-57 `bosun scan` for CI · Phase 6 · M
 

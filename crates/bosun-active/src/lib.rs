@@ -320,6 +320,9 @@ pub struct Report {
     /// The request cap ended the scan with work left.
     pub truncated: bool,
     pub stopped: bool,
+    /// Sign-ins the session handling did, and why it stopped signing in (when it did).
+    pub sign_ins: u32,
+    pub session_error: Option<String>,
 }
 
 /// State shared by the units of one scan.
@@ -335,6 +338,9 @@ pub(crate) struct Shared {
     findings: Mutex<Vec<Finding>>,
     /// `host:port` of the https targets the TLS check has been run for.
     tls_done: Mutex<HashSet<String>>,
+    /// Signs in and keeps the scan logged in, when the scan has a login macro.
+    session: Option<Arc<bosun_auth::Session>>,
+    session_error: Mutex<Option<String>>,
 }
 
 /// A response, parsed far enough for checks.
@@ -456,6 +462,38 @@ impl Shared {
     /// [`Shared::send`] with the certificate check chosen by the caller (the TLS check must complete a handshake
     /// with a bad certificate to read it).
     pub(crate) async fn send_with(&self, req: &Req, raw: Vec<u8>, verify_tls: bool) -> Option<Answer> {
+        let Some(session) = &self.session else {
+            return self.send_once(req, raw, verify_tls).await;
+        };
+        let (headers, generation) = match session.headers().await {
+            Ok(h) => h,
+            Err(e) => return self.session_failed(e),
+        };
+        let a = self
+            .send_once(req, bosun_auth::with_identity(&raw, &headers), verify_tls)
+            .await?;
+        if !session.expiry.expired(a.status, &a.headers, &a.body) {
+            return Some(a);
+        }
+        // The session ended: sign in again (once, however many units noticed) and send this request once more.
+        if let Err(e) = session.refresh(generation).await {
+            return self.session_failed(e);
+        }
+        let (headers, _) = session.headers().await.ok()?;
+        self.send_once(req, bosun_auth::with_identity(&raw, &headers), verify_tls)
+            .await
+    }
+
+    fn session_failed(&self, e: bosun_auth::SessionError) -> Option<Answer> {
+        *self
+            .session_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(e.to_string());
+        self.ctl.stop();
+        None
+    }
+
+    async fn send_once(&self, req: &Req, raw: Vec<u8>, verify_tls: bool) -> Option<Answer> {
         let send = SendOptions {
             source: FlowSource::Scanner,
             update_content_length: true,
@@ -547,6 +585,20 @@ pub async fn scan(
     sink: Arc<dyn Sink>,
     ctl: &Control,
 ) -> Result<Report, ScanError> {
+    scan_with_session(engine, opts, targets, sink, ctl, None).await
+}
+
+/// [`scan`] kept signed in: every request carries the session's headers, and an answer that means the session
+/// ended makes the scan sign in again and repeat the request. If signing in fails, the scan stops and the report
+/// says why.
+pub async fn scan_with_session(
+    engine: &Engine,
+    opts: &Options,
+    targets: &[Target],
+    sink: Arc<dyn Sink>,
+    ctl: &Control,
+    session: Option<Arc<bosun_auth::Session>>,
+) -> Result<Report, ScanError> {
     opts.validate()?;
     if targets.is_empty() {
         return Err(ScanError::BadOption("give at least one target".into()));
@@ -571,6 +623,8 @@ pub async fn scan(
         refused: Mutex::default(),
         findings: Mutex::default(),
         tls_done: Mutex::default(),
+        session,
+        session_error: Mutex::default(),
     });
     let mut queue = units.into_iter();
     let mut running: JoinSet<()> = JoinSet::new();
@@ -621,5 +675,11 @@ pub async fn scan(
         refused,
         truncated: shared.capped.load(Ordering::SeqCst) && done < total,
         stopped: ctl.is_stopped(),
+        sign_ins: shared.session.as_ref().map_or(0, |s| s.sign_ins()),
+        session_error: shared
+            .session_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone(),
     })
 }

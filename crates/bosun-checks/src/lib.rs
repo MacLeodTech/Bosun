@@ -6,6 +6,8 @@
 //! - [`passive`] and the YAML files in `builtin/` are the checks the passive scanner (`bosun-scan`) runs on recorded
 //!   flows. Nothing here sends a request: active checks are sent by the scan engine, through the scope gate.
 
+pub mod advisory;
+pub mod components;
 pub mod head;
 mod issue;
 pub mod lang;

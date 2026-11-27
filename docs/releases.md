@@ -7,6 +7,23 @@ There is no tagged release yet. The first public preview is v0.2, at the end of 
 
 Newest first. Each entry keeps the work package's original brief (why, do, done when) and its "Done" note.
 
+## Technology fingerprints and known-vulnerable components (branch `wp-43`, 2026-11-27)
+
+- **WP-82 (first slice):** `bosun_checks::components` reads the `Server`, `X-Powered-By`, `X-AspNet-Version` and
+  `X-Generator` headers, framework cookie names, `<meta name="generator">` and versioned `<script src>` file names from
+  every recorded flow (the passive scanner runs it with the other checks) and raises `technology-fingerprint` (Info; a
+  disclosed version is CWE-200) and, per advisory that covers the version, `vulnerable-component` (the advisory's own
+  severity, Tentative, with a note that a package may have back-ported the fix). `bosun_checks::advisory` holds the
+  OSV-style database (introduced, fixed, last affected) and the offline feed: a JSON file with a detached Ed25519
+  signature over its exact bytes, verified with `ring` against keys the admin trusts, content-checked (sizes, product
+  names, severities, numeric versions, `http(s)` links only) and ordered by `sequence`, so an old validly signed feed
+  cannot be put back. A small database ships with the program (Apache 2.4.49/2.4.50, nginx before 1.20.1, PHP-FPM
+  RCE branches); a loaded feed replaces it. `GET /advisories`, `PUT /advisories/trust`, `POST/DELETE /advisories/feed`
+  (admin to change, audited, refusals too); the stored feed is verified again at every load, so changing the keys or
+  editing the project file by hand cannot make an unsigned feed count. Loading a feed queues a rescan of the recorded
+  traffic. `bosun advisory keygen|sign` make keys and signatures (a feed the engine would refuse is not signed). Fuzz
+  target `advisory_feed`. No request ever leaves the machine for a lookup. Left: see the roadmap row.
+
 ## Content and parameter discovery (branch `wp-43`, 2026-11-27)
 
 - **WP-81 (first slice):** `bosun-discover` (paths below a directory, with optional extensions and recursion into the

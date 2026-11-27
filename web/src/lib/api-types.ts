@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+    "/advisories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Which advisory database the passive scanner matches detected component versions against: the small built-in one or a loaded feed, with its sequence, date, size and the public keys that may sign a feed. */
+        get: operations["advisories_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/advisories/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Load an offline advisory feed: the file as text and its detached Ed25519 signature (base64). It is accepted only when the signature verifies under a trusted key and its sequence is higher than the database in force; it then replaces the built-in advisories and, by default, every recorded flow is queued for the scanner again. Nothing is fetched from a third party. Needs the admin role; audited (refusals too). */
+        post: operations["advisories_load_feed"];
+        /** @description Drop the loaded feed and go back to the built-in advisories. Needs the admin role; audited. */
+        delete: operations["advisories_reset"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/advisories/trust": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Set the Ed25519 public keys (base64, 32 bytes each, at most 5) that may sign an advisory feed. An empty list means no feed can be loaded. Needs the admin role; audited. */
+        put: operations["advisories_trust"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analysis": {
         parameters: {
             query?: never;
@@ -1845,6 +1897,34 @@ export interface components {
         AddedCount: {
             /** Format: int64 */
             added: number;
+        };
+        AdvisoryFeedBody: {
+            /** @description The feed file, as text: exactly the bytes that were signed. */
+            feed: string;
+            /** @description Queue every recorded flow for the scanner again, so the new advisories apply to recorded traffic (default true). */
+            rescan?: boolean | null;
+            /** @description The detached Ed25519 signature over those bytes, base64. */
+            signature: string;
+        };
+        AdvisoryStatus: {
+            advisories: number;
+            /** @description When the database was made, `YYYY-MM-DD`. */
+            generated: string;
+            /**
+             * Format: int64
+             * @description When the feed was loaded (milliseconds), if one is.
+             */
+            loaded_ms?: number | null;
+            /** Format: int64 */
+            sequence: number;
+            /** @description `bundled` (the small database that ships with the program) or `feed`. */
+            source: string;
+            /** @description Public keys (base64 Ed25519) that may sign a feed. */
+            trusted_keys: string[];
+        };
+        AdvisoryTrustBody: {
+            /** @description Base64 Ed25519 public keys (32 bytes each), at most 5. An empty list means no feed can be loaded. */
+            keys: string[];
         };
         Analysis: {
             /** @description Bit positions off one half beyond chance, and how many bit positions there are. */
@@ -4018,6 +4098,198 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    advisories_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdvisoryStatus"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    advisories_load_feed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdvisoryFeedBody"];
+            };
+        };
+        responses: {
+            /** @description Loaded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdvisoryStatus"];
+                };
+            };
+            /** @description Not a valid feed or signature */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The sequence is not higher than the one in force */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No trusted key, or the signature does not verify */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    advisories_reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    advisories_trust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdvisoryTrustBody"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A key is not valid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     host_analysis: {
         parameters: {
             query: {

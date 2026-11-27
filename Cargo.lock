@@ -607,6 +607,7 @@ dependencies = [
  "base64 0.23.1",
  "bosun-api",
  "bosun-ca",
+ "bosun-checks",
  "bosun-client",
  "bosun-codec",
  "bosun-import",
@@ -621,6 +622,7 @@ dependencies = [
  "clap_mangen",
  "keyring",
  "reqwest 0.12.28",
+ "ring",
  "rpassword",
  "serde",
  "serde_json",
@@ -696,6 +698,7 @@ dependencies = [
  "rcgen",
  "regex",
  "reqwest 0.12.28",
+ "ring",
  "rsa",
  "rusqlite",
  "rust-embed",
@@ -759,10 +762,13 @@ dependencies = [
  "bosun-store",
  "hmac 0.13.0",
  "regex",
+ "ring",
  "serde",
  "serde-saphyr",
  "serde_json",
  "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

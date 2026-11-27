@@ -92,8 +92,39 @@ impl Custom {
     }
 }
 
+/// The advisory database in force, reloaded when the stored feed or the trusted keys change.
+#[derive(Default)]
+struct Advisories {
+    stamp: Option<(Option<String>, Vec<String>)>,
+    db: Option<bosun_checks::advisory::AdvisoryDb>,
+}
+
+impl Advisories {
+    fn get(&mut self, p: &Project) -> &bosun_checks::advisory::AdvisoryDb {
+        use bosun_checks::advisory;
+        let now = (
+            advisory::stored(p).map(|s| s.signature),
+            advisory::trusted_keys(p),
+        );
+        if self.db.is_none() || self.stamp.as_ref() != Some(&now) {
+            self.db = Some(advisory::load(p));
+            self.stamp = Some(now);
+        }
+        self.db
+            .get_or_insert_with(|| advisory::AdvisoryDb::bundled().clone())
+    }
+}
+
+struct Context {
+    custom: Custom,
+    advisories: Advisories,
+}
+
 fn run(project: &Weak<Project>, stop: &AtomicBool, changed: &dyn Fn()) {
-    let mut custom = Custom::default();
+    let mut custom = Context {
+        custom: Custom::default(),
+        advisories: Advisories::default(),
+    };
     let mut worked = false;
     while !stop.load(Ordering::Relaxed) {
         let Some(p) = project.upgrade() else { return };
@@ -123,17 +154,22 @@ fn run(project: &Weak<Project>, stop: &AtomicBool, changed: &dyn Fn()) {
 }
 
 /// Read one batch. Returns how many flows it covered and whether any issue was found in them.
-fn step(p: &Project, custom: &mut Custom) -> Result<(usize, bool), bosun_store::StoreError> {
+fn step(p: &Project, ctx: &mut Context) -> Result<(usize, bool), bosun_store::StoreError> {
     let ids = p.scan_pending(BATCH)?;
     let now = now_ms();
-    let custom = custom.get(p);
+    let custom = ctx.custom.get(p);
+    let db = ctx.advisories.get(p);
     let mut found = Vec::new();
     for id in &ids {
         // A flow that cannot be read (deleted meanwhile, damaged) or that trips a rule is skipped, not retried
         // forever.
         match p.get_flow(*id) {
             Ok(Some(f)) => {
-                match std::panic::catch_unwind(AssertUnwindSafe(|| scan_flow_with(&f, now, custom))) {
+                match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    let mut v = scan_flow_with(&f, now, custom);
+                    v.extend(bosun_checks::components::scan_flow(&f, now, db));
+                    v
+                })) {
                     Ok(v) => found.extend(v),
                     Err(_) => tracing::error!(flow = id, "a passive rule panicked"),
                 }
@@ -212,9 +248,10 @@ mod tests {
             let _s = Scanner::start(&p);
             wait_until_read(&p);
             let issues = p.issues(&IssueFilter::default()).unwrap();
-            // Hundreds of identical sightings are one issue per rule and origin.
+            // Hundreds of identical sightings are one issue per rule and origin (the nginx banner adds a
+            // fingerprint and the advisory for its version).
             let rules: Vec<_> = issues.iter().map(|i| i.rule.as_str()).collect();
-            assert_eq!(rules.len(), 3, "{rules:?}");
+            assert_eq!(rules.len(), 5, "{rules:?}");
             assert!(issues.iter().all(|i| i.count == 600 && i.flow_id.is_some()));
             // New traffic is picked up too, and a status set by the user is kept.
             let id = issues[0].id;
@@ -224,14 +261,14 @@ mod tests {
             );
             p.write_batch(&[flow(&p, "b.test", "/x")], &[]).unwrap();
             wait_until_read(&p);
-            assert_eq!(p.issues(&IssueFilter::default()).unwrap().len(), 6);
+            assert_eq!(p.issues(&IssueFilter::default()).unwrap().len(), 10);
             p.write_batch(&[flow(&p, "a.test", "/again")], &[]).unwrap();
             wait_until_read(&p);
         }
         let p = Arc::new(Project::open(&path).unwrap());
         let _s = Scanner::start(&p);
         let issues = p.issues(&IssueFilter::default()).unwrap();
-        assert_eq!(issues.len(), 6);
+        assert_eq!(issues.len(), 10);
         assert!(
             issues
                 .iter()

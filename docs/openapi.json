@@ -10,6 +10,214 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/advisories": {
+      "get": {
+        "tags": [
+          "advisories"
+        ],
+        "description": "Which advisory database the passive scanner matches detected component versions against: the small built-in one or a loaded feed, with its sequence, date, size and the public keys that may sign a feed.",
+        "operationId": "advisories_status",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvisoryStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/advisories/feed": {
+      "post": {
+        "tags": [
+          "advisories"
+        ],
+        "description": "Load an offline advisory feed: the file as text and its detached Ed25519 signature (base64). It is accepted only when the signature verifies under a trusted key and its sequence is higher than the database in force; it then replaces the built-in advisories and, by default, every recorded flow is queued for the scanner again. Nothing is fetched from a third party. Needs the admin role; audited (refusals too).",
+        "operationId": "advisories_load_feed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvisoryFeedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Loaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvisoryStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a valid feed or signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The sequence is not higher than the one in force",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No trusted key, or the signature does not verify",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "advisories"
+        ],
+        "description": "Drop the loaded feed and go back to the built-in advisories. Needs the admin role; audited.",
+        "operationId": "advisories_reset",
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/advisories/trust": {
+      "put": {
+        "tags": [
+          "advisories"
+        ],
+        "description": "Set the Ed25519 public keys (base64, 32 bytes each, at most 5) that may sign an advisory feed. An empty list means no feed can be loaded. Needs the admin role; audited.",
+        "operationId": "advisories_trust",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvisoryTrustBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Saved"
+          },
+          "400": {
+            "description": "A key is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/analysis": {
       "get": {
         "tags": [
@@ -9405,6 +9613,89 @@
           }
         }
       },
+      "AdvisoryFeedBody": {
+        "type": "object",
+        "required": [
+          "feed",
+          "signature"
+        ],
+        "properties": {
+          "feed": {
+            "type": "string",
+            "description": "The feed file, as text: exactly the bytes that were signed."
+          },
+          "rescan": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Queue every recorded flow for the scanner again, so the new advisories apply to recorded traffic (default true)."
+          },
+          "signature": {
+            "type": "string",
+            "description": "The detached Ed25519 signature over those bytes, base64."
+          }
+        }
+      },
+      "AdvisoryStatus": {
+        "type": "object",
+        "required": [
+          "source",
+          "sequence",
+          "generated",
+          "advisories",
+          "trusted_keys"
+        ],
+        "properties": {
+          "advisories": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "generated": {
+            "type": "string",
+            "description": "When the database was made, `YYYY-MM-DD`."
+          },
+          "loaded_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the feed was loaded (milliseconds), if one is."
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string",
+            "description": "`bundled` (the small database that ships with the program) or `feed`."
+          },
+          "trusted_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Public keys (base64 Ed25519) that may sign a feed."
+          }
+        }
+      },
+      "AdvisoryTrustBody": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Base64 Ed25519 public keys (32 bytes each), at most 5. An empty list means no feed can be loaded."
+          }
+        }
+      },
       "Analysis": {
         "type": "object",
         "required": [
@@ -16301,6 +16592,9 @@
     },
     {
       "name": "discover"
+    },
+    {
+      "name": "advisories"
     },
     {
       "name": "scan"

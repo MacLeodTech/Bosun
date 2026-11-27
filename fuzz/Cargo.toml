@@ -144,3 +144,10 @@ path = "fuzz_targets/client_cert.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "advisory_feed"
+path = "fuzz_targets/advisory_feed.rs"
+test = false
+doc = false
+bench = false

@@ -10,6 +10,7 @@ use bosun_store::{AppDb, Role};
 use clap::{CommandFactory, Parser, Subcommand};
 
 mod admin_cmd;
+mod advisory_cmd;
 mod banner;
 mod client_cmd;
 mod client_data;
@@ -85,6 +86,12 @@ enum Cmd {
     },
     /// Show the audit log.
     Audit(admin_cmd::AuditArgs),
+    /// Make keys for, and sign, an advisory feed (needs no engine). Load a feed with `PUT /advisories/trust` and
+    /// `POST /advisories/feed`.
+    Advisory {
+        #[command(subcommand)]
+        cmd: AdvisoryCmd,
+    },
     /// Print a shell completion script.
     Completions { shell: clap_complete::Shell },
     /// Write man pages (bosun.1 and one per subcommand) to a directory.
@@ -516,6 +523,14 @@ enum KeyCmd {
         #[arg(long, value_parser = ["file", "keychain"])]
         to: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum AdvisoryCmd {
+    /// Make an Ed25519 key pair: the private key goes to a new file (owner-only), the public key is printed.
+    Keygen { out: PathBuf },
+    /// Print the base64 detached signature of a feed file (the feed is checked first).
+    Sign { key: PathBuf, feed: PathBuf },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1025,6 +1040,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Project { cmd } => return admin_cmd::project(&paths, cmd),
         Cmd::Token { cmd } => return admin_cmd::token(&paths, cmd),
         Cmd::Audit(a) => return admin_cmd::audit_log(&paths, a),
+        Cmd::Advisory { cmd } => match cmd {
+            AdvisoryCmd::Keygen { out } => println!("{}", advisory_cmd::keygen(&out)?),
+            AdvisoryCmd::Sign { key, feed } => println!("{}", advisory_cmd::sign(&key, &feed)?),
+        },
         Cmd::Completions { shell } => return admin_cmd::completions(shell, Cli::command()),
         Cmd::Man { out } => return admin_cmd::man_pages(Cli::command(), &out),
         Cmd::ExampleConfig => print!("{}", include_str!("../../../bosun.toml.example")),

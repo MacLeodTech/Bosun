@@ -67,6 +67,7 @@ rsa = { version = "0.9", features = ["sha2"] }
 sha2.workspace = true
 flate2.workspace = true
 bosun-testbed = { path = "../bosun-testbed" }
+ring.workspace = true
 
 [lints]
 workspace = true

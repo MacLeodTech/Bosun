@@ -839,6 +839,39 @@ impl Client {
             .await
     }
 
+    /// The advisory database in force (built-in or a loaded feed), with the trusted feed keys.
+    pub async fn advisories_status(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/advisories")).await
+    }
+
+    /// Set the public keys (base64 Ed25519) that may sign an advisory feed.
+    pub async fn advisories_trust(&self, keys: &[String]) -> Result<()> {
+        self.unit(
+            self.req(Method::PUT, "/advisories/trust")
+                .json(&serde_json::json!({ "keys": keys })),
+        )
+        .await
+    }
+
+    /// Load a signed advisory feed (`feed` is the file's text, `signature` the base64 detached signature).
+    pub async fn advisories_load_feed(
+        &self,
+        feed: &str,
+        signature: &str,
+        rescan: bool,
+    ) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/advisories/feed")
+                .json(&serde_json::json!({ "feed": feed, "signature": signature, "rescan": rescan })),
+        )
+        .await
+    }
+
+    /// Drop the loaded feed and go back to the built-in advisories.
+    pub async fn advisories_reset(&self) -> Result<()> {
+        self.unit(self.req(Method::DELETE, "/advisories/feed")).await
+    }
+
     /// The authorisation matrix: replay recorded flows as each account and as nobody. `body` is the `MatrixBody` of
     /// the API: `identities`, `probes` and optionally `options` and `save_issues`. Returns `rows`, `findings` and
     /// `issues_saved`.

@@ -6,6 +6,7 @@
 // Handlers return `Result<Response, Response>` (axum's idiom); the error side is a whole response by design.
 #![allow(clippy::result_large_err)]
 
+pub mod advisories;
 pub mod auth;
 pub mod authmatrix;
 pub mod browser;
@@ -502,6 +503,12 @@ pub fn router(st: AppState) -> Router {
         .route("/crawl/crawls", get(crawl::list).post(crawl::start))
         .route("/crawl/crawls/{id}", get(crawl::get))
         .route("/crawl/crawls/{id}/stop", post(crawl::stop))
+        .route("/advisories", get(advisories::get))
+        .route("/advisories/trust", put(advisories::put_trust))
+        .route(
+            "/advisories/feed",
+            post(advisories::post_feed).delete(advisories::delete_feed),
+        )
         .route("/discover/runs", get(discover::list).post(discover::start))
         .route("/discover/runs/{id}", get(discover::get))
         .route("/discover/runs/{id}/stop", post(discover::stop))

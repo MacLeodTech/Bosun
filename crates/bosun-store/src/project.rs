@@ -1346,6 +1346,14 @@ impl Project {
         Ok(())
     }
 
+    /// Remove a setting (nothing happens when it is not set).
+    pub fn delete_setting(&self, key: &str) -> Result<(), StoreError> {
+        self.db
+            .write()
+            .execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
     pub fn flow_count(&self) -> Result<i64, StoreError> {
         Ok(self
             .db

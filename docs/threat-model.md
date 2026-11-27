@@ -211,6 +211,16 @@ This document says what is protected, from whom, and how. Code comments refer ba
   returned, logged or written to the audit entry (it holds counts only). A secret with a line break is refused, so a
   vault value cannot inject headers. The replayed requests are recorded as flows like any Repeater send. With `save_issues` the findings become issues that
   point at the probe's recorded flow; they hold labels and account names, no credentials.
+- *Advisory feeds (WP-82).* A feed changes what the scanner reports, so it is accepted only with a valid Ed25519
+  signature from a key the admin trusts; the keys and the feed are admin-only and audited (a refused feed is audited
+  too). The stored feed is verified again every time it is loaded, so editing the project file or changing the
+  trusted keys cannot make an unsigned feed count (the scanner falls back to the built-in advisories). `sequence`
+  must rise, so an old signed feed (one that lacks a later advisory) cannot be put back. The content is checked before
+  use: sizes, lowercase product names, known severities, numeric versions and `http(s)` links only (a reference is shown
+  as text, never as a script URL). Nothing is fetched: there is no automatic update and no lookup to a third party. A
+  feed signer is trusted to publish honest advisories; a bad one could hide a vulnerability, which is why the keys are
+  an explicit, audited choice. Versions come from banners, which the target controls: a target can claim any version, so
+  the findings are Tentative.
 - *Content and parameter discovery (WP-81).* Wordlist runs can send thousands of requests, so every one goes through
   `Gate::check` (scope, kill switch, per-host rate limit), the run is capped (`max_requests`, 200000 at most; words
   at most 100000; two runs at once), and a refused request ends the run instead of being asked again for every word.

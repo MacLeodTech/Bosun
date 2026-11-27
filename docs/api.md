@@ -84,6 +84,20 @@ probed and whether `max_requests` cut it short; `POST .../stop` throws the stop 
 scope gate and the per-host rate limit; a refused request ends the run (`failed`, with the reason). Only hits are
 recorded as flows. 400 (bad URL, mode, word or header), 429 (two runs already going).
 
+## Known-vulnerable components
+
+The passive scanner fingerprints servers, frameworks and libraries (`technology-fingerprint`, Info) and matches the
+versions it finds against an offline advisory database (`vulnerable-component`). `GET /advisories` (viewer) says which
+database is in force: `bundled` (a small one that ships with the program) or `feed`. A feed is a JSON file
+(`schema` 1, `sequence`, `generated`, `advisories` with `id`, `product`, `summary`, `severity`, `ranges` of
+`introduced`/`fixed`/`last_affected`, `cwe`, `references`) and a detached Ed25519 signature over its exact bytes.
+`PUT /advisories/trust` (admin) sets the base64 public keys that may sign one (at most 5); `POST /advisories/feed`
+(admin) takes `{feed, signature, rescan}` (the feed as text; at most about 2 MiB over the API) and loads it only when
+the signature verifies under a trusted key and its `sequence` is higher than the database in force (422: no key or
+no match; 409: not newer; 400: not a valid feed). A loaded feed replaces the built-in advisories, and by default the
+recorded traffic is scanned again. `DELETE /advisories/feed` goes back to the built-in ones. `bosun advisory keygen
+<file>` and `bosun advisory sign <key> <feed>` make the keys and the signature.
+
 ## The authorisation matrix
 
 `POST /auth-matrix` (tester; audited as `authmatrix.run`) replays recorded flows as each given account and as nobody,

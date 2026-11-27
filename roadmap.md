@@ -362,9 +362,13 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Do:**
   - Store header blocks and bodies separately and deduplicate bodies only. Count references to blobs, or clean
     them up in the background.
+    - **Done:** migration 12. New flows keep each head, compressed, on the flow's row and only the body in
+      `blobs`, shared by hash; `blobs.refs` counts holders, so `delete_flows` touches only the deleted flows'
+      blobs. Flows written earlier keep their whole-message blob and still read (no rewrite of old data, so the
+      migration is instant). Not done: repacking old flows into the split layout.
   - Write the v1-to-v2 migration with the framework from WP-35, tested on a real v1 file.
   - Indexes for host search (for example a reversed-host column) and extensions (an `ext` column).
-    - **Done:** `ext` (migration 11, a generated column with an index). **Open:** host search; `host:` means "contains", which no index can serve. Decide: keep it, or match the host and its subdomains through a reversed-host index.
+    - **Done:** `ext` (migration 11, a generated column with an index). **Open:** host search; `host:` means "contains", which no index can serve. Decided: keep "contains", no index.
   - Criterion benchmarks at 1 million flows, tracked in CI as part of the footprint budgets.
 - **Done when:** a v1 project migrates, the benchmarks run in CI, and the measured storage saving is noted here.
 

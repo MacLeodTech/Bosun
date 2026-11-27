@@ -474,6 +474,29 @@ const MIGRATIONS: &[migrate::Migration] = &[
             CREATE INDEX flows_ext ON flows(ext);
         "#,
     },
+    migrate::Migration {
+        version: 12,
+        rebuild: false,
+        what: "heads kept on the flow, bodies shared and counted",
+        // New flows keep each message's head on their own row and only the body in `blobs`, so identical bodies
+        // are stored once whatever their headers say. A flow written before this has no head column value and its
+        // blob is the whole message, which still reads. `refs` counts the flow columns that hold a blob, so a
+        // delete touches only the blobs of the flows it removes.
+        sql: r#"
+            ALTER TABLE flows ADD COLUMN req_head BLOB;
+            ALTER TABLE flows ADD COLUMN orig_req_head BLOB;
+            ALTER TABLE flows ADD COLUMN resp_head BLOB;
+            ALTER TABLE flows ADD COLUMN orig_resp_head BLOB;
+            ALTER TABLE blobs ADD COLUMN refs INTEGER NOT NULL DEFAULT 0;
+            WITH held(h) AS (
+                SELECT req_blob FROM flows
+                UNION ALL SELECT orig_req_blob FROM flows WHERE orig_req_blob IS NOT NULL
+                UNION ALL SELECT resp_blob FROM flows WHERE resp_blob IS NOT NULL
+                UNION ALL SELECT orig_resp_blob FROM flows WHERE orig_resp_blob IS NOT NULL
+            ), counted(h, n) AS (SELECT h, count(*) FROM held GROUP BY h)
+            UPDATE blobs SET refs = counted.n FROM counted WHERE blobs.hash = counted.h;
+        "#,
+    },
 ];
 
 /// The schema objects in a database as (type, name, sql), ignoring SQLite's own bookkeeping tables.
@@ -779,7 +802,7 @@ impl Project {
         let mut conn = self.db.write();
         let tx = conn.transaction()?;
         for (f, p) in flows.iter().zip(&prepared) {
-            for b in [
+            for m in [
                 Some(&p.req),
                 p.orig_req.as_ref(),
                 p.resp.as_ref(),
@@ -788,21 +811,30 @@ impl Project {
             .into_iter()
             .flatten()
             {
-                insert_blob(&tx, b)?;
+                insert_blob(&tx, &m.body)?;
             }
+            let hash = |m: Option<&PreparedMsg>| m.map(|m| m.body.hash.clone());
+            let head = |m: Option<&PreparedMsg>| m.map(|m| m.head.clone());
             let (req, orig_req, resp, orig_resp) = (
-                &p.req.hash,
-                p.orig_req.as_ref().map(|b| &b.hash),
-                p.resp.as_ref().map(|b| &b.hash),
-                p.orig_resp.as_ref().map(|b| &b.hash),
+                &p.req.body.hash,
+                hash(p.orig_req.as_ref()),
+                hash(p.resp.as_ref()),
+                hash(p.orig_resp.as_ref()),
+            );
+            let (req_head, orig_req_head, resp_head, orig_resp_head) = (
+                &p.req.head,
+                head(p.orig_req.as_ref()),
+                head(p.resp.as_ref()),
+                head(p.orig_resp.as_ref()),
             );
             let mime = &p.mime;
             tx.execute(
                 "INSERT INTO flows (id, source, started_ms, duration_ms, scheme, host, port, method, path,
                     base_path, http_version, status, request_len, response_len, mime, in_scope, edited, error,
-                    req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated, ttfb_ms)
+                    req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated, ttfb_ms,
+                    req_head, orig_req_head, resp_head, orig_resp_head)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-                    ?20, ?21, ?22, ?23, ?24)",
+                    ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
                 params![
                     f.id,
                     f.source.as_str(),
@@ -828,6 +860,10 @@ impl Project {
                     orig_resp,
                     f.response_truncated,
                     f.ttfb_ms,
+                    req_head,
+                    orig_req_head,
+                    resp_head,
+                    orig_resp_head,
                 ],
             )?;
             tx.execute(
@@ -982,29 +1018,22 @@ impl Project {
 
     pub fn get_flow(&self, id: FlowId) -> Result<Option<FlowDetail>, StoreError> {
         let conn = self.db.read()?;
-        let sql = format!(
-            "SELECT {SUMMARY_COLS}, req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated
-             FROM flows WHERE id = ?1"
-        );
+        let sql = format!("SELECT {SUMMARY_COLS}, {MSG_COLS}, resp_truncated FROM flows WHERE id = ?1");
         let row = conn
             .query_row(&sql, [id], |r| {
-                Ok((
-                    summary_from_row(r)?,
-                    r.get::<_, Vec<u8>>(20)?,
-                    r.get::<_, Option<Vec<u8>>>(21)?,
-                    r.get::<_, Option<Vec<u8>>>(22)?,
-                    r.get::<_, Option<Vec<u8>>>(23)?,
-                    r.get::<_, bool>(24)?,
-                ))
+                Ok((summary_from_row(r)?, msg_refs(r, 20)?, r.get::<_, bool>(28)?))
             })
             .optional()?;
-        let Some((summary, req, orig_req, resp, orig_resp, truncated)) = row else {
+        let Some((summary, [req, orig_req, resp, orig_resp], truncated)) = row else {
             return Ok(None);
         };
-        let get = |h: Option<Vec<u8>>| h.map(|h| get_blob(&conn, &h)).transpose();
+        let get = |m: Option<MsgRef>| m.map(|m| get_message(&conn, &m)).transpose();
         Ok(Some(FlowDetail {
             summary,
-            request: get_blob(&conn, &req)?,
+            request: get_message(
+                &conn,
+                &req.ok_or_else(|| StoreError::Untrusted("a flow has no request".into()))?,
+            )?,
             original_request: get(orig_req)?,
             response: get(resp)?,
             original_response: get(orig_resp)?,
@@ -1177,15 +1206,26 @@ impl Project {
                 "UPDATE issues SET flow_id = NULL, evidence = '[]' WHERE flow_id = ?1",
                 [id],
             )?;
+            let hashes: Vec<Vec<u8>> = tx
+                .query_row(
+                    "SELECT req_blob, orig_req_blob, resp_blob, orig_resp_blob FROM flows WHERE id = ?1",
+                    [id],
+                    |r| {
+                        Ok([r.get::<_, Option<Vec<u8>>>(0)?, r.get(1)?, r.get(2)?, r.get(3)?]
+                            .into_iter()
+                            .flatten()
+                            .collect())
+                    },
+                )
+                .optional()?
+                .unwrap_or_default();
             n += tx.execute("DELETE FROM flows WHERE id = ?1", [id])?;
+            // Each body counts the flows that hold it, so only the ones this flow held are looked at.
+            for h in hashes {
+                tx.execute("UPDATE blobs SET refs = refs - 1 WHERE hash = ?1", [&h])?;
+                tx.execute("DELETE FROM blobs WHERE hash = ?1 AND refs <= 0", [&h])?;
+            }
         }
-        tx.execute(
-            "DELETE FROM blobs WHERE hash NOT IN (
-                SELECT req_blob FROM flows UNION SELECT orig_req_blob FROM flows WHERE orig_req_blob IS NOT NULL
-                UNION SELECT resp_blob FROM flows WHERE resp_blob IS NOT NULL
-                UNION SELECT orig_resp_blob FROM flows WHERE orig_resp_blob IS NOT NULL)",
-            [],
-        )?;
         tx.commit()?;
         Ok(n)
     }
@@ -1373,18 +1413,40 @@ fn prepare_blob(data: &[u8]) -> Result<PreparedBlob, StoreError> {
 
 fn insert_blob(tx: &rusqlite::Transaction<'_>, b: &PreparedBlob) -> Result<(), StoreError> {
     tx.execute(
-        "INSERT OR IGNORE INTO blobs (hash, size, data) VALUES (?1, ?2, ?3)",
+        "INSERT INTO blobs (hash, size, data, refs) VALUES (?1, ?2, ?3, 1)
+         ON CONFLICT(hash) DO UPDATE SET refs = refs + 1",
         params![b.hash, b.size, b.data],
     )?;
     Ok(())
 }
 
+/// A message split in two: its head (compressed, kept on the flow's own row) and its body (a shared blob, so the
+/// same script or image on many flows is stored once).
+struct PreparedMsg {
+    head: Vec<u8>,
+    body: PreparedBlob,
+}
+
+fn prepare_msg(data: &[u8]) -> Result<PreparedMsg, StoreError> {
+    let (head, body) = data.split_at(split_at(data));
+    Ok(PreparedMsg {
+        head: zstd::encode_all(head, 3).map_err(StoreError::Compress)?,
+        body: prepare_blob(body)?,
+    })
+}
+
+/// Where a message's head ends. The same rule [`Message::head`] applies to messages stored whole.
+fn split_at(data: &[u8]) -> usize {
+    let window = &data[..data.len().min(MAX_HEAD)];
+    head_end(window).unwrap_or(window.len())
+}
+
 /// Everything about a flow that does not need the database to work out.
 struct PreparedFlow {
-    req: PreparedBlob,
-    orig_req: Option<PreparedBlob>,
-    resp: Option<PreparedBlob>,
-    orig_resp: Option<PreparedBlob>,
+    req: PreparedMsg,
+    orig_req: Option<PreparedMsg>,
+    resp: Option<PreparedMsg>,
+    orig_resp: Option<PreparedMsg>,
     mime: Option<String>,
     text: String,
 }
@@ -1402,22 +1464,59 @@ fn prepare_flow(f: &NewFlow) -> Result<PreparedFlow, StoreError> {
         })
     });
     Ok(PreparedFlow {
-        req: prepare_blob(&f.request)?,
-        orig_req: f.original_request.as_deref().map(prepare_blob).transpose()?,
-        resp: f.response.as_deref().map(prepare_blob).transpose()?,
-        orig_resp: f.original_response.as_deref().map(prepare_blob).transpose()?,
+        req: prepare_msg(&f.request)?,
+        orig_req: f.original_request.as_deref().map(prepare_msg).transpose()?,
+        resp: f.response.as_deref().map(prepare_msg).transpose()?,
+        orig_resp: f.original_response.as_deref().map(prepare_msg).transpose()?,
         mime,
         text: index_text(f, parsed_resp.as_ref()),
     })
 }
 
-fn get_blob(conn: &Connection, hash: &[u8]) -> Result<Vec<u8>, StoreError> {
+/// The columns that say where each of a flow's four messages is: the body's hash, then the head (absent on a
+/// flow stored before migration 12, whose blob is the whole message).
+const MSG_COLS: &str =
+    "req_blob, req_head, orig_req_blob, orig_req_head, resp_blob, resp_head, orig_resp_blob, orig_resp_head";
+
+/// A message's body hash and head, as the columns hold them.
+type MsgCols = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+struct MsgRef {
+    blob: Vec<u8>,
+    head: Option<Vec<u8>>,
+}
+
+/// Read the four messages' columns, in request, original request, response, original response order.
+fn msg_refs(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<[Option<MsgRef>; 4]> {
+    let one = |i: usize| -> rusqlite::Result<Option<MsgRef>> {
+        let blob: Option<Vec<u8>> = r.get(at + 2 * i)?;
+        match blob {
+            Some(blob) => Ok(Some(MsgRef {
+                blob,
+                head: r.get(at + 2 * i + 1)?,
+            })),
+            None => Ok(None),
+        }
+    };
+    Ok([one(0)?, one(1)?, one(2)?, one(3)?])
+}
+
+fn get_message(conn: &Connection, m: &MsgRef) -> Result<Vec<u8>, StoreError> {
     let (size, data): (i64, Vec<u8>) =
-        conn.query_row("SELECT size, data FROM blobs WHERE hash = ?1", [hash], |r| {
+        conn.query_row("SELECT size, data FROM blobs WHERE hash = ?1", [&m.blob], |r| {
             Ok((r.get(0)?, r.get(1)?))
         })?;
     let size = u64::try_from(size).map_err(|_| StoreError::Untrusted("negative blob size".into()))?;
-    bounded_decode(&data, MAX_BLOB, Some(size))
+    let mut out = match &m.head {
+        Some(h) => bounded_decode(h, MAX_HEAD as u64, None)?,
+        None => Vec::new(),
+    };
+    out.extend(bounded_decode(
+        &data,
+        MAX_BLOB.saturating_sub(out.len() as u64),
+        Some(size),
+    )?);
+    Ok(out)
 }
 
 // ---- Reading messages in pieces -----------------------------------------------------------------------------
@@ -1439,6 +1538,8 @@ pub enum Which {
 pub struct Message<'a> {
     conn: &'a Connection,
     rowid: i64,
+    /// The decoded head, for a message stored as head and body. `None` for one stored whole.
+    head: Option<Vec<u8>>,
     /// Bytes in the whole message (head and body), as recorded.
     pub size: u64,
 }
@@ -1451,16 +1552,20 @@ impl Message<'_> {
             .conn
             .blob_open(rusqlite::MAIN_DB, "blobs", "data", self.rowid, true)?;
         let dec = zstd::stream::read::Decoder::new(blob).map_err(StoreError::Compress)?;
-        Ok(SizeChecked {
+        let head = self.head.as_deref().unwrap_or_default();
+        Ok(std::io::Cursor::new(head).chain(SizeChecked {
             inner: dec,
             seen: 0,
-            size: self.size,
-        })
+            size: self.size - head.len() as u64,
+        }))
     }
 
     /// The head (through its blank line) and the number of bytes it takes. Without a blank line in the first
     /// [`MAX_HEAD`] bytes, that much (or the whole message, if shorter) counts as the head.
     pub fn head(&self) -> Result<Vec<u8>, StoreError> {
+        if let Some(h) = &self.head {
+            return Ok(h.clone());
+        }
         let mut buf = Vec::new();
         self.reader()?
             .take(MAX_HEAD as u64)
@@ -1553,49 +1658,40 @@ impl Project {
         f: impl FnOnce(Option<&Message<'_>>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         let conn = self.db.read()?;
-        let col = match which {
-            Which::Request => "req_blob",
-            Which::OriginalRequest => "orig_req_blob",
-            Which::Response => "resp_blob",
-            Which::OriginalResponse => "orig_resp_blob",
+        let (blob, head) = match which {
+            Which::Request => ("req_blob", "req_head"),
+            Which::OriginalRequest => ("orig_req_blob", "orig_req_head"),
+            Which::Response => ("resp_blob", "resp_head"),
+            Which::OriginalResponse => ("orig_resp_blob", "orig_resp_head"),
         };
-        let hash: Option<Vec<u8>> = conn
-            .query_row(&format!("SELECT {col} FROM flows WHERE id = ?1"), [id], |r| {
-                r.get(0)
-            })
-            .optional()?
-            .flatten();
-        let Some(hash) = hash else {
+        let found: Option<MsgCols> = conn
+            .query_row(
+                &format!("SELECT {blob}, {head} FROM flows WHERE id = ?1"),
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((Some(hash), head)) = found else {
             return f(None);
         };
-        let msg = open_message(&conn, &hash)?;
+        let msg = open_message(&conn, &MsgRef { blob: hash, head })?;
         f(Some(&msg))
     }
 
     /// Summary, header blocks and sizes of one flow, without reading any body.
     pub fn flow_meta(&self, id: FlowId) -> Result<Option<FlowMeta>, StoreError> {
         let conn = self.db.read()?;
-        let sql = format!(
-            "SELECT {SUMMARY_COLS}, req_blob, orig_req_blob, resp_blob, orig_resp_blob, resp_truncated
-             FROM flows WHERE id = ?1"
-        );
+        let sql = format!("SELECT {SUMMARY_COLS}, {MSG_COLS}, resp_truncated FROM flows WHERE id = ?1");
         let row = conn
             .query_row(&sql, [id], |r| {
-                Ok((
-                    summary_from_row(r)?,
-                    r.get::<_, Vec<u8>>(20)?,
-                    r.get::<_, Option<Vec<u8>>>(21)?,
-                    r.get::<_, Option<Vec<u8>>>(22)?,
-                    r.get::<_, Option<Vec<u8>>>(23)?,
-                    r.get::<_, bool>(24)?,
-                ))
+                Ok((summary_from_row(r)?, msg_refs(r, 20)?, r.get::<_, bool>(28)?))
             })
             .optional()?;
-        let Some((summary, req, orig_req, resp, orig_resp, truncated)) = row else {
+        let Some((summary, [req, orig_req, resp, orig_resp], truncated)) = row else {
             return Ok(None);
         };
-        let part = |h: &[u8]| -> Result<PartInfo, StoreError> {
-            let m = open_message(&conn, h)?;
+        let part = |m: MsgRef| -> Result<PartInfo, StoreError> {
+            let m = open_message(&conn, &m)?;
             let head = m.head()?;
             Ok(PartInfo {
                 total_len: m.size,
@@ -1603,9 +1699,9 @@ impl Project {
                 head,
             })
         };
-        let opt = |h: Option<Vec<u8>>| h.map(|h| part(&h)).transpose();
+        let opt = |m: Option<MsgRef>| m.map(part).transpose();
         Ok(Some(FlowMeta {
-            request: part(&req)?,
+            request: part(req.ok_or_else(|| StoreError::Untrusted("a flow has no request".into()))?)?,
             original_request: opt(orig_req)?,
             response: opt(resp)?,
             original_response: opt(orig_resp)?,
@@ -1615,16 +1711,27 @@ impl Project {
     }
 }
 
-fn open_message<'a>(conn: &'a Connection, hash: &[u8]) -> Result<Message<'a>, StoreError> {
+fn open_message<'a>(conn: &'a Connection, m: &MsgRef) -> Result<Message<'a>, StoreError> {
     let (rowid, size): (i64, i64) =
-        conn.query_row("SELECT id, size FROM blobs WHERE hash = ?1", [hash], |r| {
+        conn.query_row("SELECT id, size FROM blobs WHERE hash = ?1", [&m.blob], |r| {
             Ok((r.get(0)?, r.get(1)?))
         })?;
+    let head = m
+        .head
+        .as_deref()
+        .map(|h| bounded_decode(h, MAX_HEAD as u64, None))
+        .transpose()?;
     let size = u64::try_from(size)
         .ok()
+        .map(|n| n + head.as_ref().map_or(0, |h| h.len() as u64))
         .filter(|n| *n <= MAX_BLOB)
         .ok_or_else(|| StoreError::Untrusted("a stored size is out of range".into()))?;
-    Ok(Message { conn, rowid, size })
+    Ok(Message {
+        conn,
+        rowid,
+        head,
+        size,
+    })
 }
 
 /// What gets indexed for search: the request (head and text body) and the response (head and decoded text
@@ -1858,7 +1965,95 @@ mod tests {
         raw(&path)
             .execute("UPDATE blobs SET data = ?1, size = 50", [short])
             .unwrap();
-        assert!(p.flow_meta(id).is_err());
+        // The head is on the flow's row, so it is the body read that notices.
+        let err = p
+            .with_message(id, Which::Response, |m| {
+                let mut sink = Vec::new();
+                m.unwrap()
+                    .reader()?
+                    .read_to_end(&mut sink)
+                    .map_err(StoreError::Compress)?;
+                Ok(sink.len())
+            })
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Compress(_)), "{err:?}");
+    }
+
+    #[test]
+    fn bodies_are_shared_across_flows_counted_and_old_flows_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.bosun");
+        let old_msg = b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nold";
+        {
+            // A v11 file whose one flow holds its response whole, as before migration 12.
+            let mut c = Connection::open(&path).unwrap();
+            c.pragma_update(None, "foreign_keys", "ON").unwrap();
+            migrate::run(&mut c, &MIGRATIONS[..11]).unwrap();
+            let req_plain = b"GET /o HTTP/1.1\r\n\r\n";
+            let req = zstd::encode_all(&req_plain[..], 3).unwrap();
+            let resp = zstd::encode_all(&old_msg[..], 3).unwrap();
+            c.execute(
+                "INSERT INTO blobs (hash, size, data) VALUES (x'01', ?1, ?2)",
+                params![req_plain.len() as i64, req],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO blobs (hash, size, data) VALUES (x'02', ?1, ?2)",
+                params![old_msg.len() as i64, resp],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO flows (id, source, started_ms, scheme, host, port, method, path, base_path,
+                    http_version, request_len, in_scope, edited, req_blob, resp_blob)
+                 VALUES (1, 'proxy', 1, 'http', 'a.test', 80, 'GET', '/o', '/o', 'HTTP/1.1', 19, 1, 0, x'01', x'02')",
+                [],
+            )
+            .unwrap();
+        }
+        let p = Project::open(&path).unwrap();
+        let blobs = |p: &Project| -> i64 {
+            p.db.read()
+                .unwrap()
+                .query_row("SELECT count(*) FROM blobs", [], |r| r.get(0))
+                .unwrap()
+        };
+        // The old flow still reads, whole and in pieces.
+        assert_eq!(p.get_flow(1).unwrap().unwrap().response.unwrap(), old_msg);
+        let meta = p.flow_meta(1).unwrap().unwrap();
+        assert_eq!(meta.response.unwrap().body_len, 3);
+        // Two new flows with different headers and the same body keep that body once.
+        let body = "same script ".repeat(50);
+        let (a, b) = (
+            flow(&p, "a.test", "/a.js", 200, &body),
+            flow(&p, "b.test", "/b.js", 200, &body),
+        );
+        let (ia, ib) = (a.id, b.id);
+        let before = blobs(&p);
+        p.write_batch(&[a.clone(), b.clone()], &[]).unwrap();
+        // The empty request body is shared too: one new blob for the response body, one for the empty request body.
+        assert_eq!(blobs(&p), before + 2);
+        let got = p.get_flow(ib).unwrap().unwrap();
+        assert_eq!(got.response.as_deref(), b.response.as_deref());
+        assert_eq!(got.request, b.request);
+        let meta = p.flow_meta(ib).unwrap().unwrap();
+        assert_eq!(meta.response.as_ref().unwrap().body_len, body.len() as u64);
+        let head = p
+            .with_message(ib, Which::Response, |m| m.unwrap().head())
+            .unwrap();
+        assert_eq!(head, meta.response.unwrap().head);
+        assert!(head.starts_with(b"HTTP/1.1 200"));
+        // Deleting one flow keeps the shared body; deleting the last one drops it.
+        p.delete_flows(&[ia]).unwrap();
+        assert_eq!(blobs(&p), before + 2);
+        assert_eq!(
+            p.get_flow(ib).unwrap().unwrap().response.as_deref(),
+            b.response.as_deref()
+        );
+        p.delete_flows(&[ib]).unwrap();
+        assert_eq!(blobs(&p), before);
+        // Deleting the migrated flow drops its blobs, which migration 12 counted.
+        p.delete_flows(&[1]).unwrap();
+        assert_eq!(blobs(&p), 0);
     }
 
     #[test]
@@ -1869,8 +2064,15 @@ mod tests {
             let mut c = Connection::open(&path).unwrap();
             c.pragma_update(None, "foreign_keys", "ON").unwrap();
             migrate::run(&mut c, &MIGRATIONS[..10]).unwrap();
-            c.execute("INSERT INTO blobs (hash, size, data) VALUES (x'aa', 1, x'00')", []).unwrap();
-            for (i, bp) in ["/a/App.JS", "/v1.2/users", "/x.tar.gz", "/", "/noext"].iter().enumerate() {
+            c.execute(
+                "INSERT INTO blobs (hash, size, data) VALUES (x'aa', 1, x'00')",
+                [],
+            )
+            .unwrap();
+            for (i, bp) in ["/a/App.JS", "/v1.2/users", "/x.tar.gz", "/", "/noext"]
+                .iter()
+                .enumerate()
+            {
                 c.execute(
                     "INSERT INTO flows (id, source, started_ms, scheme, host, port, method, path, base_path,
                         http_version, request_len, in_scope, edited, req_blob)
@@ -1891,7 +2093,11 @@ mod tests {
             .collect();
         assert_eq!(exts, ["js", "", "gz", "", ""]);
         let plan: String = c
-            .query_row("EXPLAIN QUERY PLAN SELECT id FROM flows WHERE ext = 'js'", [], |r| r.get(3))
+            .query_row(
+                "EXPLAIN QUERY PLAN SELECT id FROM flows WHERE ext = 'js'",
+                [],
+                |r| r.get(3),
+            )
             .unwrap();
         assert!(plan.contains("flows_ext"), "{plan}");
         drop(p);

@@ -19,7 +19,7 @@ is in [docs/releases.md](docs/releases.md).
 
 - **Intercepting proxy**: HTTP/1.1 and HTTP/2, HTTPS interception with a per-install CA, WebSockets (recorded
   message by message), streaming responses (SSE, large downloads), upstream HTTP and SOCKS5 proxies, TLS
-  pass-through for pinned hosts, invisible (transparent) proxying for plain HTTP and for HTTPS (the host comes from the SNI,
+  pass-through for pinned hosts, invisible (transparent) proxying for plain HTTP and for HTTPS (the host comes from the SNI, the port from the redirect on Linux,
   port 443).
 - **Intercept**: hold requests and/or responses, edit them as raw text, forward or drop; in-scope only by default.
 - **Match and replace** on request/response first lines, headers and bodies (literal or regex).

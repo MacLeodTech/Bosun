@@ -2203,6 +2203,244 @@
         }
       }
     },
+    "/discover/runs": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "description": "The discovery runs of this run of the server, newest first, with live counts.",
+        "operationId": "discover_list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "discover"
+        ],
+        "description": "Start content or parameter discovery (forced browsing). Mode paths tries a wordlist (and optional extensions) below a directory URL and probes the directories it finds; mode params tries parameter names on one page. Before probing, random names that cannot exist are requested to learn what not found looks like, so a site that answers 200 to everything gives no hits, and many hits with the same answer are dropped as a wildcard (counted in noise). Every request goes through the scope gate and the per-host rate limit; only hits are recorded as flows (source intruder). Two runs at once. Needs the tester role or above; audited.",
+        "operationId": "discover_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The run, started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/discover/runs/{id}": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "description": "One discovery run: its state and the hits found so far (once it has ended also the directories probed, the wildcard noise dropped and whether the request limit cut it short).",
+        "operationId": "discover_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/discover/runs/{id}/stop": {
+      "post": {
+        "tags": [
+          "discover"
+        ],
+        "description": "The stop switch: no further request is sent. `stopped` is false when the run was not running. Needs the tester role or above; audited.",
+        "operationId": "discover_stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverStopReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/events": {
       "get": {
         "tags": [
@@ -10820,6 +11058,281 @@
           "server_to_client"
         ]
       },
+      "DiscoverDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DiscoverInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "results",
+              "directories",
+              "noise",
+              "truncated"
+            ],
+            "properties": {
+              "directories": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Directories probed, or the page (params). Filled when the run has ended."
+              },
+              "noise": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Hits left out because they came in a wildcard cluster.",
+                "minimum": 0
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DiscoverHit"
+                }
+              },
+              "truncated": {
+                "type": "boolean",
+                "description": "The request limit ended the run with words left."
+              }
+            }
+          }
+        ]
+      },
+      "DiscoverHit": {
+        "type": "object",
+        "required": [
+          "kind",
+          "url",
+          "word",
+          "status",
+          "bytes",
+          "words",
+          "cluster",
+          "depth"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cluster": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Hits with the same answer share a cluster number.",
+            "minimum": 0
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`path` or `param`."
+          },
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it stands out: `directory`, `reflected`, `answer differs`."
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string"
+          },
+          "word": {
+            "type": "string"
+          },
+          "words": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "DiscoverInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "base",
+          "mode",
+          "created_ms",
+          "requests",
+          "hits"
+        ],
+        "properties": {
+          "base": {
+            "type": "string"
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hits": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "description": "`paths` or `params`."
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/DiscoverState"
+          }
+        }
+      },
+      "DiscoverList": {
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoverInfo"
+            }
+          }
+        }
+      },
+      "DiscoverStartBody": {
+        "type": "object",
+        "required": [
+          "base"
+        ],
+        "properties": {
+          "base": {
+            "type": "string",
+            "description": "Paths: the directory to probe (`http://host/app/`). Params: the page whose parameters to find."
+          },
+          "concurrency": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Requests in flight at once (1 to 32, default 8).",
+            "minimum": 0
+          },
+          "delay_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The least time between two request starts, milliseconds (at most 60000).",
+            "minimum": 0
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Paths: also try each word with these endings, written without the dot (`php`, `bak`)."
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra headers for every request, each `Name: value`."
+          },
+          "max_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Paths: probe the directories found too, down to this depth (0 to 10, default 2).",
+            "minimum": 0
+          },
+          "max_requests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Most requests, the baselines included (10 to 200000, default 5000).",
+            "minimum": 0
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`paths` (default) or `params`."
+          },
+          "post": {
+            "type": "boolean",
+            "description": "Params: send the names in a `POST` body instead of the query."
+          },
+          "verify_tls": {
+            "type": "boolean"
+          },
+          "words": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names to try (at most 100000). Empty: the built-in list for the mode."
+          }
+        }
+      },
+      "DiscoverState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "done",
+          "stopped",
+          "failed"
+        ]
+      },
+      "DiscoverStopReply": {
+        "type": "object",
+        "required": [
+          "stopped"
+        ],
+        "properties": {
+          "stopped": {
+            "type": "boolean",
+            "description": "False when the run was not running."
+          }
+        }
+      },
       "EndpointStat": {
         "type": "object",
         "required": [
@@ -15785,6 +16298,9 @@
     },
     {
       "name": "crawl"
+    },
+    {
+      "name": "discover"
     },
     {
       "name": "scan"

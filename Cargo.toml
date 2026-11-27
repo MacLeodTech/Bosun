@@ -15,6 +15,7 @@ members = [
   "crates/bosun-intruder",
   "crates/bosun-auth",
   "crates/bosun-crawl",
+  "crates/bosun-discover",
   "crates/bosun-active",
   "crates/bosun-testbed",
   "crates/bosun-import",
@@ -40,6 +41,7 @@ default-members = [
   "crates/bosun-intruder",
   "crates/bosun-auth",
   "crates/bosun-crawl",
+  "crates/bosun-discover",
   "crates/bosun-active",
   "crates/bosun-testbed",
   "crates/bosun-import",
@@ -70,6 +72,7 @@ bosun-sequencer = { path = "crates/bosun-sequencer" }
 bosun-intruder = { path = "crates/bosun-intruder" }
 bosun-auth = { path = "crates/bosun-auth" }
 bosun-crawl = { path = "crates/bosun-crawl" }
+bosun-discover = { path = "crates/bosun-discover" }
 bosun-active = { path = "crates/bosun-active" }
 bosun-import = { path = "crates/bosun-import" }
 bosun-api = { path = "crates/bosun-api" }

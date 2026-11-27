@@ -815,6 +815,30 @@ impl Client {
             .await
     }
 
+    /// Start content or parameter discovery. `body` is the `DiscoverStartBody` of the API: `base`, and optionally
+    /// `mode` (`paths` or `params`), `words`, `extensions`, `max_depth`, `max_requests` and headers.
+    pub async fn discover_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/discover/runs").json(body))
+            .await
+    }
+
+    /// The discovery runs of this run of the server, newest first.
+    pub async fn discover_list(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/discover/runs")).await
+    }
+
+    /// One discovery run with its hits.
+    pub async fn discover_get(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/discover/runs/{id}")))
+            .await
+    }
+
+    /// Throw the stop switch of a discovery run.
+    pub async fn discover_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/discover/runs/{id}/stop")))
+            .await
+    }
+
     /// The authorisation matrix: replay recorded flows as each account and as nobody. `body` is the `MatrixBody` of
     /// the API: `identities`, `probes` and optionally `options` and `save_issues`. Returns `rows`, `findings` and
     /// `issues_saved`.

@@ -22,6 +22,7 @@ bosun-codec.workspace = true
 bosun-sequencer.workspace = true
 bosun-intruder.workspace = true
 bosun-crawl.workspace = true
+bosun-discover.workspace = true
 bosun-active.workspace = true
 bosun-auth.workspace = true
 bosun-import.workspace = true

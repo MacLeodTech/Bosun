@@ -211,6 +211,11 @@ This document says what is protected, from whom, and how. Code comments refer ba
   returned, logged or written to the audit entry (it holds counts only). A secret with a line break is refused, so a
   vault value cannot inject headers. The replayed requests are recorded as flows like any Repeater send. With `save_issues` the findings become issues that
   point at the probe's recorded flow; they hold labels and account names, no credentials.
+- *Content and parameter discovery (WP-81).* Wordlist runs can send thousands of requests, so every one goes through
+  `Gate::check` (scope, kill switch, per-host rate limit), the run is capped (`max_requests`, 200000 at most; words
+  at most 100000; two runs at once), and a refused request ends the run instead of being asked again for every word.
+  Words cannot hold spaces, line breaks, `#`, `?`, `&` or `=`, so a word cannot change the request line. Only hits are
+  recorded as flows. Starting and stopping are audited.
 - *Signed-in scans and crawls (WP-56).* A `session` on a scan or crawl names a login request whose body and headers may
   hold `{{vault:ID}}` placeholders. The secrets are opened on the server and appear only in the login request, which
   goes through the scope gate like every request. The login exchange is not recorded as a flow, so the password is not

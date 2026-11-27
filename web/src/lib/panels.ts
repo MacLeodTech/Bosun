@@ -9,6 +9,7 @@ import Decoder from '../pages/Decoder.svelte';
 import Comparer from '../pages/Comparer.svelte';
 import Sequencer from '../pages/Sequencer.svelte';
 import Spider from '../pages/Spider.svelte';
+import Discover from '../pages/Discover.svelte';
 import Findings from '../pages/Findings.svelte';
 import Issues from '../pages/Issues.svelte';
 import Checks from '../pages/Checks.svelte';
@@ -48,6 +49,7 @@ export const panels: PanelDef[] = [
   { id: 'comparer', title: 'Comparer', component: Comparer },
   { id: 'sequencer', title: 'Sequencer', component: Sequencer },
   { id: 'spider', title: 'Spider', component: Spider },
+  { id: 'discover', title: 'Discover content', component: Discover },
   { id: 'rules', title: 'Match & replace', component: Rules },
   { id: 'target', title: 'Target', component: Target },
   { id: 'projects', title: 'Projects', component: Projects },

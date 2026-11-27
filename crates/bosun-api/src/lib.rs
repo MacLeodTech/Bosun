@@ -14,6 +14,7 @@ pub mod child;
 pub mod clientcerts;
 pub mod codec;
 pub mod crawl;
+pub mod discover;
 pub mod engage;
 pub mod events;
 pub mod handlers;
@@ -220,6 +221,8 @@ pub struct Inner {
     pub captures: sequencer::Captures,
     /// Crawls of the spider.
     pub crawls: crawl::Crawls,
+    /// Content and parameter discovery runs.
+    pub discoveries: discover::Runs,
     /// Active scans.
     pub scans: scan::Scans,
 }
@@ -377,6 +380,7 @@ impl AppState {
             totp_required,
             captures: sequencer::Captures::default(),
             crawls: crawl::Crawls::default(),
+            discoveries: discover::Runs::default(),
             scans: scan::Scans::default(),
         };
         Ok((
@@ -498,6 +502,9 @@ pub fn router(st: AppState) -> Router {
         .route("/crawl/crawls", get(crawl::list).post(crawl::start))
         .route("/crawl/crawls/{id}", get(crawl::get))
         .route("/crawl/crawls/{id}/stop", post(crawl::stop))
+        .route("/discover/runs", get(discover::list).post(discover::start))
+        .route("/discover/runs/{id}", get(discover::get))
+        .route("/discover/runs/{id}/stop", post(discover::stop))
         .route("/scan/checks", get(scan::checks))
         .route("/scan/scans", get(scan::list).post(scan::start))
         .route("/scan/scans/{id}", get(scan::get))

@@ -34,6 +34,7 @@
 
 mod auth;
 mod extra;
+mod found;
 
 pub use extra::{STRONG_SECRET, TlsKind, jwt_hs256, start_tls};
 
@@ -506,6 +507,7 @@ fn route(rq: &Rq<'_>, st: &State, external: Option<&str>) -> Reply {
         }
         _ => auth::route(rq, st)
             .or_else(|| extra::route(rq, st))
+            .or_else(|| found::route(rq))
             .unwrap_or_else(|| Reply::new(404, "text/html", "not found")),
     }
 }

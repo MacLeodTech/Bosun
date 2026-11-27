@@ -216,7 +216,7 @@ valid in the "Depends on" column.
 | [ ] | WP-56 | `bosun-auth` and the authorisation matrix (rest: recorded browser logins, token refresh calls; a scan panel in the UI with session fields) | 6 | M | WP-54, WP-68 |
 | [ ] | WP-57 | `bosun scan` (rest: consume `scan_*` events in the client, drive a `--no-ui` engine, scope SARIF to the scan, container recipes untested in CI) | 6 | S | WP-25, WP-26, WP-51, WP-54 |
 | [ ] | WP-72 | Scanner benchmarks against ZAP | 6 | M | WP-55 |
-| [ ] | WP-81 | Content and parameter discovery | 6 | M | WP-47, WP-52 |
+| [ ] | WP-81 | Content and parameter discovery (rest: signed-in runs, a wordlist from a file or the vault, a bigger built-in list, parameter batches) | 6 | M | WP-47, WP-52 |
 | [ ] | WP-82 | Technology fingerprint and known-vulnerable components | 6 | M | WP-49, WP-69 |
 | [ ] | WP-58 | Lookout, the OAST server | 7 | L | WP-23, WP-24 |
 | [ ] | WP-59 | OAST client, payloads and checks | 7 | M | WP-58, WP-41, WP-47, WP-54 |

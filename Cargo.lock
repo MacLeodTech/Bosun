@@ -668,6 +668,7 @@ dependencies = [
  "bosun-client",
  "bosun-codec",
  "bosun-crawl",
+ "bosun-discover",
  "bosun-http",
  "bosun-import",
  "bosun-intruder",
@@ -823,6 +824,21 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "bosun-discover"
+version = "0.1.0"
+dependencies = [
+ "bosun-crawl",
+ "bosun-http",
+ "bosun-model",
+ "bosun-proxy",
+ "bosun-scope",
+ "bosun-testbed",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

@@ -72,6 +72,18 @@ only go into the login request. A failed sign-in ends the scan (state `failed`, 
 not tried again, so a wrong password cannot lock the account. At most 25 sign-ins per run. 400 for a missing vault entry,
 a bad pattern or header.
 
+## Content and parameter discovery
+
+`POST /discover/runs` (tester; audited as `discover.start`) tries a wordlist against `base`. Mode `paths` (default)
+requests each word (and each word with every entry of `extensions`) below the directory and probes the directories it
+finds down to `max_depth`; mode `params` sends each name as a parameter (`post: true` puts it in a body). `words` empty
+means the built-in list. Before probing, random names are requested to learn what "not found" looks like: a site that
+answers 200 to everything gives no hits, and many hits with the same answer (8 or more) are dropped as a wildcard and
+counted in `noise`. `GET /discover/runs/{id}` lists the `results` (status, size, `note`, `cluster`), the `directories`
+probed and whether `max_requests` cut it short; `POST .../stop` throws the stop switch. Every request goes through the
+scope gate and the per-host rate limit; a refused request ends the run (`failed`, with the reason). Only hits are
+recorded as flows. 400 (bad URL, mode, word or header), 429 (two runs already going).
+
 ## The authorisation matrix
 
 `POST /auth-matrix` (tester; audited as `authmatrix.run`) replays recorded flows as each given account and as nobody,

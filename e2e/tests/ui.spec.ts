@@ -1537,6 +1537,19 @@ test('spider: a crawl finds the linked pages, leaves the out-of-scope link alone
   expect(hist).not.toContain('/spider/post');
 });
 
+test('discover: finds the real page on a site that answers 200 to everything, and reports nothing for made-up names', async () => {
+  await page.getByRole('navigation').getByRole('button', { name: 'Discover content' }).click();
+  const dp = page.getByRole('tabpanel', { name: 'Discover content', exact: true });
+  await dp.getByLabel('Base URL').fill(`${TARGET}/spider/`);
+  await dp.getByLabel('Words').fill('a nothing-here missing');
+  await dp.getByTestId('discover-start').click();
+  await expect(dp.getByTestId('discover-state')).toContainText('Done:');
+  const hits = dp.getByTestId('discover-hits');
+  await expect(hits).toContainText(`${TARGET}/spider/a`);
+  await expect(hits).not.toContainText('nothing-here');
+  await expect(dp.getByTestId('discover-state')).toContainText('1 found');
+});
+
 test('map rules: Map Local answers from a file, and a path outside the directory is refused', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bosun-e2e-map-'));
   fs.writeFileSync(path.join(dir, 'hello.txt'), 'from a local file');

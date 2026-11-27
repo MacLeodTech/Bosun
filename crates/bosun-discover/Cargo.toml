@@ -1,0 +1,24 @@
+[package]
+name = "bosun-discover"
+description = "Content and parameter discovery: forced browsing of paths and parameter names from wordlists, with soft-404 detection and clustering."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-scope.workspace = true
+bosun-http.workspace = true
+bosun-crawl.workspace = true
+tokio.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bosun-proxy.workspace = true
+bosun-testbed = { path = "../bosun-testbed" }
+
+[lints]
+workspace = true

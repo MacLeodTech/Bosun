@@ -7,6 +7,20 @@ There is no tagged release yet. The first public preview is v0.2, at the end of 
 
 Newest first. Each entry keeps the work package's original brief (why, do, done when) and its "Done" note.
 
+## Content and parameter discovery (branch `wp-43`, 2026-11-27)
+
+- **WP-81 (first slice):** `bosun-discover` (paths below a directory, with optional extensions and recursion into the
+  directories found, or parameter names on one page; `GET` or `POST`), `POST/GET /discover/runs`,
+  `GET /discover/runs/{id}`, `POST .../stop` (tester to start and stop, audited, two runs at once) and a "Discover
+  content" panel. It first asks for random names that cannot exist to learn what "not found" looks like, so a soft 404
+  (200 for everything) gives no hits and an echoed name does not count as a difference. A page that varies from request
+  to request earns a size tolerance; a steady one needs an identical answer to match. Hits with the same answer are
+  clustered, and a cluster of eight or more is dropped as a wildcard and counted. Every request goes through the gate
+  and its per-host rate limit; a refused request ends the run with the reason; only hits are recorded as flows (source
+  `intruder`). Testbed: hidden `/admin/` (redirect, nested paths, a 403), `/.git/HEAD`, `/backup.zip`, a soft-404
+  directory `/ghost/` with one real page, and `/tool?debug`. Left: see the roadmap row (it does not reuse the Intruder
+  engine or the crawler queue; it has its own small sender).
+
 ## Active checks rest and the credential vault (branch `wp-43`, 2026-11-26)
 
 - **WP-55 (rest):** `active-xxe`, `active-file-upload` (destructive), `active-jwt`, `active-deserialization`,

@@ -519,6 +519,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discover/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The discovery runs of this run of the server, newest first, with live counts. */
+        get: operations["discover_list"];
+        put?: never;
+        /** @description Start content or parameter discovery (forced browsing). Mode paths tries a wordlist (and optional extensions) below a directory URL and probes the directories it finds; mode params tries parameter names on one page. Before probing, random names that cannot exist are requested to learn what not found looks like, so a site that answers 200 to everything gives no hits, and many hits with the same answer are dropped as a wildcard (counted in noise). Every request goes through the scope gate and the per-host rate limit; only hits are recorded as flows (source intruder). Two runs at once. Needs the tester role or above; audited. */
+        post: operations["discover_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discover/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One discovery run: its state and the hits found so far (once it has ended also the directories probed, the wildcard noise dropped and whether the request limit cut it short). */
+        get: operations["discover_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discover/runs/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The stop switch: no further request is sent. `stopped` is false when the run was not running. Needs the tester role or above; audited. */
+        post: operations["discover_stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events": {
         parameters: {
             query?: never;
@@ -2307,6 +2359,97 @@ export interface components {
         };
         /** @enum {string} */
         Direction: "client_to_server" | "server_to_client";
+        DiscoverDetail: components["schemas"]["DiscoverInfo"] & {
+            /** @description Directories probed, or the page (params). Filled when the run has ended. */
+            directories: string[];
+            /**
+             * Format: int64
+             * @description Hits left out because they came in a wildcard cluster.
+             */
+            noise: number;
+            results: components["schemas"]["DiscoverHit"][];
+            /** @description The request limit ended the run with words left. */
+            truncated: boolean;
+        };
+        DiscoverHit: {
+            bytes: number;
+            /**
+             * Format: int32
+             * @description Hits with the same answer share a cluster number.
+             */
+            cluster: number;
+            content_type?: string | null;
+            /** Format: int32 */
+            depth: number;
+            /** @description `path` or `param`. */
+            kind: string;
+            location?: string | null;
+            /** @description Why it stands out: `directory`, `reflected`, `answer differs`. */
+            note?: string | null;
+            /** Format: int32 */
+            status: number;
+            url: string;
+            word: string;
+            words: number;
+        };
+        DiscoverInfo: {
+            base: string;
+            /** Format: int64 */
+            created_ms: number;
+            error?: string | null;
+            hits: number;
+            /** Format: int64 */
+            id: number;
+            /** @description `paths` or `params`. */
+            mode: string;
+            /** Format: int64 */
+            requests: number;
+            state: components["schemas"]["DiscoverState"];
+        };
+        DiscoverList: {
+            runs: components["schemas"]["DiscoverInfo"][];
+        };
+        DiscoverStartBody: {
+            /** @description Paths: the directory to probe (`http://host/app/`). Params: the page whose parameters to find. */
+            base: string;
+            /**
+             * Format: int32
+             * @description Requests in flight at once (1 to 32, default 8).
+             */
+            concurrency?: number | null;
+            /**
+             * Format: int64
+             * @description The least time between two request starts, milliseconds (at most 60000).
+             */
+            delay_ms?: number | null;
+            /** @description Paths: also try each word with these endings, written without the dot (`php`, `bak`). */
+            extensions?: string[];
+            /** @description Extra headers for every request, each `Name: value`. */
+            headers?: string[];
+            /**
+             * Format: int32
+             * @description Paths: probe the directories found too, down to this depth (0 to 10, default 2).
+             */
+            max_depth?: number | null;
+            /**
+             * Format: int32
+             * @description Most requests, the baselines included (10 to 200000, default 5000).
+             */
+            max_requests?: number | null;
+            /** @description `paths` (default) or `params`. */
+            mode?: string | null;
+            /** @description Params: send the names in a `POST` body instead of the query. */
+            post?: boolean;
+            verify_tls?: boolean;
+            /** @description Names to try (at most 100000). Empty: the built-in list for the mode. */
+            words?: string[];
+        };
+        /** @enum {string} */
+        DiscoverState: "running" | "done" | "stopped" | "failed";
+        DiscoverStopReply: {
+            /** @description False when the run was not running. */
+            stopped: boolean;
+        };
         EndpointStat: {
             /** Format: int32 */
             count: number;
@@ -5727,6 +5870,204 @@ export interface operations {
             };
             /** @description Input too large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    discover_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    discover_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverStartBody"];
+            };
+        };
+        responses: {
+            /** @description The run, started */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverInfo"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many runs */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    discover_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverDetail"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such run */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    discover_stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverStopReply"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such run */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

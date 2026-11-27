@@ -48,11 +48,21 @@ pub enum Op {
     Sha1,
     Sha256,
     Sha512,
+    /// A protobuf message as text (field numbers, no schema).
+    ProtobufDecode,
+    /// The text form of a protobuf message back to bytes.
+    ProtobufEncode,
+    /// A gRPC or gRPC-Web body as text, one `@message` per frame.
+    GrpcDecode,
+    /// The text form of a gRPC body back to bytes.
+    GrpcEncode,
+    /// A GraphQL request body as the query and the variables, apart.
+    GraphqlDecode,
 }
 
 impl Op {
     /// Every operation, in the order the Decoder lists them.
-    pub const ALL: [Op; 26] = [
+    pub const ALL: [Op; 31] = [
         Op::UrlDecode,
         Op::UrlDecodeForm,
         Op::HtmlDecode,
@@ -65,12 +75,17 @@ impl Op {
         Op::BrotliDecode,
         Op::ZstdDecode,
         Op::JwtDecode,
+        Op::ProtobufDecode,
+        Op::GrpcDecode,
+        Op::GraphqlDecode,
         Op::UrlEncode,
         Op::HtmlEncode,
         Op::Base64Encode,
         Op::Base64urlEncode,
         Op::HexEncode,
         Op::UnicodeEscape,
+        Op::ProtobufEncode,
+        Op::GrpcEncode,
         Op::GzipEncode,
         Op::DeflateEncode,
         Op::BrotliEncode,
@@ -427,6 +442,11 @@ pub fn apply(op: Op, input: &[u8], limit: usize) -> Result<Vec<u8>, CodecError> 
         Op::Sha1 => hex_of(&sha1::Sha1::digest(input)),
         Op::Sha256 => hex_of(&sha2::Sha256::digest(input)),
         Op::Sha512 => hex_of(&sha2::Sha512::digest(input)),
+        Op::ProtobufDecode => crate::proto::decode_text(input, limit)?.into_bytes(),
+        Op::ProtobufEncode => crate::proto::encode_text(input, limit)?,
+        Op::GrpcDecode => crate::proto::grpc_decode(input, limit)?.into_bytes(),
+        Op::GrpcEncode => crate::proto::grpc_encode(input, limit)?,
+        Op::GraphqlDecode => crate::graphql::decode_text(input, limit)?.into_bytes(),
     };
     check(out.len(), limit)?;
     Ok(out)
@@ -676,9 +696,14 @@ mod tests {
             | Op::Md5
             | Op::Sha1
             | Op::Sha256
-            | Op::Sha512 => 1,
+            | Op::Sha512
+            | Op::ProtobufDecode
+            | Op::ProtobufEncode
+            | Op::GrpcDecode
+            | Op::GrpcEncode
+            | Op::GraphqlDecode => 1,
         };
-        assert_eq!(Op::ALL.iter().map(|&o| counted(o)).sum::<usize>(), 26);
+        assert_eq!(Op::ALL.iter().map(|&o| counted(o)).sum::<usize>(), 31);
         for (i, a) in Op::ALL.iter().enumerate() {
             assert_eq!(Op::from_name(&a.name()), Some(*a));
             assert!(!Op::ALL[..i].contains(a), "{a:?} is listed twice");

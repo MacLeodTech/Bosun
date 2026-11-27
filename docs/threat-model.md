@@ -587,3 +587,10 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - An attacker who already controls the machine, the data directory or the data key.
 - Weaknesses of the targets themselves (finding those is the point).
 - A CA installed system-wide by the user despite the warnings.
+- *gRPC, Protobuf and GraphQL views and rules (WP-79).* The decoders (`bosun_codec::proto`, `bosun_codec::graphql`) read
+  bytes from target traffic: protobuf nesting is capped at 24 levels, every output is capped by the caller's limit, a
+  gRPC frame length that runs past the body is an error, and no step allocates from a length it has not checked. They
+  are pure functions, with property tests and the `grpc_graphql` fuzz target. The GraphQL scanner is not a parser: it
+  skips strings and comments and counts brackets, so a keyword inside a string never names an operation. A match rule
+  with an operation name fires only when the body names that operation; it adds no new reach, since rules already
+  rewrite any body. Decoded text is shown as text in the viewer, never as markup.

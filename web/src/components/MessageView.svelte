@@ -7,6 +7,7 @@
   import { contentTypeOf, detectLang, highlight, splitText, MAX_HIGHLIGHT } from '../lib/highlight';
   import { pretty } from '../lib/pretty';
   import { parseRequest, toCurl } from '../lib/export';
+  import { api } from '../lib/api';
   import { marks, type Range } from '../lib/evidence';
   import CodeView from './CodeView.svelte';
   import MessageEditor from './MessageEditor.svelte';
@@ -71,7 +72,33 @@
   });
   const split = $derived(splitText(text.text));
   const lang = $derived(detectLang(contentTypeOf(split.head), split.body));
-  const prettyBody = $derived(editable ? null : pretty(split.body, lang));
+  // gRPC and GraphQL bodies are decoded by the server's codec (the same one the Decoder uses), so the view and the
+  // rules agree on what an operation is. The result replaces the "pretty" text for those messages.
+  const ct = $derived((contentTypeOf(split.head) ?? '').toLowerCase());
+  const protoOps = $derived.by((): string[] | null => {
+    if (editable) return null;
+    if (/^application\/grpc-web-text/.test(ct)) return ['base64_decode', 'grpc_decode'];
+    if (/^application\/grpc/.test(ct)) return ['grpc_decode'];
+    if (ct.includes('json') && /^\s*[[{][\s\S]{0,4096}"(query|operationName)"\s*:/.test(split.body)) return ['graphql_decode'];
+    return null;
+  });
+  let protoText = $state<string | null>(null);
+  $effect(() => {
+    const ops = protoOps;
+    const body = decoded ?? parts.body;
+    protoText = null;
+    if (!ops || !body.length || body.length > (1 << 20)) return;
+    let live = true;
+    api
+      .post<{ steps: { output: string }[]; error: unknown }>('/decoder/apply', { input: bytesToB64(body), ops })
+      .then((r) => {
+        const last = r.steps[ops.length - 1];
+        if (live && !r.error && last) protoText = bytesToText(b64ToBytes(last.output)).text;
+      })
+      .catch(() => {});
+    return () => (live = false);
+  });
+  const prettyBody = $derived(editable ? null : (protoText ?? pretty(split.body, lang)));
   // "pretty" quietly shows the raw text when there is nothing to re-indent, so the choice sticks across messages.
   const view = $derived<MessageViewMode>(chosen === 'pretty' && !prettyBody ? 'raw' : chosen);
   const oversize = $derived(text.text.length > MAX_HIGHLIGHT);
@@ -80,7 +107,7 @@
     const body = view === 'pretty' && prettyBody ? prettyBody : split.body;
     const head = highlight(split.head, 'http');
     // The blank line between head and body is shown; an empty body adds nothing after it.
-    return split.sep ? (body ? [...head, [], ...highlight(body, lang)] : [...head, []]) : head;
+    return split.sep ? (body ? [...head, [], ...highlight(body, protoText && view === 'pretty' ? 'plain' : lang)] : [...head, []]) : head;
   });
   // Evidence positions are into the stored bytes, so they only line up with the raw text as stored.
   const evidenceMarks = $derived(

@@ -47,6 +47,10 @@ pub struct RuleSpec {
     pub regex: bool,
     #[serde(default)]
     pub comment: String,
+    /// Body rules only: fire only when the body is a GraphQL request with an operation of this name
+    /// (`operationName`, or the name in the query). Empty means every body.
+    #[serde(default)]
+    pub operation: String,
 }
 
 fn yes() -> bool {
@@ -58,6 +62,7 @@ struct Rule {
     target: RuleTarget,
     re: Option<Regex>,
     replace: Vec<u8>,
+    operation: Option<String>,
 }
 
 /// A compiled rule set. Regexes use the `regex` crate, which runs in linear time, so a rule cannot be made to
@@ -96,10 +101,14 @@ impl RuleSet {
                         .map_err(|e| format!("rule {}: {e}", i + 1))?,
                 )
             };
+            if !s.operation.is_empty() && !s.target.is_body() {
+                return Err(format!("rule {}: an operation name is only allowed for body rules", i + 1));
+            }
             rules.push(Rule {
                 target: s.target,
                 re,
                 replace: s.replace.as_bytes().to_vec(),
+                operation: (!s.operation.is_empty()).then(|| s.operation.clone()),
             });
         }
         Ok(Self { specs, rules })
@@ -186,7 +195,12 @@ impl RuleSet {
                     }
                     lines = out;
                 }
-                (_, _, Some(re)) if r.target == body => {
+                (_, _, Some(re))
+                    if r.target == body
+                        && r.operation
+                            .as_deref()
+                            .is_none_or(|op| bosun_codec::graphql::has_operation(&body_out, op)) =>
+                {
                     let new = re.replace_all(&body_out, &r.replace[..]).into_owned();
                     changed |= new != body_out;
                     body_out = new;
@@ -230,6 +244,7 @@ mod tests {
             replace: r.into(),
             regex,
             comment: String::new(),
+            operation: String::new(),
         }
     }
 
@@ -263,6 +278,22 @@ mod tests {
         assert!(rs.apply_response(b"HTTP/1.1 200 OK\r\n\r\nx", false).is_none());
         assert!(rs.apply_response(b"HTTP/1.1 200 OK\r\n\r\nx", true).is_some());
         assert!(rs.apply_request(b"GET / HTTP/1.1\r\n\r\n").is_none());
+    }
+
+    #[test]
+    fn body_rule_fires_only_on_its_graphql_operation() {
+        let mut s = spec(RuleTarget::RequestBody, "secret", "XXXXXX", false);
+        s.operation = "GetUser".into();
+        let rs = RuleSet::compile(vec![s.clone()]).unwrap();
+        let hit = br#"{"query":"query GetUser { secret }"}"#;
+        let miss = br#"{"query":"query Other { secret }"}"#;
+        let raw = |b: &[u8]| [&b"POST /g HTTP/1.1\r\n\r\n"[..], b].concat();
+        let out = rs.apply_request(&raw(hit)).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("{ XXXXXX }"));
+        assert!(rs.apply_request(&raw(miss)).is_none());
+        assert!(rs.apply_request(&raw(b"secret, not json")).is_none());
+        s.target = RuleTarget::RequestHeader;
+        assert!(RuleSet::compile(vec![s]).is_err(), "header rules cannot name an operation");
     }
 
     #[test]

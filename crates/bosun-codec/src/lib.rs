@@ -5,7 +5,9 @@
 
 mod diff;
 pub mod engage;
+pub mod graphql;
 mod ops;
+pub mod proto;
 
 pub use diff::{DiffKind, DiffLevel, DiffOp, DiffResult, diff};
 pub use ops::{Op, apply, apply_chain, smart_decode};

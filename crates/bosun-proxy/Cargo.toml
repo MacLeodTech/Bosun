@@ -12,6 +12,7 @@ bosun-model.workspace = true
 bosun-ca.workspace = true
 bosun-store.workspace = true
 bosun-scan.workspace = true
+bosun-codec.workspace = true
 rand.workspace = true
 bosun-scope.workspace = true
 tokio.workspace = true

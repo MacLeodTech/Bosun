@@ -12822,6 +12822,10 @@
             "type": "string",
             "description": "Literal text, or a regex when `regex` is true. Empty (header rules only) means \"add\"."
           },
+          "operation": {
+            "type": "string",
+            "description": "Body rules only: fire only when the body is a GraphQL request with an operation of this name\n(`operationName`, or the name in the query). Empty means every body."
+          },
           "regex": {
             "type": "boolean"
           },
@@ -13102,7 +13106,12 @@
           "md5",
           "sha1",
           "sha256",
-          "sha512"
+          "sha512",
+          "protobuf_decode",
+          "protobuf_encode",
+          "grpc_decode",
+          "grpc_encode",
+          "graphql_decode"
         ]
       },
       "Options": {

@@ -2931,6 +2931,11 @@ export interface components {
             enabled?: boolean;
             /** @description Literal text, or a regex when `regex` is true. Empty (header rules only) means "add". */
             match?: string;
+            /**
+             * @description Body rules only: fire only when the body is a GraphQL request with an operation of this name
+             *     (`operationName`, or the name in the query). Empty means every body.
+             */
+            operation?: string;
             regex?: boolean;
             replace?: string;
             target: components["schemas"]["RuleTarget"];
@@ -3000,7 +3005,7 @@ export interface components {
          * @description One step of a chain.
          * @enum {string}
          */
-        Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "gzip_encode" | "deflate_encode" | "brotli_encode" | "zstd_encode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "md5" | "sha1" | "sha256" | "sha512";
+        Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "gzip_encode" | "deflate_encode" | "brotli_encode" | "zstd_encode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "md5" | "sha1" | "sha256" | "sha512" | "protobuf_decode" | "protobuf_encode" | "grpc_decode" | "grpc_encode" | "graphql_decode";
         /** @description The resource pool and the sending options. */
         Options: {
             /**

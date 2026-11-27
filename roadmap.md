@@ -628,6 +628,9 @@ fuzz target; ones that send traffic go through the gate.
   - GraphQL-aware matching and editing by operation name; query and variables shown separately.
   - Decoders respect WP-06's size caps and have fuzz targets.
 - **Done when:** a recorded gRPC call shows decoded fields; a rule fires on a GraphQL operation name.
+- **Progress (2026-11-27, `wp-79`):** schema-less Protobuf and gRPC frames as text and back, GraphQL query and variables
+  apart, the Pretty view for them, a GraphQL operation name on body rules, fuzz target `grpc_graphql`. Still open: a
+  user-supplied `.proto` schema, compressed gRPC messages, and editing gRPC in the Repeater.
 
 #### WP-80 Command palette and one shared message viewer · Phase 5 · M
 

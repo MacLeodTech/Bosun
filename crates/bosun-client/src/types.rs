@@ -268,6 +268,9 @@ pub struct MatchRule {
     pub regex: bool,
     #[serde(default)]
     pub comment: String,
+    /// Body rules only: fire only on a GraphQL request with an operation of this name. Empty: always.
+    #[serde(default)]
+    pub operation: String,
 }
 
 fn yes() -> bool {

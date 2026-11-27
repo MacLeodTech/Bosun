@@ -75,5 +75,5 @@ fn list_names_every_operation() {
     ] {
         assert!(text.lines().any(|l| l == name), "{name} is missing:\n{text}");
     }
-    assert_eq!(text.lines().count(), 26);
+    assert_eq!(text.lines().count(), 31);
 }

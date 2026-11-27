@@ -210,3 +210,49 @@ async fn the_tools_need_a_signed_in_user() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_recorded_grpc_call_shows_decoded_fields_and_edits_go_back() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    // One message: 1: 150, 2: "testing".
+    let mut msg = vec![0x08, 0x96, 0x01, 0x12, 7];
+    msg.extend_from_slice(b"testing");
+    let mut body = vec![0u8];
+    body.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+    body.extend_from_slice(&msg);
+    let (st, v) = post(&s, &c, &csrf, "/decoder/apply", json!({ "input": b(&body), "ops": ["grpc_decode"] })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let text = String::from_utf8(B64.decode(v["steps"][0]["output"].as_str().unwrap()).unwrap()).unwrap();
+    assert_eq!(text, "@message\n1: 150\n2: \"testing\"\n");
+    // Edit the text and frame it again.
+    let edited = text.replace("150", "151");
+    let (st, v) = post(&s, &c, &csrf, "/decoder/apply", json!({ "input": b(edited.as_bytes()), "ops": ["grpc_encode"] })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let out = B64.decode(v["steps"][0]["output"].as_str().unwrap()).unwrap();
+    assert_eq!(&out[..5], &[0, 0, 0, 0, 12]);
+    assert_eq!(&out[5..8], &[0x08, 0x97, 0x01]);
+    // Bytes that are not frames are reported, not crashed on.
+    let (_, v) = post(&s, &c, &csrf, "/decoder/apply", json!({ "input": b(b"\x00\x00\x00\x00\x09ab"), "ops": ["grpc_decode"] })).await;
+    assert_eq!(v["error"]["step"], 0, "{v}");
+}
+
+#[tokio::test]
+async fn graphql_bodies_show_query_and_variables_and_rules_keep_their_operation() {
+    let s = stack(true).await;
+    let (c, csrf) = s.admin().await;
+    let q = br#"{"query":"query GetUser($id: ID!) { user(id: $id) { name } }","variables":{"id":"7"}}"#;
+    let (st, v) = post(&s, &c, &csrf, "/decoder/apply", json!({ "input": b(q), "ops": ["graphql_decode"] })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let text = String::from_utf8(B64.decode(v["steps"][0]["output"].as_str().unwrap()).unwrap()).unwrap();
+    assert!(text.starts_with("# query GetUser\nquery GetUser("), "{text}");
+    assert!(text.contains("# variables\n{\n  \"id\": \"7\"\n}"), "{text}");
+    let rules = json!([{ "target": "request_body", "match": "7", "replace": "8", "operation": "GetUser" }]);
+    let r = c.put(s.url("/rules")).header("x-csrf-token", &csrf).json(&rules).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let got: Value = c.get(s.url("/rules")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(got[0]["operation"], "GetUser");
+    let bad = json!([{ "target": "request_header", "match": "x", "replace": "y", "operation": "GetUser" }]);
+    let r = c.put(s.url("/rules")).header("x-csrf-token", &csrf).json(&bad).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+}

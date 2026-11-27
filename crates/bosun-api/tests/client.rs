@@ -607,6 +607,7 @@ async fn scope_rules_proxy_and_ca() {
         replace: "User-Agent: bosun".into(),
         regex: true,
         comment: "disguise".into(),
+        operation: String::new(),
     };
     assert_eq!(
         c.put_rules(std::slice::from_ref(&rule)).await.unwrap(),

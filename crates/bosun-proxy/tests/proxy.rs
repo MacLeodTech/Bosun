@@ -286,6 +286,7 @@ async fn match_and_replace_rules_apply() {
                 replace: "X-Added: yes".into(),
                 regex: false,
                 comment: String::new(),
+                operation: String::new(),
             },
             RuleSpec {
                 enabled: true,
@@ -294,6 +295,7 @@ async fn match_and_replace_rules_apply() {
                 replace: "TEG".into(),
                 regex: false,
                 comment: String::new(),
+                operation: String::new(),
             },
         ])
         .unwrap();

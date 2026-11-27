@@ -379,6 +379,48 @@ impl Req {
         r
     }
 
+    /// The `Content-Type` of the request as written (empty if none).
+    pub fn content_type(&self) -> String {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            .map_or(String::new(), |(_, v)| v.clone())
+    }
+
+    /// The body as it was given (a form or JSON body is written out again).
+    pub fn body_text(&self) -> Option<String> {
+        match &self.body {
+            Body::None => None,
+            Body::Form(f) => Some(join_pairs(f)),
+            Body::Json(j) => Some(j.to_string()),
+            Body::Raw(r) => Some(String::from_utf8_lossy(r).into_owned()),
+        }
+    }
+
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
+    /// This request with another method, content type and body.
+    pub fn with_body(&self, method: &str, content_type: &str, body: &str) -> Req {
+        let mut r = self.clone();
+        r.method = method.into();
+        r.body = Body::Raw(body.as_bytes().to_vec());
+        r.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-type"));
+        r.headers.push(("Content-Type".into(), content_type.into()));
+        r
+    }
+
+    /// This request with the cookie `name` set to `value` (added if it was not there).
+    pub fn with_cookie(&self, name: &str, value: &str) -> Req {
+        let mut r = self.clone();
+        match r.cookies.iter_mut().find(|(k, _)| k == name) {
+            Some(c) => c.1 = value.into(),
+            None => r.cookies.push((name.into(), value.into())),
+        }
+        r
+    }
+
     /// The request unchanged, but with `host` as the `Host` header (the connection still goes to the target's own
     /// address) and `extra` headers added right after it.
     pub fn bytes_with(&self, host: Option<&str>, extra: &[(&str, &str)]) -> Vec<u8> {

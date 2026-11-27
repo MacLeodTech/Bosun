@@ -18,9 +18,21 @@
 //! - `GET /api/profile` reflects `Origin` and allows credentials (CORS);
 //! - `GET /reset` builds a link from `X-Forwarded-Host` or `Host` (Host header attack).
 //!
+//! More planted issues, each with a safe twin (see `extra.rs`): `POST /xml/import` (XXE; `/xml/import-blind` shows only errors; `/xml/import-safe`),
+//! `POST /upload` (any file type; `/upload-safe`), `GET /api/jwt` (accepts `alg: none`, signed with a weak secret),
+//! `/api/jwt-unsigned` (never checks the signature; `/api/jwt-safe`), `GET /session/restore?data=` (deserialization
+//! errors; `/session/restore-safe`), `POST /api/settings` (prototype pollution; `/api/settings-safe`),
+//! `POST /graphql` (introspection, suggestions, batching, aliases; `/graphql-safe`), `GET /session/start` (cookie
+//! without flags, adopts a client's session id; `/session/start-safe`), and [`start_tls`] servers (expired,
+//! self-signed, legacy protocols and ciphers; `Good` is the twin).
+//!
 //! Safe twins (the scanner must stay quiet): `GET /greet?name=` escapes, `GET /safe?id=` never errors, and
 //! `/user-safe`, `/report-safe`, `/notes`, `/render-safe`, `/ping-safe`, `/download-safe`, `/go-safe`, `/lang-safe`,
 //! `/api/profile-safe` (allow list), `/api/public` (`*` without credentials) and `/reset-safe`.
+
+mod extra;
+
+pub use extra::{STRONG_SECRET, TlsKind, jwt_hs256, start_tls};
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -125,6 +137,9 @@ fn json_name(body: &str) -> String {
 struct State {
     guestbook: Mutex<Vec<String>>,
     notes: Mutex<Vec<String>>,
+    /// The properties a polluted `__proto__` gave every object (`/api/settings`).
+    proto: Mutex<Vec<(String, String)>>,
+    seq: std::sync::atomic::AtomicU64,
 }
 
 struct Reply {
@@ -484,7 +499,7 @@ fn route(rq: &Rq<'_>, st: &State, external: Option<&str>) -> Reply {
         ("GET", "/reset-safe") => {
             html("<a href=\"https://testbed.example/reset/confirm?token=abc123\">Reset your password</a>")
         }
-        _ => Reply::new(404, "text/html", "not found"),
+        _ => extra::route(rq, st).unwrap_or_else(|| Reply::new(404, "text/html", "not found")),
     }
 }
 

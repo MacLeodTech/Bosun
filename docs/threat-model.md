@@ -521,7 +521,17 @@ This document says what is protected, from whom, and how. Code comments refer ba
   per insertion point), dot-dot paths, and `Origin`, `Host` and `X-Forwarded-Host` headers; none runs a command of
   the scanner's choosing, and the hosts it plants end in `.invalid`. Redirects are read, never followed. A line break
   is sent only in query, form and path values, never in a cookie or request header. The check that saves data in
-  the target (stored XSS, flagged `destructive` in `/scan/checks`) is off unless a scan names it in `checks`. Findings become issues with the proving flow attached; the target's
+  the target (stored XSS and file upload, flagged `destructive` in `/scan/checks`) is off unless a scan names it in
+  `checks`; the upload sends one text file named with a script extension and nothing else. The other core checks
+  (XXE, JWT, deserialization, prototype pollution, GraphQL, session cookies, TLS) stay in-band: XXE asks for a
+  system file or a missing one, never an outside host; JWT forging and weak-secret guessing use only tokens the
+  request already carries (the guess runs offline, a forged token is sent only to the URL it came from);
+  deserialization probes are cut-off objects that cannot run code; GraphQL probes read `__typename`, the schema and
+  25 aliases of `__typename`; prototype pollution sets one inert property with a random name, which stays in the
+  target until it restarts. The TLS check sends bare ClientHello messages (no key exchange) and one ordinary
+  handshake that accepts any certificate to read it; both go through `Gate::check` as source `scanner` and count
+  against the request cap. Findings of these checks carry a point of their own (`jwt:alg-none`, `tls:rc4`) so that
+  separate weaknesses of one URL stay separate issues. Findings become issues with the proving flow attached; the target's
   answers are target content and appear only as text. The target parser (URL, query, form, JSON) has a fuzz
   target (`active_targets`). The testbed (`bosun-testbed`) is intentionally vulnerable: it listens on loopback
   only by default, holds no data and is a test dependency, never part of the shipped binary.

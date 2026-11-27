@@ -17,6 +17,7 @@
 //! package.
 
 mod checks;
+mod extra;
 mod points;
 
 use std::collections::HashSet;
@@ -82,10 +83,42 @@ pub const CHECKS: &[(&str, &str)] = &[
         checks::HOST_HEADER,
         "Host header attack: a Host or X-Forwarded-Host of the scanner's choosing comes back in links or redirects",
     ),
+    (
+        checks::XXE,
+        "XML external entities: an XML body with an external entity makes the parser return a system file or an entity-loading error (in band, no out-of-band channel)",
+    ),
+    (
+        checks::FILE_UPLOAD,
+        "Unrestricted file upload (destructive: uploads a file): a multipart upload named with a script extension is accepted and its name confirmed",
+    ),
+    (
+        checks::JWT,
+        "JWT attacks: a token signed with a weak secret, accepted with `alg: none`, or accepted with a changed signature",
+    ),
+    (
+        checks::DESERIALIZATION,
+        "Deserialization indicators: serialized-object probes make the application answer a Java, PHP, .NET or Python deserialization error",
+    ),
+    (
+        checks::PROTOTYPE_POLLUTION,
+        "Server-side prototype pollution: a JSON `__proto__` property shows up in later answers of the same request",
+    ),
+    (
+        checks::GRAPHQL,
+        "GraphQL issues: introspection enabled, field suggestions in errors, query batching and unlimited aliases",
+    ),
+    (
+        checks::SESSION,
+        "Session weaknesses: a session cookie without HttpOnly, Secure or SameSite, and a session id chosen by the client that the server adopts",
+    ),
+    (
+        checks::TLS,
+        "TLS configuration: TLS 1.1 or older, RC4, 3DES, NULL or export suites accepted, an expired or self-signed certificate",
+    ),
 ];
 
 /// Checks that change state in the application (they save data), off unless named in [`Options::checks`].
-pub const DESTRUCTIVE: &[&str] = &[checks::XSS_STORED];
+pub const DESTRUCTIVE: &[&str] = &[checks::XSS_STORED, checks::FILE_UPLOAD];
 
 pub fn is_destructive(id: &str) -> bool {
     DESTRUCTIVE.contains(&id)
@@ -300,6 +333,8 @@ pub(crate) struct Shared {
     capped: AtomicBool,
     refused: Mutex<HashSet<String>>,
     findings: Mutex<Vec<Finding>>,
+    /// `host:port` of the https targets the TLS check has been run for.
+    tls_done: Mutex<HashSet<String>>,
 }
 
 /// A response, parsed far enough for checks.
@@ -311,6 +346,7 @@ pub(crate) struct Answer {
     pub content_type: String,
     pub body: String,
     pub flow_id: i64,
+    pub tls: Option<bosun_http::TlsInfo>,
 }
 
 impl Shared {
@@ -335,13 +371,95 @@ impl Shared {
         g.push(f);
     }
 
+    /// Whether this scan has not yet looked at the TLS of `host:port`; remembers that it now has.
+    pub(crate) fn first_tls(&self, req: &Req) -> bool {
+        self.tls_done
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(format!("{}:{}", req.host, req.port))
+    }
+
+    /// Send raw bytes (a TLS hello) to the target's address and read one record of the answer (at most `max`
+    /// bytes). Goes through the gate like [`Shared::send`] and counts as a request. `None` when it was refused,
+    /// capped or did not answer.
+    pub(crate) async fn probe(&self, req: &Req, hello: &[u8], max: usize) -> Option<Vec<u8>> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let started = Instant::now();
+        let pinned = loop {
+            while self.ctl.is_paused() && !self.ctl.is_stopped() {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            if self.ctl.is_stopped() {
+                return None;
+            }
+            if self.requests.fetch_add(1, Ordering::SeqCst) >= self.opts.max_requests {
+                self.requests.fetch_sub(1, Ordering::SeqCst);
+                self.capped.store(true, Ordering::SeqCst);
+                return None;
+            }
+            let gate = self.engine.gate().clone();
+            let (scheme, host, port) = (req.scheme, req.host.clone(), req.port);
+            let checked = tokio::task::spawn_blocking(move || {
+                gate.check(FlowSource::Scanner, scheme, &host, port, "/")
+            })
+            .await
+            .ok()?;
+            match checked {
+                Ok(p) => break p,
+                Err(ScopeError::RateLimited(..)) => {
+                    self.requests.fetch_sub(1, Ordering::SeqCst);
+                    if started.elapsed() > RATE_WAIT {
+                        return None;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(ScopeError::Stopped) => {
+                    self.ctl.stop();
+                    return None;
+                }
+                Err(_) => {
+                    self.requests.fetch_sub(1, Ordering::SeqCst);
+                    self.refused
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(req.base_url());
+                    return None;
+                }
+            }
+        };
+        let wait = Duration::from_secs(self.opts.timeout_secs.min(8));
+        let mut s = tokio::time::timeout(wait, tokio::net::TcpStream::connect(pinned.addrs.first()?))
+            .await
+            .ok()?
+            .ok()?;
+        s.write_all(hello).await.ok()?;
+        let mut got = Vec::new();
+        let mut buf = [0u8; 2048];
+        while got.len() < max {
+            match tokio::time::timeout(wait, s.read(&mut buf)).await {
+                Ok(Ok(n)) if n > 0 => got.extend_from_slice(&buf[..n]),
+                _ => break,
+            }
+            if got.len() >= 5 && got.len() >= 5 + usize::from(u16::from_be_bytes([got[3], got[4]])) {
+                break;
+            }
+        }
+        Some(got)
+    }
+
     /// Send one request. `None` when the scan must not go on with this request: stopped, over the request cap, or
     /// the gate refused it. Waits while paused.
     pub(crate) async fn send(&self, req: &Req, raw: Vec<u8>) -> Option<Answer> {
+        self.send_with(req, raw, self.opts.verify_tls).await
+    }
+
+    /// [`Shared::send`] with the certificate check chosen by the caller (the TLS check must complete a handshake
+    /// with a bad certificate to read it).
+    pub(crate) async fn send_with(&self, req: &Req, raw: Vec<u8>, verify_tls: bool) -> Option<Answer> {
         let send = SendOptions {
             source: FlowSource::Scanner,
             update_content_length: true,
-            verify_tls: self.opts.verify_tls,
+            verify_tls,
             connect_timeout: Duration::from_secs(self.opts.timeout_secs.min(15)),
             idle_timeout: Duration::from_secs(self.opts.timeout_secs),
             total_timeout: Duration::from_secs(self.opts.timeout_secs),
@@ -391,6 +509,7 @@ impl Shared {
                             .map_or(String::new(), |v| String::from_utf8_lossy(v).to_ascii_lowercase()),
                         body: String::from_utf8_lossy(&bytes).into_owned(),
                         flow_id,
+                        tls: ex.tls.clone(),
                     });
                 }
                 Err(SendError::Refused(ScopeError::RateLimited(..))) => {
@@ -451,6 +570,7 @@ pub async fn scan(
         capped: AtomicBool::new(false),
         refused: Mutex::default(),
         findings: Mutex::default(),
+        tls_done: Mutex::default(),
     });
     let mut queue = units.into_iter();
     let mut running: JoinSet<()> = JoinSet::new();

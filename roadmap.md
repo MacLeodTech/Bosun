@@ -60,7 +60,7 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
 - **Next, in order** (see the phase plan below):
   1. **Phase 3, track A (M2):** WP-38 is the M1 follow-up. Intruder is in; its leftovers are under WP-47.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
-     release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
+     release work (WP-69, WP-70). These can run in parallel sessions on separate branches. Windows desktop
      is built with Tauri for now; WP-18 (WinUI 3) is still planned.
   4. **Owner tasks before v0.2:** look up the pending BOSUN Class 9 filing; an Apple Developer account.
   5. **After v0.2:** Phase 4 (Intruder, Sequencer, WP-76, WP-79), then Phase 5 and on as in the phase plan.
@@ -111,7 +111,7 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
-- Track D, release: WP-69, WP-70 (the first pages), WP-31.
+- Track D, release: WP-69, WP-70 (the first pages).
 - Owner: look up the pending BOSUN Class 9 filing before v0.2; an Apple Developer account. Windows signing is deferred.
 - Gate: v0.2 for Windows, macOS and Linux; Docker and Podman images; the CLI; security review 3.
 
@@ -201,7 +201,6 @@ valid in the "Depends on" column.
 | [ ] | WP-22 | Desktop packaging and updates | 3 | L | WP-18, WP-19, WP-21 |
 | [ ] | WP-69 | Release workflow | 3 | M | WP-09, WP-24 |
 | [ ] | WP-70 | Docs site | 3 | M | WP-13 |
-| [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
 | [ ] | WP-47 | Intruder (rest) | 4 | M | WP-40, WP-41 |
 | [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
 | [ ] | WP-33 | Protocol gaps (only header case left) | 4 | S | |
@@ -234,7 +233,7 @@ valid in the "Depends on" column.
 | [ ] | WP-67 | `bosun-tui` | 9 | L | WP-14 |
 | [ ] | WP-71 | Migration guide from Burp and ZAP | 9 | S | WP-60 |
 | [ ] | WP-74 | HTTP/3 | 9 | L | WP-40 |
-| [ ] | WP-78 | Proxy modes: reverse proxy, WireGuard or local capture, TLS key log | 9 | L | WP-31, WP-32 |
+| [ ] | WP-78 | Proxy modes: reverse proxy, WireGuard or local capture, TLS key log | 9 | L | WP-32 |
 | [ ] | WP-86 | Optional AI assistance | 9 | L | WP-49, WP-62 |
 
 ---
@@ -372,17 +371,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Intercept queues per user, or claiming an item so others can't act on it.
   - Rate-limit failed proxy authentication.
 - **Relates to:** M8 multi-user hardening.
-
-#### WP-31 Transparent HTTPS (invisible mode for TLS) · Phase 3 · M
-
-- **Why:** the README promises invisible (transparent) proxying, but a TLS ClientHello arriving directly at the
-  listener is handed to the HTTP/1 server, so transparent HTTPS doesn't work.
-- **Do:**
-  - First (do this in Phase 1, it is one line): change the README to say "HTTP only" until this lands.
-  - Then: when `invisible` is on, peek at the first byte on accept; for TLS, take the target from the SNI (and
-    optionally from the original destination on Linux through `SO_ORIGINAL_DST`, which needs a safe wrapper or a
-    crate) and intercept as for CONNECT.
-- **Done when:** a test sends HTTPS straight to the listener with SNI and gets the flow recorded.
 
 #### WP-33 Protocol gaps · Phase 4 · M
 
@@ -620,7 +608,7 @@ fuzz target; ones that send traffic go through the gate.
   - Reverse-proxy mode: listen in front of one upstream and rewrite Host.
   - A TLS key log file option (`SSLKEYLOGFILE` format) so Wireshark can decrypt captures; off by default, with a
     warning because the file exposes traffic secrets.
-  - WireGuard or local capture mode and guided setup for phones and emulators, on top of WP-31's transparent proxying.
+  - WireGuard or local capture mode and guided setup for phones and emulators, on top of the transparent proxying already in (WP-31).
   - Decision first: ask the owner whether WireGuard (a user-space implementation) or per-OS local capture is wanted.
   - The first pull request may be reverse mode and the key log alone; they can be pulled into an earlier phase.
 - **Done when:** a test client through each mode is recorded and the scope gate still applies; the key log decrypts a

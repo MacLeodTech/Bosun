@@ -1254,3 +1254,35 @@ async fn listener_connection_cap_applies_per_listener_and_changes_live() {
         "zero is refused"
     );
 }
+
+#[tokio::test]
+async fn transparent_https_is_intercepted_by_sni_and_recorded() {
+    let h = start(
+        ProxyConfig {
+            invisible: true,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    // No proxy settings: the client connects straight to the listener, as a redirected connection would.
+    let c = reqwest::Client::builder()
+        .resolve("transparent.test", h.addr)
+        .add_root_certificate(reqwest::Certificate::from_pem(h.ca.cert_pem().as_bytes()).unwrap())
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    // The proxy reaches for transparent.test:443, which does not exist, so it answers with an error page;
+    // getting an answer over a certificate the Bosun CA issued for the SNI is the point.
+    let r = c.get("https://transparent.test/x?y=1").send().await.unwrap();
+    assert!(r.status().is_server_error(), "{}", r.status());
+
+    h.proxy.flush();
+    let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
+    assert!(
+        flows
+            .iter()
+            .any(|f| f.host == "transparent.test" && f.path == "/x?y=1" && f.scheme == bosun_model::Scheme::Https),
+        "{flows:?}"
+    );
+}

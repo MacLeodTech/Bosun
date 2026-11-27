@@ -781,6 +781,20 @@ impl Shared {
             listener,
             tunnel: None,
         };
+        if ctx.listener.opts().spec.invisible {
+            // Transparent HTTPS: a TLS ClientHello arriving straight at the listener. The target is the SNI
+            // (port 443); without one there is nothing to name the host, so the connection is closed.
+            let mut first = [0u8; 1];
+            let seen = tokio::time::timeout(Duration::from_secs(30), stream.peek(&mut first)).await;
+            match seen {
+                Ok(Ok(1)) if first[0] == 0x16 => {
+                    self.mitm(stream, ctx, String::new(), 443).await;
+                    return;
+                }
+                Ok(Ok(n)) if n > 0 => {}
+                _ => return,
+            }
+        }
         self.serve_h1(TokioIo::new(stream), ctx).await;
     }
 
@@ -971,7 +985,18 @@ impl Shared {
                 Ok(Ok(s)) => s,
                 _ => return,
             };
-            let sni = start.client_hello().server_name().map(str::to_string);
+            let sni = start.client_hello().server_name().map(|n| n.to_ascii_lowercase());
+            let mut host = host;
+            if host.is_empty() {
+                // Transparent mode: the SNI is the only name the client gave.
+                match &sni {
+                    Some(n) => host = n.clone(),
+                    None => {
+                        tracing::info!("transparent TLS connection without an SNI; closing");
+                        return;
+                    }
+                }
+            }
             let cert_host = sni.clone().unwrap_or_else(|| host.clone());
             let cfg = match self.ca.server_config(&cert_host, self.live().http2) {
                 Ok(c) => c,

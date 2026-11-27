@@ -11,5 +11,8 @@
 pub mod matrix;
 pub mod session;
 
-pub use matrix::{Cell, Finding, FindingKind, Identity, Options, Probe, Row, Verdict, run, with_identity};
+pub use matrix::{
+    Cell, Finding, FindingKind, Identity, MAX_IDENTITIES, MAX_PROBES, Options, Probe, Row, Verdict, run,
+    with_identity,
+};
 pub use session::{Capture, Expiry, LoginMacro, Session, SessionError};

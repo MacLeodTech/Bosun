@@ -7,6 +7,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod auth;
+pub mod authmatrix;
 pub mod browser;
 pub mod checks;
 pub mod child;
@@ -21,7 +22,6 @@ pub mod intruder;
 pub mod issues;
 pub mod listeners;
 pub mod maprules;
-pub mod vault;
 pub mod openapi;
 pub mod projects;
 pub mod repeater;
@@ -30,6 +30,7 @@ pub mod security;
 pub mod sequencer;
 pub mod sso;
 pub mod totp;
+pub mod vault;
 pub mod web;
 
 use std::convert::Infallible;
@@ -517,6 +518,7 @@ pub fn router(st: AppState) -> Router {
             "/vault/{id}",
             axum::routing::patch(vault::update).delete(vault::delete),
         )
+        .route("/auth-matrix", post(authmatrix::matrix))
         .route("/checks", get(checks::list).post(checks::add))
         .route("/checks/validate", post(checks::validate_only))
         .route(

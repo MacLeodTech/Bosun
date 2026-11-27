@@ -178,6 +178,77 @@
         }
       }
     },
+    "/auth-matrix": {
+      "post": {
+        "tags": [
+          "scan"
+        ],
+        "description": "The authorisation matrix: replay recorded flows as each of the given accounts and as nobody, and compare each answer with the owner's. An account that gets the same answer and is neither the owner nor listed in allowed is a finding (broken access control; missing authentication for no login). Account headers are given inline or taken from a vault entry opened on the server. Every send goes through the scope gate. Up to 200 probes and 20 accounts. Needs the tester role or above; audited.",
+        "operationId": "auth_matrix",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatrixBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatrixResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "tags": [
@@ -9667,6 +9738,47 @@
           }
         }
       },
+      "Cell": {
+        "type": "object",
+        "required": [
+          "identity",
+          "verdict",
+          "body_len",
+          "similarity"
+        ],
+        "properties": {
+          "body_len": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identity": {
+            "type": "string"
+          },
+          "similarity": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0 to 100 against the owner's body.",
+            "minimum": 0
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          }
+        }
+      },
       "ChangeTags": {
         "type": "object",
         "required": [
@@ -10644,34 +10756,44 @@
         "type": "object",
         "required": [
           "kind",
-          "value",
-          "offset"
+          "label",
+          "owner",
+          "identity",
+          "similarity"
         ],
         "properties": {
+          "identity": {
+            "type": "string"
+          },
           "kind": {
             "$ref": "#/components/schemas/FindingKind"
           },
-          "offset": {
+          "label": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "similarity": {
             "type": "integer",
-            "description": "Byte offset into the text that was scanned.",
+            "format": "int32",
             "minimum": 0
           },
-          "value": {
-            "type": "string"
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
       "FindingKind": {
         "type": "string",
         "enum": [
-          "comment",
-          "inline_script",
-          "script_src",
-          "link",
-          "form_action",
-          "resource",
-          "url",
-          "path"
+          "broken_access_control",
+          "missing_authentication"
         ]
       },
       "FipsBlock": {
@@ -11669,6 +11791,122 @@
           }
         }
       },
+      "MatrixBody": {
+        "type": "object",
+        "required": [
+          "identities",
+          "probes"
+        ],
+        "properties": {
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MatrixIdentity"
+            }
+          },
+          "options": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Options"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "probes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MatrixProbe"
+            }
+          }
+        }
+      },
+      "MatrixIdentity": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": false,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Headers that make a request be this account."
+          },
+          "name": {
+            "type": "string"
+          },
+          "vault": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VaultHeader"
+            },
+            "description": "Headers taken from the vault."
+          }
+        }
+      },
+      "MatrixProbe": {
+        "type": "object",
+        "required": [
+          "flow_id",
+          "owner"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Accounts that are meant to reach it too."
+          },
+          "flow_id": {
+            "$ref": "#/components/schemas/i64",
+            "description": "A recorded flow, replayed as each account."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "description": "The account the flow was recorded as (an identity name)."
+          }
+        }
+      },
+      "MatrixResult": {
+        "type": "object",
+        "required": [
+          "rows",
+          "findings"
+        ],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Row"
+            }
+          }
+        }
+      },
       "Me": {
         "type": "object",
         "required": [
@@ -11817,50 +12055,13 @@
       },
       "Options": {
         "type": "object",
-        "description": "The resource pool and the sending options.",
         "properties": {
-          "concurrency": {
+          "similarity_percent": {
             "type": "integer",
             "format": "int32",
-            "description": "Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.",
-            "default": 5,
+            "description": "How alike two bodies must be (0 to 100) for the answers to count as the same.",
+            "default": 90,
             "minimum": 0
-          },
-          "delay_ms": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The least time between the starts of two requests, milliseconds, whatever the concurrency.",
-            "default": 0,
-            "minimum": 0
-          },
-          "max_requests": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Stop after this many requests (at most one million).",
-            "default": null,
-            "minimum": 0
-          },
-          "retries": {
-            "type": "integer",
-            "format": "int32",
-            "description": "How often a request that could not be sent or got no answer is tried again (0 to 10).",
-            "default": 0,
-            "minimum": 0
-          },
-          "timeout_secs": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The longest one request may take, seconds (1 to 300).",
-            "default": 30,
-            "minimum": 0
-          },
-          "update_content_length": {
-            "type": "boolean",
-            "description": "Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.",
-            "default": true
           },
           "verify_tls": {
             "type": "boolean",
@@ -13480,94 +13681,30 @@
       },
       "Row": {
         "type": "object",
-        "description": "The outcome of one request.",
         "required": [
-          "index",
-          "payloads",
-          "length",
-          "time_ms",
-          "matches",
-          "extracts",
-          "attempts"
+          "label",
+          "owner",
+          "cells"
         ],
         "properties": {
-          "attempts": {
-            "type": "integer",
-            "format": "int32",
-            "description": "How many tries it took (1 when the first worked).",
-            "minimum": 0
+          "cells": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Cell"
+            }
           },
-          "error": {
+          "label": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "skipped": {
             "type": [
               "string",
               "null"
-            ]
-          },
-          "extracts": {
-            "type": "array",
-            "items": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "description": "One entry per grep extract rule."
-          },
-          "flow_id": {
-            "type": [
-              "integer",
-              "null"
             ],
-            "format": "int64",
-            "description": "The recorded flow, when something was sent."
-          },
-          "index": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Which request of the attack (0-based).",
-            "minimum": 0
-          },
-          "length": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Response size in bytes.",
-            "minimum": 0
-          },
-          "matches": {
-            "type": "array",
-            "items": {
-              "type": "boolean"
-            },
-            "description": "One entry per grep match rule."
-          },
-          "payloads": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The payloads used, as text (bytes that are not UTF-8 are replaced)."
-          },
-          "position": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "description": "The position that was attacked, for a sniper attack.",
-            "minimum": 0
-          },
-          "status": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "time_ms": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
+            "description": "Why there are no comparisons (the owner's own request did not succeed)."
           }
         }
       },
@@ -14936,6 +15073,28 @@
             "type": "string"
           },
           "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "VaultHeader": {
+        "type": "object",
+        "description": "Where a header value comes from: a vault entry, opened on the server.",
+        "required": [
+          "vault_id",
+          "header"
+        ],
+        "properties": {
+          "header": {
+            "type": "string",
+            "description": "The header to set, such as `Authorization` or `Cookie`."
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Text put before the secret, such as `Bearer `."
+          },
+          "vault_id": {
             "type": "integer",
             "format": "int64"
           }

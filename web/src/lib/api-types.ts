@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth-matrix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The authorisation matrix: replay recorded flows as each of the given accounts and as nobody, and compare each answer with the owner's. An account that gets the same answer and is neither the owner nor listed in allowed is a finding (broken access control; missing authentication for no login). Account headers are given inline or taken from a vault entry opened on the server. Every send goes through the scope gate. Up to 200 probes and 20 accounts. Needs the tester role or above; audited. */
+        post: operations["auth_matrix"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -1982,6 +1999,19 @@ export interface components {
             /** @description The tokens from index `from` on. */
             tokens: string[];
         };
+        Cell: {
+            body_len: number;
+            error?: string | null;
+            identity: string;
+            /**
+             * Format: int32
+             * @description 0 to 100 against the owner's body.
+             */
+            similarity: number;
+            /** Format: int32 */
+            status?: number | null;
+            verdict: components["schemas"]["Verdict"];
+        };
         ChangeTags: {
             add?: string[];
             ids: components["schemas"]["i64"][];
@@ -2263,13 +2293,17 @@ export interface components {
         /** @enum {string} */
         EvidencePart: "request" | "response";
         Finding: {
+            identity: string;
             kind: components["schemas"]["FindingKind"];
-            /** @description Byte offset into the text that was scanned. */
-            offset: number;
-            value: string;
+            label: string;
+            owner: string;
+            /** Format: int32 */
+            similarity: number;
+            /** Format: int32 */
+            status?: number | null;
         };
         /** @enum {string} */
-        FindingKind: "comment" | "inline_script" | "script_src" | "link" | "form_action" | "resource" | "url" | "path";
+        FindingKind: "broken_access_control" | "missing_authentication";
         FipsBlock: {
             long_run: components["schemas"]["FipsTest"];
             monobit: components["schemas"]["FipsTest"];
@@ -2616,6 +2650,34 @@ export interface components {
             replace?: string;
             target: components["schemas"]["RuleTarget"];
         };
+        MatrixBody: {
+            identities: components["schemas"]["MatrixIdentity"][];
+            options?: components["schemas"]["Options"] | null;
+            probes: components["schemas"]["MatrixProbe"][];
+        };
+        MatrixIdentity: {
+            /** @description Headers that make a request be this account. */
+            headers?: [
+                string,
+                string
+            ][];
+            name: string;
+            /** @description Headers taken from the vault. */
+            vault?: components["schemas"]["VaultHeader"][];
+        };
+        MatrixProbe: {
+            /** @description Accounts that are meant to reach it too. */
+            allowed?: string[];
+            /** @description A recorded flow, replayed as each account. */
+            flow_id: components["schemas"]["i64"];
+            label?: string | null;
+            /** @description The account the flow was recorded as (an identity name). */
+            owner: string;
+        };
+        MatrixResult: {
+            findings: components["schemas"]["Finding"][];
+            rows: components["schemas"]["Row"][];
+        };
         Me: {
             /** @description Present for cookie sessions: send it as `x-csrf-token` on changes. */
             csrf?: string | null;
@@ -2650,43 +2712,13 @@ export interface components {
          * @enum {string}
          */
         Op: "url_encode" | "url_decode" | "url_decode_form" | "html_encode" | "html_decode" | "base64_encode" | "base64_decode" | "base64url_encode" | "base64url_decode" | "hex_encode" | "hex_decode" | "gzip_decode" | "deflate_decode" | "brotli_decode" | "zstd_decode" | "gzip_encode" | "deflate_encode" | "brotli_encode" | "zstd_encode" | "jwt_decode" | "unicode_escape" | "unicode_unescape" | "md5" | "sha1" | "sha256" | "sha512";
-        /** @description The resource pool and the sending options. */
         Options: {
             /**
              * Format: int32
-             * @description Requests in flight at once (1 to 64). The gate's per-host rate limit still applies on top of this.
-             * @default 5
+             * @description How alike two bodies must be (0 to 100) for the answers to count as the same.
+             * @default 90
              */
-            concurrency: number;
-            /**
-             * Format: int64
-             * @description The least time between the starts of two requests, milliseconds, whatever the concurrency.
-             * @default 0
-             */
-            delay_ms: number;
-            /**
-             * Format: int64
-             * @description Stop after this many requests (at most one million).
-             * @default null
-             */
-            max_requests: number | null;
-            /**
-             * Format: int32
-             * @description How often a request that could not be sent or got no answer is tried again (0 to 10).
-             * @default 0
-             */
-            retries: number;
-            /**
-             * Format: int64
-             * @description The longest one request may take, seconds (1 to 300).
-             * @default 30
-             */
-            timeout_secs: number;
-            /**
-             * @description Rewrite `Content-Length` to match each request, which is almost always wanted when a payload changes the body.
-             * @default true
-             */
-            update_content_length: boolean;
+            similarity_percent: number;
             /** @default false */
             verify_tls: boolean;
         };
@@ -3140,44 +3172,12 @@ export interface components {
         RoleBody: {
             role: components["schemas"]["Role"];
         };
-        /** @description The outcome of one request. */
         Row: {
-            /**
-             * Format: int32
-             * @description How many tries it took (1 when the first worked).
-             */
-            attempts: number;
-            error?: string | null;
-            /** @description One entry per grep extract rule. */
-            extracts: (string | null)[];
-            /**
-             * Format: int64
-             * @description The recorded flow, when something was sent.
-             */
-            flow_id?: number | null;
-            /**
-             * Format: int64
-             * @description Which request of the attack (0-based).
-             */
-            index: number;
-            /**
-             * Format: int64
-             * @description Response size in bytes.
-             */
-            length: number;
-            /** @description One entry per grep match rule. */
-            matches: boolean[];
-            /** @description The payloads used, as text (bytes that are not UTF-8 are replaced). */
-            payloads: string[];
-            /**
-             * Format: int32
-             * @description The position that was attacked, for a sniper attack.
-             */
-            position?: number | null;
-            /** Format: int32 */
-            status?: number | null;
-            /** Format: int64 */
-            time_ms: number;
+            cells: components["schemas"]["Cell"][];
+            label: string;
+            owner: string;
+            /** @description Why there are no comparisons (the owner's own request did not succeed). */
+            skipped?: string | null;
         };
         /** @enum {string} */
         RuleTarget: "request_first_line" | "request_header" | "request_body" | "response_first_line" | "response_header" | "response_body";
@@ -3627,6 +3627,15 @@ export interface components {
             /** Format: int64 */
             updated_ms: number;
         };
+        /** @description Where a header value comes from: a vault entry, opened on the server. */
+        VaultHeader: {
+            /** @description The header to set, such as `Authorization` or `Cookie`. */
+            header: string;
+            /** @description Text put before the secret, such as `Bearer `. */
+            prefix?: string;
+            /** Format: int64 */
+            vault_id: number;
+        };
         VaultList: {
             entries: components["schemas"]["VaultEntry"][];
         };
@@ -3835,6 +3844,66 @@ export interface operations {
                 };
             };
             /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    auth_matrix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatrixBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixResult"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such flow */
             404: {
                 headers: {
                     [name: string]: unknown;

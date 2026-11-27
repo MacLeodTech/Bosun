@@ -662,6 +662,7 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bosun-active",
+ "bosun-auth",
  "bosun-ca",
  "bosun-checks",
  "bosun-client",

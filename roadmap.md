@@ -212,10 +212,9 @@ valid in the "Depends on" column.
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
 | [ ] | WP-73 | Accessibility and keyboard shortcuts | 5 | M | WP-44 |
 | [ ] | WP-80 | Command palette and one shared message viewer | 5 | M | WP-44, WP-73 |
-| [ ] | WP-68 | Encrypted credential vault | 6 | M | WP-20, WP-29 |
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
 | [ ] | WP-54 | Active scan engine and the testbed | 6 | L | WP-40, WP-49, WP-50 |
-| [ ] | WP-55 | Core active checks (rest: XXE, upload, JWT, deserialization, prototype pollution, GraphQL, auth/session, TLS) | 6 | M | WP-54 |
+| [ ] | WP-55 | Core active checks (rest: out-of-band variants via WP-59, wider JWT/GraphQL/XXE coverage, prototype pollution is non-destructive by default, decide) | 6 | S | WP-54 |
 | [ ] | WP-56 | `bosun-auth` and the authorisation matrix | 6 | L | WP-54, WP-68 |
 | [ ] | WP-57 | `bosun scan` (rest: consume `scan_*` events in the client, drive a `--no-ui` engine, scope SARIF to the scan, container recipes untested in CI) | 6 | S | WP-25, WP-26, WP-51, WP-54 |
 | [ ] | WP-72 | Scanner benchmarks against ZAP | 6 | M | WP-55 |
@@ -498,12 +497,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Runs without the UI (`serve --no-ui` from WP-25) or against a remote engine (WP-26).
   - Documented recipes for GitHub Actions and GitLab CI, and use as a container image (WP-24).
 - **Done when:** a CI job scans the testbed and fails on its planted high-severity issue.
-
-#### WP-68 Encrypted credential vault · Phase 6 · M
-
-- **Do:** a vault for auth configs, client certificates (WP-33) and OAST keys (WP-59), sealed with the project key
-  from WP-29 and the data key. Its secrets are never sent to the UI in full; they are referenced by id.
-- **Done when:** tests show vault contents are unreadable in the project file and absent from API responses.
 
 #### WP-72 Scanner benchmarks against ZAP · Phase 6 · M
 

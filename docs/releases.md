@@ -7,6 +7,16 @@ There is no tagged release yet. The first public preview is v0.2, at the end of 
 
 Newest first. Each entry keeps the work package's original brief (why, do, done when) and its "Done" note.
 
+## Active checks rest and the credential vault (branch `wp-43`, 2026-11-26)
+
+- **WP-55 (rest):** `active-xxe`, `active-file-upload` (destructive), `active-jwt`, `active-deserialization`,
+  `active-prototype-pollution`, `active-graphql`, `active-session` and `active-tls`, each with a planted testbed target
+  and a safe twin. TLS probes go through `Gate::check`. Prototype pollution sets one inert property and is not marked
+  destructive.
+- **WP-68:** sealed `vault` table (migration 10), `/vault` API (admin writes, audited, masked hints only), client
+  methods and a Vault panel. Tests show secrets absent from the project file and API responses. Client certificate
+  passwords are not stored, so nothing migrated. `vault::open_secret` is ready for WP-56 and WP-59.
+
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
 
 - **Priority batch** (`wp-43`, 2026-11-26).

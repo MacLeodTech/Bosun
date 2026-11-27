@@ -38,6 +38,10 @@ flate2.workspace = true
 p12-keystore = "0.4.1"
 x509-parser.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Safe wrapper over getsockopt(SO_ORIGINAL_DST) for transparent (redirected) connections.
+nix = { version = "0.32", default-features = false, features = ["net", "socket"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 reqwest.workspace = true

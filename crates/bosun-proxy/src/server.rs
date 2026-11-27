@@ -293,6 +293,29 @@ struct ConnCtx {
     peer: SocketAddr,
     listener: Arc<ListenerRt>,
     tunnel: Option<Tunnel>,
+    /// Where a redirected (transparent) connection was originally headed; `None` when it was addressed to the
+    /// proxy itself or the platform can't say.
+    orig_dst: Option<SocketAddr>,
+}
+
+/// The original destination of a connection redirected to us by the firewall (Linux `SO_ORIGINAL_DST`).
+#[cfg(target_os = "linux")]
+fn original_dst(stream: &TcpStream) -> Option<SocketAddr> {
+    use nix::sys::socket::{getsockopt, sockopt};
+    if let Ok(a) = getsockopt(stream, sockopt::OriginalDst) {
+        let ip = std::net::Ipv4Addr::from(u32::from_be(a.sin_addr.s_addr));
+        return Some(SocketAddr::new(ip.into(), u16::from_be(a.sin_port)));
+    }
+    let a = getsockopt(stream, sockopt::Ip6tOriginalDst).ok()?;
+    Some(SocketAddr::new(
+        std::net::Ipv6Addr::from(a.sin6_addr.s6_addr).into(),
+        u16::from_be(a.sin6_port),
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn original_dst(_: &TcpStream) -> Option<SocketAddr> {
+    None
 }
 
 /// Resource counters (see [`Proxy::stats`]).
@@ -776,11 +799,15 @@ impl Shared {
             return;
         }
         let _ = stream.set_nodelay(true);
-        let ctx = ConnCtx {
+        let mut ctx = ConnCtx {
             peer,
             listener,
             tunnel: None,
+            orig_dst: None,
         };
+        if ctx.listener.opts().spec.invisible {
+            ctx.orig_dst = original_dst(&stream).filter(|d| Some(*d) != stream.local_addr().ok());
+        }
         if ctx.listener.opts().spec.invisible {
             // Transparent HTTPS: a TLS ClientHello arriving straight at the listener. The target is the SNI
             // (port 443); without one there is nothing to name the host, so the connection is closed.
@@ -788,7 +815,8 @@ impl Shared {
             let seen = tokio::time::timeout(Duration::from_secs(30), stream.peek(&mut first)).await;
             match seen {
                 Ok(Ok(1)) if first[0] == 0x16 => {
-                    self.mitm(stream, ctx, String::new(), 443).await;
+                    let port = ctx.orig_dst.map_or(443, |d| d.port());
+                    self.mitm(stream, ctx, String::new(), port).await;
                     return;
                 }
                 Ok(Ok(n)) if n > 0 => {}
@@ -883,7 +911,7 @@ impl Shared {
             Tunnel {
                 scheme: Scheme::Http,
                 host: host.to_ascii_lowercase(),
-                port: port.unwrap_or(80),
+                port: port.unwrap_or_else(|| ctx.orig_dst.map_or(80, |d| d.port())),
             }
         } else {
             return text(
@@ -991,10 +1019,14 @@ impl Shared {
                 // Transparent mode: the SNI is the only name the client gave.
                 match &sni {
                     Some(n) => host = n.clone(),
-                    None => {
-                        tracing::info!("transparent TLS connection without an SNI; closing");
-                        return;
-                    }
+                    None => match ctx.orig_dst {
+                        // No SNI, but the firewall told us where it was going.
+                        Some(d) => host = d.ip().to_string(),
+                        None => {
+                            tracing::info!("transparent TLS connection without an SNI or original destination; closing");
+                            return;
+                        }
+                    },
                 }
             }
             let cert_host = sni.clone().unwrap_or_else(|| host.clone());

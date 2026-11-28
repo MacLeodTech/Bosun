@@ -33,7 +33,11 @@ pub fn parse(input: &[u8], opts: &Options, out: &mut Out) -> Result<(), ImportEr
         let Some(root) = schema.pointer(&format!("/{key}/name")).and_then(Value::as_str) else {
             continue;
         };
-        let Some(fields) = types.get(root).and_then(|t| t.get("fields")).and_then(Value::as_array) else {
+        let Some(fields) = types
+            .get(root)
+            .and_then(|t| t.get("fields"))
+            .and_then(Value::as_array)
+        else {
             continue;
         };
         for f in fields {
@@ -93,7 +97,8 @@ pub fn parse(input: &[u8], opts: &Options, out: &mut Out) -> Result<(), ImportEr
 
 fn cap(n: &str) -> String {
     let mut c = n.chars();
-    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
+    c.next()
+        .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
 /// A GraphQL name. Introspection results are untrusted and the names end up in query text.
@@ -141,8 +146,15 @@ fn sample(types: &HashMap<&str, &Value>, t: &Value, depth: u8) -> Value {
             .unwrap_or(Value::Null),
         Some("INPUT_OBJECT") => {
             let mut o = Map::new();
-            let fields = types.get(text(t, "name").unwrap_or("")).and_then(|d| d.get("inputFields"));
-            for f in fields.and_then(Value::as_array).into_iter().flatten().take(MAX_FIELDS) {
+            let fields = types
+                .get(text(t, "name").unwrap_or(""))
+                .and_then(|d| d.get("inputFields"));
+            for f in fields
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(MAX_FIELDS)
+            {
                 if f["type"].get("kind").and_then(Value::as_str) == Some("NON_NULL")
                     && let Some(n) = text(f, "name").filter(|n| ident(n))
                 {
@@ -177,14 +189,17 @@ fn selection(types: &HashMap<&str, &Value>, t: &Value, depth: u8) -> Option<Stri
         let Some(n) = text(f, "name").filter(|n| ident(n)) else {
             continue;
         };
-        let needs_args = f
-            .get("args")
-            .and_then(Value::as_array)
-            .is_some_and(|a| a.iter().any(|x| x["type"].get("kind").and_then(Value::as_str) == Some("NON_NULL")));
+        let needs_args = f.get("args").and_then(Value::as_array).is_some_and(|a| {
+            a.iter()
+                .any(|x| x["type"].get("kind").and_then(Value::as_str) == Some("NON_NULL"))
+        });
         if needs_args {
             continue;
         }
-        match named(types, &f["type"]).and_then(|x| x.get("kind")).and_then(Value::as_str) {
+        match named(types, &f["type"])
+            .and_then(|x| x.get("kind"))
+            .and_then(Value::as_str)
+        {
             Some("SCALAR" | "ENUM") => parts.push(n.to_string()),
             Some("OBJECT") if depth > 0 => {
                 if let Some(s) = selection(types, &f["type"], depth - 1) {
@@ -194,5 +209,9 @@ fn selection(types: &HashMap<&str, &Value>, t: &Value, depth: u8) -> Option<Stri
             _ => {}
         }
     }
-    Some(if parts.is_empty() { "__typename".into() } else { parts.join(" ") })
+    Some(if parts.is_empty() {
+        "__typename".into()
+    } else {
+        parts.join(" ")
+    })
 }

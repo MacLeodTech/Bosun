@@ -243,7 +243,9 @@ impl Out {
             return self.note(format!("{name}: not an absolute URL"));
         };
         if !matches!(u.scheme(), "http" | "https") || u.host_str().is_none_or(str::is_empty) {
-            return self.note(format!("{name}: only http and https URLs with a host are imported"));
+            return self.note(format!(
+                "{name}: only http and https URLs with a host are imported"
+            ));
         }
         if body.len() > MAX_BODY {
             body.truncate(MAX_BODY);
@@ -252,9 +254,8 @@ impl Out {
         let headers = headers
             .into_iter()
             .filter(|(k, v)| {
-                let ok_name = !k.is_empty()
-                    && k.len() <= 256
-                    && k.bytes().all(|b| b.is_ascii_graphic() && b != b':');
+                let ok_name =
+                    !k.is_empty() && k.len() <= 256 && k.bytes().all(|b| b.is_ascii_graphic() && b != b':');
                 let ok_val = v.len() <= 8192 && !v.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0);
                 ok_name
                     && ok_val

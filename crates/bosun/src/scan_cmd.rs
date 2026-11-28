@@ -222,7 +222,10 @@ fn is_page(p: &Value) -> bool {
     let ok = p["status"].as_u64().is_some_and(|s| (200..400).contains(&s));
     let ct = p["content_type"].as_str().unwrap_or("").to_ascii_lowercase();
     ok && p["method"].as_str().unwrap_or("GET") == "GET"
-        && (ct.is_empty() || ["html", "json", "xml", "text/plain"].iter().any(|k| ct.contains(k)))
+        && (ct.is_empty()
+            || ["html", "json", "xml", "text/plain"]
+                .iter()
+                .any(|k| ct.contains(k)))
 }
 
 /// What to scan after a crawl: its pages, its GET forms filled with their default values, and (on request) its
@@ -240,13 +243,20 @@ fn crawl_targets(done: &Value, post_forms: bool) -> Vec<Value> {
             .unwrap_or_default();
         out.push(target_json(method, u, &headers, body));
     };
-    for p in done["results"].as_array().into_iter().flatten().filter(|p| is_page(p)) {
+    for p in done["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| is_page(p))
+    {
         if let Some(u) = p["url"].as_str() {
             add("GET", u, None, None);
         }
     }
     for f in done["forms"].as_array().into_iter().flatten() {
-        let Some(action) = f["action"].as_str() else { continue };
+        let Some(action) = f["action"].as_str() else {
+            continue;
+        };
         let method = f["method"].as_str().unwrap_or("GET").to_ascii_uppercase();
         let pairs: Vec<(&str, &str)> = f["fields"]
             .as_array()
@@ -257,7 +267,9 @@ fn crawl_targets(done: &Value, post_forms: bool) -> Vec<Value> {
             .collect();
         let enc = f["enctype"].as_str().unwrap_or("");
         if method == "GET" {
-            let Ok(mut u) = url::Url::parse(action) else { continue };
+            let Ok(mut u) = url::Url::parse(action) else {
+                continue;
+            };
             u.set_query(None);
             u.query_pairs_mut().extend_pairs(pairs.iter().copied());
             add("GET", u.as_str(), None, None);
@@ -265,7 +277,12 @@ fn crawl_targets(done: &Value, post_forms: bool) -> Vec<Value> {
             let body = url::form_urlencoded::Serializer::new(String::new())
                 .extend_pairs(pairs.iter().copied())
                 .finish();
-            add("POST", action, Some(body), Some("application/x-www-form-urlencoded"));
+            add(
+                "POST",
+                action,
+                Some(body),
+                Some("application/x-www-form-urlencoded"),
+            );
         }
     }
     out
@@ -373,13 +390,18 @@ async fn scan(
                     "submit_post_forms": a.post_forms, "headers": a.headers, "verify_tls": a.verify_tls,
                 }))
                 .await?;
-            let id = started["id"].as_u64().context("the engine did not return a crawl id")?;
+            let id = started["id"]
+                .as_u64()
+                .context("the engine did not return a crawl id")?;
             if !a.quiet {
                 eprintln!("crawling {base}");
             }
             let done = wait_crawl(c, id, limit).await?;
             if done["state"].as_str() == Some("failed") {
-                bail!("the crawl failed: {}", done["error"].as_str().unwrap_or("unknown error"));
+                bail!(
+                    "the crawl failed: {}",
+                    done["error"].as_str().unwrap_or("unknown error")
+                );
             }
             let mut found = crawl_targets(&done, a.post_forms);
             if !a.quiet {
@@ -405,7 +427,9 @@ async fn scan(
             "headers": a.headers, "verify_tls": a.verify_tls,
         }))
         .await?;
-    let id = started["id"].as_u64().context("the engine did not return a scan id")?;
+    let id = started["id"]
+        .as_u64()
+        .context("the engine did not return a scan id")?;
     let mut last_line = String::new();
     let mut last_print = Instant::now() - Duration::from_secs(10);
     let mut timed_out = false;

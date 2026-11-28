@@ -524,8 +524,11 @@ impl Client {
 
     /// Replace the project's `.proto` schema; an empty `source` clears it. A schema that does not parse is refused.
     pub async fn put_proto_schema(&self, source: &str) -> Result<ProtoSchema> {
-        self.json(self.req(Method::PUT, "/proto/schema").json(&serde_json::json!({ "source": source })))
-            .await
+        self.json(
+            self.req(Method::PUT, "/proto/schema")
+                .json(&serde_json::json!({ "source": source })),
+        )
+        .await
     }
 
     /// The Map Local, Map Remote and throttle rules, in the order they are tried.

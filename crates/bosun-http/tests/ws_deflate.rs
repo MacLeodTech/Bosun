@@ -69,7 +69,10 @@ async fn first(addr: std::net::SocketAddr) -> (bosun_http::ws::Frame, WsRecorder
 async fn deflated_messages_are_recorded_inflated() {
     let (f, mut rec) = first(server(true).await).await;
     assert_eq!(f.rsv, 0b100);
-    assert_ne!(f.payload, b"hello hello hello", "the frame itself stays compressed");
+    assert_ne!(
+        f.payload, b"hello hello hello",
+        "the frame itself stays compressed"
+    );
     let m = rec.message(Direction::ServerToClient, &f, 1 << 20).unwrap();
     assert_eq!(m.flow_id, 7);
     assert_eq!(m.opcode, 1);

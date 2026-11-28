@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 use crate::auth::{Caller, check_password_policy, check_username, hash_password, random_token};
 use crate::security::{empty, reject};
 use crate::{
-    AppState, SETTING_INTERCEPT, SETTING_PROTO_SCHEMA, SETTING_RESPONSE_FILTER, SETTING_RULES, SETTING_SAVED_FILTERS, SETTING_SCOPE,
+    AppState, SETTING_INTERCEPT, SETTING_PROTO_SCHEMA, SETTING_RESPONSE_FILTER, SETTING_RULES,
+    SETTING_SAVED_FILTERS, SETTING_SCOPE,
 };
 
 type R = Result<Response, Response>;
@@ -1286,11 +1287,19 @@ pub struct ProtoSchemaBody {
 
 fn proto_schema_reply(source: String) -> Result<ProtoSchema, Response> {
     if source.trim().is_empty() {
-        return Ok(ProtoSchema { source: String::new(), messages: Vec::new(), calls: Vec::new() });
+        return Ok(ProtoSchema {
+            source: String::new(),
+            messages: Vec::new(),
+            calls: Vec::new(),
+        });
     }
     let s = bosun_codec::Schema::parse(&source)
         .map_err(|e| reject(StatusCode::BAD_REQUEST, &format!("the schema: {e}")))?;
-    Ok(ProtoSchema { messages: s.message_names(), calls: s.rpc_paths(), source })
+    Ok(ProtoSchema {
+        messages: s.message_names(),
+        calls: s.rpc_paths(),
+        source,
+    })
 }
 
 pub async fn get_proto_schema(State(st): State<AppState>, caller: Caller) -> R {
@@ -1300,12 +1309,19 @@ pub async fn get_proto_schema(State(st): State<AppState>, caller: Caller) -> R {
         .await?
         .map_err(internal)?;
     // A schema that was saved is one that parsed, so this only fails if the parser changed under it.
-    let reply = proto_schema_reply(source.unwrap_or_default())
-        .unwrap_or_else(|_| ProtoSchema { source: String::new(), messages: Vec::new(), calls: Vec::new() });
+    let reply = proto_schema_reply(source.unwrap_or_default()).unwrap_or_else(|_| ProtoSchema {
+        source: String::new(),
+        messages: Vec::new(),
+        calls: Vec::new(),
+    });
     Ok(Json(reply).into_response())
 }
 
-pub async fn put_proto_schema(State(st): State<AppState>, caller: Caller, Json(b): Json<ProtoSchemaBody>) -> R {
+pub async fn put_proto_schema(
+    State(st): State<AppState>,
+    caller: Caller,
+    Json(b): Json<ProtoSchemaBody>,
+) -> R {
     caller.require(Role::Tester)?;
     let _settings = st.inner.projects.settings_guard().await;
     let reply = tokio::task::spawn_blocking(move || proto_schema_reply(b.source))

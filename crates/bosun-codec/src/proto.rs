@@ -65,7 +65,10 @@ fn quote(b: &[u8], out: &mut String) {
             Err(e) => {
                 let n = e.valid_up_to();
                 // Safe: valid_up_to is a valid prefix.
-                (std::str::from_utf8(&rest[..n]).unwrap_or(""), e.error_len().unwrap_or(rest.len() - n))
+                (
+                    std::str::from_utf8(&rest[..n]).unwrap_or(""),
+                    e.error_len().unwrap_or(rest.len() - n),
+                )
             }
         };
         for c in ok.chars() {
@@ -143,7 +146,9 @@ fn varint_text(t: Typed<'_>, ty: &Ty, v: u64) -> Option<String> {
             if i64::from(x) as u64 != v {
                 return None;
             }
-            t.enumeration(n).and_then(|e| e.name_of(x)).map_or_else(|| x.to_string(), str::to_owned)
+            t.enumeration(n)
+                .and_then(|e| e.name_of(x))
+                .map_or_else(|| x.to_string(), str::to_owned)
         }
         _ => return None,
     })
@@ -175,7 +180,15 @@ fn fixed32_text(ty: &Ty, v: u32) -> Option<String> {
 
 /// A length-delimited field the schema knows: text, bytes, a nested message, or a packed run of numbers.
 /// Returns false when it does not fit (the caller then shows it as an unknown field).
-fn len_typed(t: Typed<'_>, f: &Field, data: &[u8], depth: usize, pad: &str, out: &mut String, limit: usize) -> Res<bool> {
+fn len_typed(
+    t: Typed<'_>,
+    f: &Field,
+    data: &[u8],
+    depth: usize,
+    pad: &str,
+    out: &mut String,
+    limit: usize,
+) -> Res<bool> {
     let name = &f.name;
     match &f.ty {
         Ty::Scalar(Scalar::String) => {
@@ -208,12 +221,16 @@ fn len_typed(t: Typed<'_>, f: &Field, data: &[u8], depth: usize, pad: &str, out:
                     Ty::Scalar(Scalar::Fixed32 | Scalar::Sfixed32 | Scalar::Float) => {
                         let b = data.get(pos..pos + 4);
                         pos += 4;
-                        b.and_then(|b| fixed32_text(&f.ty, u32::from_le_bytes(b.try_into().unwrap_or_default())))
+                        b.and_then(|b| {
+                            fixed32_text(&f.ty, u32::from_le_bytes(b.try_into().unwrap_or_default()))
+                        })
                     }
                     Ty::Scalar(Scalar::Fixed64 | Scalar::Sfixed64 | Scalar::Double) => {
                         let b = data.get(pos..pos + 8);
                         pos += 8;
-                        b.and_then(|b| fixed64_text(&f.ty, u64::from_le_bytes(b.try_into().unwrap_or_default())))
+                        b.and_then(|b| {
+                            fixed64_text(&f.ty, u64::from_le_bytes(b.try_into().unwrap_or_default()))
+                        })
                     }
                     Ty::Scalar(Scalar::String | Scalar::Bytes) => None,
                     _ => varint(data, &mut pos).and_then(|v| varint_text(t, &f.ty, v)),
@@ -247,13 +264,18 @@ fn message(buf: &[u8], depth: usize, out: &mut String, limit: usize, typed: Opti
         match wire {
             0 => {
                 let v = varint(buf, &mut pos).ok_or(CodecError::Invalid("protobuf message"))?;
-                match typed.zip(field).and_then(|(t, f)| varint_text(t, &f.ty, v).map(|s| (f, s))) {
+                match typed
+                    .zip(field)
+                    .and_then(|(t, f)| varint_text(t, &f.ty, v).map(|s| (f, s)))
+                {
                     Some((f, s)) => out.push_str(&format!("{pad}{}: {s}\n", f.name)),
                     None => out.push_str(&format!("{pad}{num}: {v}\n")),
                 }
             }
             1 => {
-                let b = buf.get(pos..pos + 8).ok_or(CodecError::Invalid("protobuf message"))?;
+                let b = buf
+                    .get(pos..pos + 8)
+                    .ok_or(CodecError::Invalid("protobuf message"))?;
                 pos += 8;
                 let v = u64::from_le_bytes(b.try_into().unwrap_or_default());
                 match field.and_then(|f| fixed64_text(&f.ty, v).map(|s| (f, s))) {
@@ -262,7 +284,9 @@ fn message(buf: &[u8], depth: usize, out: &mut String, limit: usize, typed: Opti
                 }
             }
             5 => {
-                let b = buf.get(pos..pos + 4).ok_or(CodecError::Invalid("protobuf message"))?;
+                let b = buf
+                    .get(pos..pos + 4)
+                    .ok_or(CodecError::Invalid("protobuf message"))?;
                 pos += 4;
                 let v = u32::from_le_bytes(b.try_into().unwrap_or_default());
                 match field.and_then(|f| fixed32_text(&f.ty, v).map(|s| (f, s))) {
@@ -340,7 +364,11 @@ impl Reader<'_> {
     fn word(&mut self) -> &[u8] {
         self.skip();
         let start = self.pos;
-        while self.s.get(self.pos).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_') {
+        while self
+            .s
+            .get(self.pos)
+            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+        {
             self.pos += 1;
         }
         &self.s[start..self.pos]
@@ -411,7 +439,11 @@ fn number(r: &mut Reader) -> Res<u64> {
 fn token<'a>(r: &mut Reader<'a>) -> &'a str {
     r.skip();
     let start = r.pos;
-    while r.s.get(r.pos).is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'+' | b'-')) {
+    while r
+        .s
+        .get(r.pos)
+        .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'+' | b'-'))
+    {
         r.pos += 1;
     }
     std::str::from_utf8(&r.s[start..r.pos]).unwrap_or("")
@@ -447,7 +479,10 @@ fn typed_value(r: &mut Reader, t: Typed<'_>, f: &Field, out: &mut Vec<u8>) -> Re
             let int = || int_of(tok).ok_or_else(bad);
             let mut b = Vec::new();
             match sc {
-                Scalar::Int32 => put_varint(&mut b, i64::from(i32::try_from(int()?).map_err(|_| bad())?) as u64),
+                Scalar::Int32 => put_varint(
+                    &mut b,
+                    i64::from(i32::try_from(int()?).map_err(|_| bad())?) as u64,
+                ),
                 Scalar::Int64 => put_varint(&mut b, i64::try_from(int()?).map_err(|_| bad())? as u64),
                 Scalar::Uint32 => put_varint(&mut b, u64::from(u32::try_from(int()?).map_err(|_| bad())?)),
                 Scalar::Uint64 => put_varint(&mut b, u64::try_from(int()?).map_err(|_| bad())?),
@@ -506,7 +541,14 @@ fn emit(out: &mut Vec<u8>, tag: u64, bytes: &[u8]) -> Res<()> {
     Ok(())
 }
 
-fn fields(r: &mut Reader, depth: usize, out: &mut Vec<u8>, limit: usize, close: bool, typed: Option<Typed<'_>>) -> Res<()> {
+fn fields(
+    r: &mut Reader,
+    depth: usize,
+    out: &mut Vec<u8>,
+    limit: usize,
+    close: bool,
+    typed: Option<Typed<'_>>,
+) -> Res<()> {
     if depth > MAX_DEPTH {
         return Err(bad());
     }
@@ -537,7 +579,12 @@ fn fields(r: &mut Reader, depth: usize, out: &mut Vec<u8>, limit: usize, close: 
         }
         if r.eat(b'{') {
             let sub = match (typed, field) {
-                (Some(t), Some(Field { ty: Ty::Message(m), .. })) => t.sub(m),
+                (
+                    Some(t),
+                    Some(Field {
+                        ty: Ty::Message(m), ..
+                    }),
+                ) => t.sub(m),
                 _ => None,
             };
             if named && sub.is_none() {
@@ -568,7 +615,9 @@ fn fields(r: &mut Reader, depth: usize, out: &mut Vec<u8>, limit: usize, close: 
                 out.extend_from_slice(&s);
             }
             _ if named => {
-                let (Some(t), Some(f)) = (typed, field) else { return Err(bad()) };
+                let (Some(t), Some(f)) = (typed, field) else {
+                    return Err(bad());
+                };
                 typed_value(r, t, f, out)?;
             }
             _ => {
@@ -672,7 +721,9 @@ impl Packing {
         match b {
             [0x1f, 0x8b, ..] => Some(Packing::Gzip),
             [0x28, 0xb5, 0x2f, 0xfd, ..] => Some(Packing::Zstd),
-            [a, b, ..] if a & 0x0f == 8 && (u16::from(*a) << 8 | u16::from(*b)) % 31 == 0 => Some(Packing::Deflate),
+            [a, b, ..] if a & 0x0f == 8 && (u16::from(*a) << 8 | u16::from(*b)) % 31 == 0 => {
+                Some(Packing::Deflate)
+            }
             _ => None,
         }
     }
@@ -852,7 +903,10 @@ mod tests {
 
     #[test]
     fn rejects_garbage_and_deep_nesting() {
-        assert!(decode_text(&[0x0a, 0x05, 1], LIMIT).is_err(), "length past the end");
+        assert!(
+            decode_text(&[0x0a, 0x05, 1], LIMIT).is_err(),
+            "length past the end"
+        );
         assert!(decode_text(&[0x00, 0x01], LIMIT).is_err(), "field 0");
         assert!(decode_text(&[0x0b], LIMIT).is_err(), "group");
         let deep = "1 {".repeat(100);
@@ -872,7 +926,11 @@ mod tests {
     #[test]
     fn grpc_round_trip_with_trailers_and_compressed() {
         let mut body = Vec::new();
-        for (flag, p) in [(0u8, vec![0x08, 0x07]), (1, vec![1, 2, 3]), (0x80, b"grpc-status: 0\r\n".to_vec())] {
+        for (flag, p) in [
+            (0u8, vec![0x08, 0x07]),
+            (1, vec![1, 2, 3]),
+            (0x80, b"grpc-status: 0\r\n".to_vec()),
+        ] {
             body.push(flag);
             body.extend_from_slice(&(p.len() as u32).to_be_bytes());
             body.extend_from_slice(&p);
@@ -880,8 +938,14 @@ mod tests {
         let t = grpc_decode(&body, LIMIT).unwrap();
         let raw = grpc_decode(&[0, 0, 0, 0, 2, 0xff, 0xff], LIMIT).unwrap();
         assert_eq!(raw, "@raw\nh\"ffff\"\n");
-        assert_eq!(grpc_encode(raw.as_bytes(), LIMIT).unwrap(), [0, 0, 0, 0, 2, 0xff, 0xff]);
-        assert!(t.starts_with("@message\n1: 7\n@message compressed\nh\"010203\"\n@trailers\n"), "{t}");
+        assert_eq!(
+            grpc_encode(raw.as_bytes(), LIMIT).unwrap(),
+            [0, 0, 0, 0, 2, 0xff, 0xff]
+        );
+        assert!(
+            t.starts_with("@message\n1: 7\n@message compressed\nh\"010203\"\n@trailers\n"),
+            "{t}"
+        );
         assert_eq!(grpc_encode(t.as_bytes(), LIMIT).unwrap(), body);
     }
 
@@ -928,7 +992,11 @@ mod tests {
         let plain = decode_text(&bytes, LIMIT).unwrap();
         assert!(plain.contains("1: 18446744073709551609"), "{plain}");
         assert_eq!(decode_text_with(&bytes, LIMIT, Some(typed(&s))).unwrap(), text);
-        assert_eq!(encode_text(plain.as_bytes(), LIMIT).unwrap(), bytes, "numbers still encode the same bytes");
+        assert_eq!(
+            encode_text(plain.as_bytes(), LIMIT).unwrap(),
+            bytes,
+            "numbers still encode the same bytes"
+        );
     }
 
     #[test]
@@ -938,21 +1006,42 @@ mod tests {
         let t = decode_text_with(&[0x22, 0x02, 6, 7], LIMIT, Some(typed(&s))).unwrap();
         assert_eq!(t, "deltas: 3\ndeltas: -4\n");
         // bool 2 is not a bool, an enum value with no name keeps its number, a string where an int goes stays numeric.
-        assert_eq!(decode_text_with(&[0x40, 2], LIMIT, Some(typed(&s))).unwrap(), "8: 2\n");
-        assert_eq!(decode_text_with(&[0x18, 9], LIMIT, Some(typed(&s))).unwrap(), "tier: 9\n");
-        assert_eq!(decode_text_with(&[0x0a, 2, 0xff, 0xff], LIMIT, Some(typed(&s))).unwrap(), "1: h\"ffff\"\n");
+        assert_eq!(
+            decode_text_with(&[0x40, 2], LIMIT, Some(typed(&s))).unwrap(),
+            "8: 2\n"
+        );
+        assert_eq!(
+            decode_text_with(&[0x18, 9], LIMIT, Some(typed(&s))).unwrap(),
+            "tier: 9\n"
+        );
+        assert_eq!(
+            decode_text_with(&[0x0a, 2, 0xff, 0xff], LIMIT, Some(typed(&s))).unwrap(),
+            "1: h\"ffff\"\n"
+        );
         // An int32 with bits above 32 cannot be shown as one.
         let wide = [0x08, 0x81, 0x80, 0x80, 0x80, 0x10];
         let t = decode_text_with(&wide, LIMIT, Some(typed(&s))).unwrap();
         assert_eq!(t, "1: 4294967297\n");
-        assert_eq!(encode_text_with(t.as_bytes(), LIMIT, Some(typed(&s))).unwrap(), wide);
+        assert_eq!(
+            encode_text_with(t.as_bytes(), LIMIT, Some(typed(&s))).unwrap(),
+            wide
+        );
     }
 
     #[test]
     fn schema_errors_name_nothing_it_does_not_know() {
         let s = Schema::parse(SCHEMA).unwrap();
         let t = Some(typed(&s));
-        for bad in ["nope: 1", "id: abc", "id: 99999999999", "name: 5", "home: 1", "vip: maybe", "tier: PLATINUM", "id {\n}"] {
+        for bad in [
+            "nope: 1",
+            "id: abc",
+            "id: 99999999999",
+            "name: 5",
+            "home: 1",
+            "vip: maybe",
+            "tier: PLATINUM",
+            "id {\n}",
+        ] {
             assert!(encode_text_with(bad.as_bytes(), LIMIT, t).is_err(), "{bad}");
         }
         assert!(encode_text(b"id: 1", LIMIT).is_err(), "names need a schema");
@@ -963,12 +1052,18 @@ mod tests {
         let s = Schema::parse(SCHEMA).unwrap();
         let (req, _) = s.rpc("/shop.v1.Shop/Get").unwrap();
         for name in ["gzip", "deflate", "zstd"] {
-            let text = format!("@message\nid: 5\n@message compressed {name}\nname: \"x\"\n@trailers\n\"grpc-status: 0\\r\\n\"\n");
+            let text = format!(
+                "@message\nid: 5\n@message compressed {name}\nname: \"x\"\n@trailers\n\"grpc-status: 0\\r\\n\"\n"
+            );
             let body = grpc_encode_with(text.as_bytes(), LIMIT, Some(req)).unwrap();
             assert_eq!(body[5 + 2], 1, "the second frame is flagged compressed: {name}");
             assert_eq!(grpc_decode_with(&body, LIMIT, Some(req)).unwrap(), text, "{name}");
             // Without the schema it is the same bytes, with numbers.
-            assert!(grpc_decode(&body, LIMIT).unwrap().contains(&format!("@message compressed {name}\n2: \"x\"")));
+            assert!(
+                grpc_decode(&body, LIMIT)
+                    .unwrap()
+                    .contains(&format!("@message compressed {name}\n2: \"x\""))
+            );
         }
         // An unknown algorithm, or bytes that unpack to something else, stay as hex.
         let t = grpc_decode(&[1, 0, 0, 0, 3, 9, 9, 9], LIMIT).unwrap();

@@ -370,7 +370,12 @@ pub fn apply(op: Op, input: &[u8], limit: usize) -> Result<Vec<u8>, CodecError> 
 }
 
 /// [`apply`] with a schema, which the protobuf and gRPC operations use to name fields.
-pub fn apply_with(op: Op, input: &[u8], limit: usize, typed: Option<Typed<'_>>) -> Result<Vec<u8>, CodecError> {
+pub fn apply_with(
+    op: Op,
+    input: &[u8],
+    limit: usize,
+    typed: Option<Typed<'_>>,
+) -> Result<Vec<u8>, CodecError> {
     let out = match op {
         Op::UrlEncode => {
             check(input.len().saturating_mul(3), limit.saturating_mul(1)).or_else(|e| {

@@ -1023,7 +1023,9 @@ impl Shared {
                         // No SNI, but the firewall told us where it was going.
                         Some(d) => host = d.ip().to_string(),
                         None => {
-                            tracing::info!("transparent TLS connection without an SNI or original destination; closing");
+                            tracing::info!(
+                                "transparent TLS connection without an SNI or original destination; closing"
+                            );
                             return;
                         }
                     },

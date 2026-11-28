@@ -57,7 +57,11 @@ pub fn example(root: &Value, schema: &Value, depth: u8) -> Value {
     }
     let ty = match s.get("type") {
         Some(Value::String(t)) => t.as_str(),
-        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).find(|t| *t != "null").unwrap_or("null"),
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|t| *t != "null")
+            .unwrap_or("null"),
         _ if s.get("properties").is_some() => "object",
         _ if s.get("items").is_some() => "array",
         _ => "string",

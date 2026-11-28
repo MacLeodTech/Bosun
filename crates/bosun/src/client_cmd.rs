@@ -412,13 +412,26 @@ pub async fn import(server: Option<&str>, profile: Option<&str>, a: ImportArgs) 
         println!("{reply}");
         return Ok(ExitCode::SUCCESS);
     }
-    for n in reply["notes"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+    for n in reply["notes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
         eprintln!("skipped: {n}");
     }
-    let hosts: Vec<&str> = reply["hosts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let hosts: Vec<&str> = reply["hosts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
     println!(
         "{} found, {} saved as Repeater tabs, {} not saved (tab limit), {} dropped (import limit){}",
-        reply["parsed"], reply["added"], reply["not_added"], reply["dropped"],
+        reply["parsed"],
+        reply["added"],
+        reply["not_added"],
+        reply["dropped"],
         if a.dry_run { " (dry run)" } else { "" }
     );
     println!("hosts (check your scope before sending): {}", hosts.join(", "));
@@ -607,7 +620,9 @@ pub async fn crawl_run(
     let (url, token) = resolve(server, profile)?;
     let c = client(&url, token)?;
     let started = c.crawl_start(body).await?;
-    let id = started["id"].as_u64().context("the engine did not return a crawl id")?;
+    let id = started["id"]
+        .as_u64()
+        .context("the engine did not return a crawl id")?;
     eprintln!("crawl {id} started");
     let last = loop {
         let d = c.crawl_get(id, 0).await?;
@@ -622,14 +637,24 @@ pub async fn crawl_run(
     } else {
         let mut t = String::from("url,method,depth,status,content_type,bytes,title,found_on,error\n");
         for p in &pages {
-            let cols: Vec<String> = ["url", "method", "depth", "status", "content_type", "bytes", "title", "found_on", "error"]
-                .iter()
-                .map(|k| match &p[*k] {
-                    Value::Null => String::new(),
-                    Value::String(s) => s.clone(),
-                    v => v.to_string(),
-                })
-                .collect();
+            let cols: Vec<String> = [
+                "url",
+                "method",
+                "depth",
+                "status",
+                "content_type",
+                "bytes",
+                "title",
+                "found_on",
+                "error",
+            ]
+            .iter()
+            .map(|k| match &p[*k] {
+                Value::Null => String::new(),
+                Value::String(s) => s.clone(),
+                v => v.to_string(),
+            })
+            .collect();
             t.push_str(&cols.iter().map(|c| csv_field(c)).collect::<Vec<_>>().join(","));
             t.push('\n');
         }
@@ -646,7 +671,11 @@ pub async fn crawl_run(
         last["requests"],
         last["out_of_scope"].as_array().map_or(0, Vec::len)
     );
-    Ok(if state == "done" { ExitCode::SUCCESS } else { ExitCode::from(4) })
+    Ok(if state == "done" {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(4)
+    })
 }
 
 /// What follows the blank line that ends the headers (all of it when there is none).

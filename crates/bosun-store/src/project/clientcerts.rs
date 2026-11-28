@@ -135,7 +135,9 @@ mod tests {
     fn kept_listed_without_key_and_deleted() {
         let p = Project::open_in_memory().unwrap();
         let chain = vec![vec![1, 2, 3], vec![4]];
-        let id = p.client_cert_add("a.test", "CN=a", 10, &chain, b"sealed", 1).unwrap();
+        let id = p
+            .client_cert_add("a.test", "CN=a", 10, &chain, b"sealed", 1)
+            .unwrap();
         assert!(matches!(
             p.client_cert_add("a.test", "CN=a", 10, &chain, b"x", 2),
             Err(StoreError::Conflict(_))

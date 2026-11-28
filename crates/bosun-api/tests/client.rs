@@ -629,7 +629,10 @@ async fn scope_rules_proxy_and_ca() {
     let saved = c.put_proto_schema(src).await.unwrap();
     assert_eq!(saved.calls, ["/a.S/Go"]);
     assert_eq!(c.proto_schema().await.unwrap(), saved);
-    assert_eq!(c.put_proto_schema("message {").await.unwrap_err().status(), Some(400));
+    assert_eq!(
+        c.put_proto_schema("message {").await.unwrap_err().status(),
+        Some(400)
+    );
     assert_eq!(c.put_proto_schema("").await.unwrap().source, "");
 
     let want = InterceptSettings {

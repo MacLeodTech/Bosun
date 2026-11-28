@@ -71,7 +71,12 @@ pub fn parse(input: &[u8], out: &mut Out) -> Result<(), ImportError> {
             } else if let Some(ps) = pd.get("params").and_then(Value::as_array) {
                 let pairs: Vec<_> = ps
                     .iter()
-                    .filter_map(|p| Some((text(p, "name")?.to_string(), text(p, "value").unwrap_or("").to_string())))
+                    .filter_map(|p| {
+                        Some((
+                            text(p, "name")?.to_string(),
+                            text(p, "value").unwrap_or("").to_string(),
+                        ))
+                    })
                     .collect();
                 body = form_body(&pairs);
             }

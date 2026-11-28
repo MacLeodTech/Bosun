@@ -28,7 +28,10 @@ use crate::discover::{
     Detail as DiscoverDetail, Info as DiscoverInfo, List as DiscoverList, StartBody as DiscoverStartBody,
     StopReply as DiscoverStopReply,
 };
-use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, ProtoSchema, ProtoSchemaBody, QueryCheck, SavedFilter};
+use crate::handlers::{
+    ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, ProtoSchema, ProtoSchemaBody, QueryCheck,
+    SavedFilter,
+};
 use crate::intruder::{AttackDetail, AttackInfo, AttackList, PlanReply, ResultsReply, StartBody, StopReply};
 use crate::issues::{IssueChange, IssueList};
 use crate::listeners::ProxyConfigView;

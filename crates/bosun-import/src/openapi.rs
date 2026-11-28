@@ -5,7 +5,9 @@ use serde_json::{Map, Value};
 use crate::schema::{deref, example, scalar_text};
 use crate::{ImportError, Options, Out, form_body, has_header, json_body, text};
 
-const METHODS: [&str; 8] = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
+const METHODS: [&str; 8] = [
+    "get", "put", "post", "delete", "patch", "head", "options", "trace",
+];
 
 pub fn parse(input: &[u8], opts: &Options, out: &mut Out) -> Result<(), ImportError> {
     let doc = load(input)?;
@@ -63,7 +65,11 @@ fn has_alias(text: &str) -> bool {
     for (i, &c) in b.iter().enumerate() {
         if (c == b'*' || c == b'&')
             && b.get(i + 1).is_some_and(|&n| name(n))
-            && (i == 0 || matches!(b[i - 1], b' ' | b'\t' | b'\n' | b'\r' | b'[' | b'{' | b',' | b'-' | b':'))
+            && (i == 0
+                || matches!(
+                    b[i - 1],
+                    b' ' | b'\t' | b'\n' | b'\r' | b'[' | b'{' | b',' | b'-' | b':'
+                ))
         {
             return true;
         }
@@ -145,15 +151,20 @@ fn base_url(doc: &Value, v3: bool, opts: &Options) -> Result<String, ImportError
 
 fn param_value(doc: &Value, p: &Value) -> String {
     // v3 keeps the schema under `schema`, v2 on the parameter itself.
-    let e = p.get("example").cloned().unwrap_or_else(|| match p.get("schema") {
-        Some(s) => example(doc, s, 0),
-        None => example(doc, p, 0),
-    });
+    let e = p
+        .get("example")
+        .cloned()
+        .unwrap_or_else(|| match p.get("schema") {
+            Some(s) => example(doc, s, 0),
+            None => example(doc, p, 0),
+        });
     scalar_text(&e)
 }
 
 fn enc(s: &str) -> String {
-    url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>().replace('+', "%20")
+    url::form_urlencoded::byte_serialize(s.as_bytes())
+        .collect::<String>()
+        .replace('+', "%20")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -167,10 +178,10 @@ fn operation(
     op: &Map<String, Value>,
     out: &mut Out,
 ) {
-    let name = op
-        .get("operationId")
-        .and_then(Value::as_str)
-        .map_or_else(|| format!("{} {path}", method.to_ascii_uppercase()), str::to_string);
+    let name = op.get("operationId").and_then(Value::as_str).map_or_else(
+        || format!("{} {path}", method.to_ascii_uppercase()),
+        str::to_string,
+    );
     // Path-level parameters first; an operation's own parameter of the same name and place replaces them.
     let mut params: Vec<&Value> = Vec::new();
     for list in [item.get("parameters"), op.get("parameters")] {
@@ -193,7 +204,9 @@ fn operation(
         let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
         match place {
             "path" => url_path = url_path.replace(&format!("{{{pname}}}"), &enc(&param_value(doc, p))),
-            "query" if required || p.get("example").is_some() => query.push((pname.into(), param_value(doc, p))),
+            "query" if required || p.get("example").is_some() => {
+                query.push((pname.into(), param_value(doc, p)))
+            }
             "header" if required => headers.push((pname.into(), param_value(doc, p))),
             "formData" if required => form.push((pname.into(), param_value(doc, p))),
             "body" => {
@@ -226,10 +239,11 @@ fn operation(
 
 fn request_body(doc: &Value, rb: &Value) -> Option<(String, Vec<u8>)> {
     let content = rb.get("content")?.as_object()?;
-    let (ct, media) = content
-        .iter()
-        .find(|(k, _)| k.contains("json"))
-        .or_else(|| content.iter().find(|(k, _)| k.as_str() == "application/x-www-form-urlencoded"))?;
+    let (ct, media) = content.iter().find(|(k, _)| k.contains("json")).or_else(|| {
+        content
+            .iter()
+            .find(|(k, _)| k.as_str() == "application/x-www-form-urlencoded")
+    })?;
     let ex = media
         .get("example")
         .cloned()

@@ -1015,7 +1015,9 @@ async fn raw_target(seen: Arc<std::sync::Mutex<Vec<String>>>) -> SocketAddr {
                         Ok(n) => got.extend_from_slice(&b[..n]),
                     }
                 }
-                seen.lock().unwrap().push(String::from_utf8_lossy(&got).into_owned());
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&got).into_owned());
                 let _ = s
                     .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
                     .await;
@@ -1049,7 +1051,9 @@ async fn header_name_case_survives_an_edit_of_the_request() {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     };
-    let edited = String::from_utf8(item.raw.clone()).unwrap().replace("/original", "/edited");
+    let edited = String::from_utf8(item.raw.clone())
+        .unwrap()
+        .replace("/original", "/edited");
     assert!(h.proxy.intercept().resolve(
         item.summary.id,
         Decision::Forward {
@@ -1103,7 +1107,8 @@ async fn upstream_sni_override_is_sent_to_the_target() {
         }
     });
     let mut cfg = ProxyConfig::default();
-    cfg.upstream_sni.insert("LOCALHOST".into(), "front.example.net".into());
+    cfg.upstream_sni
+        .insert("LOCALHOST".into(), "front.example.net".into());
     let h = start(cfg, &[]).await;
     let c = client(&h);
     let r = c
@@ -1241,7 +1246,10 @@ async fn listener_connection_cap_applies_per_listener_and_changes_live() {
     let r = tokio::time::timeout(Duration::from_secs(2), second.read(&mut b)).await;
     assert!(matches!(r, Ok(Ok(0) | Err(_))), "the second connection is closed");
     // Raise the cap live: a second connection now stays open.
-    h.proxy.update_listener(info.id, spec(&capped.to_string(), Some(2))).await.unwrap();
+    h.proxy
+        .update_listener(info.id, spec(&capped.to_string(), Some(2)))
+        .await
+        .unwrap();
     let mut third = TcpStream::connect(capped).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(
@@ -1252,7 +1260,10 @@ async fn listener_connection_cap_applies_per_listener_and_changes_live() {
     );
     drop(first);
     assert!(
-        h.proxy.update_listener(info.id, spec(&capped.to_string(), Some(0))).await.is_err(),
+        h.proxy
+            .update_listener(info.id, spec(&capped.to_string(), Some(0)))
+            .await
+            .is_err(),
         "zero is refused"
     );
 }
@@ -1282,9 +1293,9 @@ async fn transparent_https_is_intercepted_by_sni_and_recorded() {
     h.proxy.flush();
     let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
     assert!(
-        flows
-            .iter()
-            .any(|f| f.host == "transparent.test" && f.path == "/x?y=1" && f.scheme == bosun_model::Scheme::Https),
+        flows.iter().any(|f| f.host == "transparent.test"
+            && f.path == "/x?y=1"
+            && f.scheme == bosun_model::Scheme::Https),
         "{flows:?}"
     );
 }

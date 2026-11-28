@@ -82,10 +82,17 @@ fn openapi_needs_a_base_url_when_the_document_has_none() {
 fn yaml_alias_bomb_is_refused() {
     let mut y = String::from("openapi: 3.0.0\nx-a: &a [x, x, x, x, x, x, x, x, x]\n");
     for i in 0..9 {
-        let prev = if i == 0 { "a".to_string() } else { format!("l{}", i - 1) };
+        let prev = if i == 0 {
+            "a".to_string()
+        } else {
+            format!("l{}", i - 1)
+        };
         y.push_str(&format!("x-l{i}: &l{i} [*{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}]\n"));
     }
-    assert!(matches!(run(Format::Openapi, &y), Err(ImportError::Unsupported(_))));
+    assert!(matches!(
+        run(Format::Openapi, &y),
+        Err(ImportError::Unsupported(_))
+    ));
 }
 
 #[test]
@@ -136,7 +143,11 @@ fn postman_folders_and_variables() {
     let r = run(Format::Postman, c).unwrap();
     assert_eq!(r.items.len(), 2);
     assert_eq!(r.items[0].url, "https://api.test/a");
-    assert!(r.items[0].headers.contains(&("Content-Type".into(), "application/json".into())));
+    assert!(
+        r.items[0]
+            .headers
+            .contains(&("Content-Type".into(), "application/json".into()))
+    );
     assert!(!r.items[0].headers.iter().any(|(k, _)| k == "Y"));
     assert_eq!(r.notes.len(), 1);
     // The base URL stands in for an undefined leading variable.
@@ -146,11 +157,18 @@ fn postman_folders_and_variables() {
 
 #[test]
 fn url_list() {
-    let r = run(Format::Urls, "# c\nhttps://a.test/x\n\nftp://a.test/\nnot a url\nhttp://b.test:8080/?q=1\n").unwrap();
+    let r = run(
+        Format::Urls,
+        "# c\nhttps://a.test/x\n\nftp://a.test/\nnot a url\nhttp://b.test:8080/?q=1\n",
+    )
+    .unwrap();
     assert_eq!(r.items.len(), 2);
     assert_eq!(r.items[1].target().unwrap().port, 8080);
     assert_eq!(r.notes.len(), 2);
-    assert!(matches!(run(Format::Urls, "\n# nothing\n"), Err(ImportError::Empty)));
+    assert!(matches!(
+        run(Format::Urls, "\n# nothing\n"),
+        Err(ImportError::Empty)
+    ));
 }
 
 #[test]
@@ -203,11 +221,22 @@ fn graphql_introspection() {
          {"name":"id","args":[],"type":{"kind":"SCALAR","name":"ID"}},
          {"name":"friends","args":[],"type":{"kind":"LIST","name":null,"ofType":{"kind":"OBJECT","name":"User"}}}]},
        {"kind":"ENUM","name":"Role","enumValues":[{"name":"ADMIN"}]}]}}}"#;
-    assert!(matches!(run(Format::Graphql, schema), Err(ImportError::NoBaseUrl)));
-    let r = parse(Format::Graphql, schema.as_bytes(), &base("https://t.test/graphql")).unwrap();
+    assert!(matches!(
+        run(Format::Graphql, schema),
+        Err(ImportError::NoBaseUrl)
+    ));
+    let r = parse(
+        Format::Graphql,
+        schema.as_bytes(),
+        &base("https://t.test/graphql"),
+    )
+    .unwrap();
     assert_eq!(r.items.len(), 2);
     let q: serde_json::Value = serde_json::from_slice(&r.items[0].body).unwrap();
-    assert_eq!(q["query"], "query User($id: ID!) { user(id: $id) { id friends { id } } }");
+    assert_eq!(
+        q["query"],
+        "query User($id: ID!) { user(id: $id) { id friends { id } } }"
+    );
     assert_eq!(q["variables"]["id"], "1");
     let m: serde_json::Value = serde_json::from_slice(&r.items[1].body).unwrap();
     assert_eq!(m["variables"]["role"], "ADMIN");
@@ -217,7 +246,16 @@ fn graphql_introspection() {
 #[test]
 fn wrong_format_is_refused_not_panicked() {
     for f in Format::ALL {
-        for junk in ["", "{}", "[]", "null", "<a/>", "\u{0}\u{1}", "{\"log\":1}", "openapi: 3\n"] {
+        for junk in [
+            "",
+            "{}",
+            "[]",
+            "null",
+            "<a/>",
+            "\u{0}\u{1}",
+            "{\"log\":1}",
+            "openapi: 3\n",
+        ] {
             let _ = run(f, junk);
         }
     }
@@ -226,7 +264,9 @@ fn wrong_format_is_refused_not_panicked() {
 
 #[test]
 fn item_limit() {
-    let many: String = (0..bosun_import::MAX_ITEMS + 5).map(|i| format!("http://h.test/{i}\n")).collect();
+    let many: String = (0..bosun_import::MAX_ITEMS + 5)
+        .map(|i| format!("http://h.test/{i}\n"))
+        .collect();
     let r = run(Format::Urls, &many).unwrap();
     assert_eq!(r.items.len(), bosun_import::MAX_ITEMS);
     assert_eq!(r.dropped, 5);

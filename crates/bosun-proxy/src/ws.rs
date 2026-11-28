@@ -214,7 +214,8 @@ impl Inflater {
         if f.payload.len() > room {
             self.truncated = true;
         }
-        self.buf.extend_from_slice(&f.payload[..f.payload.len().min(room)]);
+        self.buf
+            .extend_from_slice(&f.payload[..f.payload.len().min(room)]);
         if !f.fin {
             return None;
         }
@@ -328,8 +329,7 @@ pub async fn relay<C, S>(
     flow_id: FlowId,
     recorder: Recorder,
     deflate: Option<DeflateParams>,
-)
-where
+) where
     C: AsyncRead + AsyncWrite + Unpin,
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -365,8 +365,7 @@ async fn pump<R, W>(
     dir: Direction,
     recorder: Recorder,
     mut inflater: Option<Inflater>,
-)
-where
+) where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
@@ -453,10 +452,10 @@ mod tests {
         assert!(frames[0].truncated);
     }
 
-
     fn deflate(data: &[u8], d: &mut flate2::Compress) -> Vec<u8> {
         let mut out = Vec::with_capacity(data.len() + 64);
-        d.compress_vec(data, &mut out, flate2::FlushCompress::Sync).unwrap();
+        d.compress_vec(data, &mut out, flate2::FlushCompress::Sync)
+            .unwrap();
         assert!(out.ends_with(&[0, 0, 0xff, 0xff]));
         out.truncate(out.len() - 4);
         out
@@ -474,8 +473,10 @@ mod tests {
 
     #[test]
     fn parses_extension_header() {
-        let p = DeflateParams::from_header("permessage-deflate; client_no_context_takeover; server_max_window_bits=10")
-            .unwrap();
+        let p = DeflateParams::from_header(
+            "permessage-deflate; client_no_context_takeover; server_max_window_bits=10",
+        )
+        .unwrap();
         assert!(p.client_no_context_takeover && !p.server_no_context_takeover);
         assert!(DeflateParams::from_header("x-webkit-deflate-frame").is_none());
         assert!(DeflateParams::from_header("foo, Permessage-Deflate").is_some());
@@ -487,7 +488,9 @@ mod tests {
         let mut c = flate2::Compress::new(flate2::Compression::default(), false);
         let mut inf = Inflater::new(false, RECORD_LIMIT);
         for text in ["hello hello hello hello", "hello hello again", ""] {
-            let f = inf.process(compressed(1, true, deflate(text.as_bytes(), &mut c))).unwrap();
+            let f = inf
+                .process(compressed(1, true, deflate(text.as_bytes(), &mut c)))
+                .unwrap();
             assert_eq!(f.payload, text.as_bytes());
             assert_eq!(f.opcode, 1);
             assert!(!f.truncated);
@@ -504,9 +507,21 @@ mod tests {
         let f = inf.process(compressed(0, true, b.to_vec())).unwrap();
         assert_eq!((f.opcode, &f.payload[..]), (2, &b"fragmented message body"[..]));
         // A ping between, and an uncompressed message, are recorded as they are.
-        let ping = Frame { opcode: 9, fin: true, rsv1: false, payload: b"p".to_vec(), truncated: false };
+        let ping = Frame {
+            opcode: 9,
+            fin: true,
+            rsv1: false,
+            payload: b"p".to_vec(),
+            truncated: false,
+        };
         assert_eq!(inf.process(ping.clone()), Some(ping));
-        let plain = Frame { opcode: 1, fin: true, rsv1: false, payload: b"plain".to_vec(), truncated: false };
+        let plain = Frame {
+            opcode: 1,
+            fin: true,
+            rsv1: false,
+            payload: b"plain".to_vec(),
+            truncated: false,
+        };
         assert_eq!(inf.process(plain.clone()), Some(plain));
         // No context takeover: each message compresses from an empty window.
         c.reset();
@@ -525,7 +540,11 @@ mod tests {
         let mut inf = Inflater::new(false, 1000);
         let f = inf.process(compressed(1, true, z)).unwrap();
         assert!(f.truncated);
-        assert!(f.payload.len() >= 1000 && f.payload.len() < 100_000, "{}", f.payload.len());
+        assert!(
+            f.payload.len() >= 1000 && f.payload.len() < 100_000,
+            "{}",
+            f.payload.len()
+        );
     }
 
     mod properties {

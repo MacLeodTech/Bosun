@@ -34,7 +34,9 @@ pub fn parse(input: &[u8], out: &mut Out) -> Result<(), ImportError> {
             Event::DocType(d) => {
                 let t = d.into_inner();
                 if t.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"ENTITY")) {
-                    return Err(ImportError::Unsupported("XML entity declarations are refused".into()));
+                    return Err(ImportError::Unsupported(
+                        "XML entity declarations are refused".into(),
+                    ));
                 }
             }
             Event::Start(e) => {
@@ -82,7 +84,11 @@ pub fn parse(input: &[u8], out: &mut Out) -> Result<(), ImportError> {
                     "apos" => '\'',
                     _ => match r.resolve_char_ref().map_err(|e| bad(&e))? {
                         Some(c) => c,
-                        None => return Err(ImportError::Unsupported(format!("XML entity &{name}; is refused"))),
+                        None => {
+                            return Err(ImportError::Unsupported(format!(
+                                "XML entity &{name}; is refused"
+                            )));
+                        }
                     },
                 };
                 let mut b = [0u8; 4];
@@ -92,13 +98,16 @@ pub fn parse(input: &[u8], out: &mut Out) -> Result<(), ImportError> {
         }
     }
     if !saw_item {
-        return Err(ImportError::Unsupported("not a Burp items export (no <item>)".into()));
+        return Err(ImportError::Unsupported(
+            "not a Burp items export (no <item>)".into(),
+        ));
     }
     Ok(())
 }
 
 fn add(path: &[String], cur: &mut Entry, data: &[u8]) -> Result<(), ImportError> {
-    let (Some(last), Some(parent)) = (path.last(), path.len().checked_sub(2).and_then(|i| path.get(i))) else {
+    let (Some(last), Some(parent)) = (path.last(), path.len().checked_sub(2).and_then(|i| path.get(i)))
+    else {
         return Ok(());
     };
     if parent != "item" {
@@ -131,7 +140,12 @@ fn add(path: &[String], cur: &mut Entry, data: &[u8]) -> Result<(), ImportError>
 fn finish(e: &Entry, out: &mut Out) {
     let url = e.url.trim();
     let raw = if e.request_b64 {
-        let compact: Vec<u8> = e.request.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+        let compact: Vec<u8> = e
+            .request
+            .iter()
+            .copied()
+            .filter(|b| !b.is_ascii_whitespace())
+            .collect();
         match B64.decode(compact) {
             Ok(r) => r,
             Err(_) => return out.note(format!("{url}: the request is not valid base64")),
@@ -140,7 +154,12 @@ fn finish(e: &Entry, out: &mut Out) {
         e.request.clone()
     };
     let response = if e.response_b64 {
-        let compact: Vec<u8> = e.response.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+        let compact: Vec<u8> = e
+            .response
+            .iter()
+            .copied()
+            .filter(|b| !b.is_ascii_whitespace())
+            .collect();
         B64.decode(compact).ok()
     } else {
         Some(e.response.clone())
@@ -158,7 +177,14 @@ fn finish(e: &Entry, out: &mut Out) {
         .filter_map(|l| l.split_once(':'))
         .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
         .collect();
-    out.push_with_response(&format!("{method} {url}"), &method, url, headers, body.to_vec(), response);
+    out.push_with_response(
+        &format!("{method} {url}"),
+        &method,
+        url,
+        headers,
+        body.to_vec(),
+        response,
+    );
 }
 
 /// The head and the body of a raw request.

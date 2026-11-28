@@ -80,7 +80,12 @@ fn request(name: &str, r: &Value, vars: &HashMap<String, String>, opts: &Options
         .into_iter()
         .flatten()
         .filter(|h| !h.get("disabled").and_then(Value::as_bool).unwrap_or(false))
-        .filter_map(|h| Some((fill(text(h, "key")?, vars), fill(text(h, "value").unwrap_or(""), vars))))
+        .filter_map(|h| {
+            Some((
+                fill(text(h, "key")?, vars),
+                fill(text(h, "value").unwrap_or(""), vars),
+            ))
+        })
         .collect();
     let mut body = Vec::new();
     if let Some(b) = r.get("body") {
@@ -92,7 +97,12 @@ fn request(name: &str, r: &Value, vars: &HashMap<String, String>, opts: &Options
                 .flatten()
                 .filter(enabled)
                 .filter(|p| text(p, "type") != Some("file"))
-                .filter_map(|p| Some((fill(text(p, "key")?, vars), fill(text(p, "value").unwrap_or(""), vars))))
+                .filter_map(|p| {
+                    Some((
+                        fill(text(p, "key")?, vars),
+                        fill(text(p, "value").unwrap_or(""), vars),
+                    ))
+                })
                 .collect()
         };
         let ct = match text(b, "mode") {
@@ -113,7 +123,10 @@ fn request(name: &str, r: &Value, vars: &HashMap<String, String>, opts: &Options
                         continue;
                     }
                     body.extend_from_slice(
-                        format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes(),
+                        format!(
+                            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n"
+                        )
+                        .as_bytes(),
                     );
                 }
                 if !body.is_empty() {
@@ -126,7 +139,9 @@ fn request(name: &str, r: &Value, vars: &HashMap<String, String>, opts: &Options
                 let vars_json: Value = text(g, "variables")
                     .and_then(|v| serde_json::from_str(v).ok())
                     .unwrap_or_else(|| Value::Object(Default::default()));
-                body = json_body(&serde_json::json!({ "query": fill(text(g, "query").unwrap_or(""), vars), "variables": vars_json }));
+                body = json_body(
+                    &serde_json::json!({ "query": fill(text(g, "query").unwrap_or(""), vars), "variables": vars_json }),
+                );
                 Some("application/json")
             }
             _ => None,

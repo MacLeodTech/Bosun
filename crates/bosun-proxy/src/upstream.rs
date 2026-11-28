@@ -256,14 +256,21 @@ impl Connector {
     /// case-insensitively. The certificate is verified against the name sent, when verification is on.
     #[must_use]
     pub fn with_sni_overrides(mut self, map: &std::collections::BTreeMap<String, String>) -> Self {
-        self.sni = Arc::new(map.iter().map(|(h, n)| (h.to_ascii_lowercase(), n.clone())).collect());
+        self.sni = Arc::new(
+            map.iter()
+                .map(|(h, n)| (h.to_ascii_lowercase(), n.clone()))
+                .collect(),
+        );
         self
     }
 
     /// The TLS server name to send for `host`: the override if one is set, else the host itself.
     pub fn sni_for(&self, host: &str) -> String {
         let bare = host.trim_start_matches('[').trim_end_matches(']');
-        self.sni.get(&bare.to_ascii_lowercase()).cloned().unwrap_or_else(|| bare.to_string())
+        self.sni
+            .get(&bare.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_else(|| bare.to_string())
     }
 
     /// Open a TCP connection to `host:port` the way every outbound connection is opened: the self-target check,
@@ -337,7 +344,11 @@ impl tower_service::Service<Uri> for Connector {
             let (tcp, reg) = this.connect_tcp(&host, port).await?;
             let conn = if https {
                 let bare = host.trim_start_matches('[').trim_end_matches(']').to_string();
-                let sni = this.sni.get(&bare.to_ascii_lowercase()).cloned().unwrap_or_else(|| bare.clone());
+                let sni = this
+                    .sni
+                    .get(&bare.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| bare.clone());
                 let name = ServerName::try_from(sni)?;
                 let cfg = this.certs.apply(&bare, this.cfg.clone());
                 let tls = TlsConnector::from(cfg).connect(name, tcp).await?;

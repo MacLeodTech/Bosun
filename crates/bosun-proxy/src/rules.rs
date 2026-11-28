@@ -102,7 +102,10 @@ impl RuleSet {
                 )
             };
             if !s.operation.is_empty() && !s.target.is_body() {
-                return Err(format!("rule {}: an operation name is only allowed for body rules", i + 1));
+                return Err(format!(
+                    "rule {}: an operation name is only allowed for body rules",
+                    i + 1
+                ));
             }
             rules.push(Rule {
                 target: s.target,
@@ -293,7 +296,10 @@ mod tests {
         assert!(rs.apply_request(&raw(miss)).is_none());
         assert!(rs.apply_request(&raw(b"secret, not json")).is_none());
         s.target = RuleTarget::RequestHeader;
-        assert!(RuleSet::compile(vec![s]).is_err(), "header rules cannot name an operation");
+        assert!(
+            RuleSet::compile(vec![s]).is_err(),
+            "header rules cannot name an operation"
+        );
     }
 
     #[test]

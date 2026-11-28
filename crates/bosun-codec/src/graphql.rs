@@ -84,7 +84,10 @@ fn scan(doc: &str) -> Vec<(&'static str, Option<String>)> {
 fn one(v: &Value) -> Option<Operation> {
     let o = v.as_object()?;
     let query = o.get("query").and_then(Value::as_str).unwrap_or("");
-    let given = o.get("operationName").and_then(Value::as_str).filter(|s| !s.is_empty());
+    let given = o
+        .get("operationName")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
     let found = scan(query);
     // With several operations in the document, `operationName` says which one runs.
     let picked = given
@@ -94,7 +97,9 @@ fn one(v: &Value) -> Option<Operation> {
         return None;
     }
     Some(Operation {
-        name: given.map(str::to_owned).or_else(|| picked.and_then(|p| p.1.clone())),
+        name: given
+            .map(str::to_owned)
+            .or_else(|| picked.and_then(|p| p.1.clone())),
         kind: picked.map_or("query", |p| p.0).to_owned(),
         query: query.to_owned(),
         variables: o.get("variables").filter(|v| !v.is_null()).cloned(),
@@ -128,7 +133,11 @@ pub fn decode_text(body: &[u8], limit: usize) -> Result<String, CodecError> {
         if i > 0 {
             out.push('\n');
         }
-        out.push_str(&format!("# {} {}\n", o.kind, o.name.as_deref().unwrap_or("(anonymous)")));
+        out.push_str(&format!(
+            "# {} {}\n",
+            o.kind,
+            o.name.as_deref().unwrap_or("(anonymous)")
+        ));
         out.push_str(o.query.trim_end());
         out.push('\n');
         if let Some(v) = &o.variables {
@@ -148,7 +157,10 @@ mod tests {
     use super::*;
 
     fn names(b: &str) -> Vec<(String, Option<String>)> {
-        operations(b.as_bytes()).into_iter().map(|o| (o.kind, o.name)).collect()
+        operations(b.as_bytes())
+            .into_iter()
+            .map(|o| (o.kind, o.name))
+            .collect()
     }
 
     #[test]
@@ -189,7 +201,10 @@ mod tests {
     #[test]
     fn text_shows_query_and_variables_apart() {
         let t = decode_text(br#"{"query":"query Q { a }","variables":{"x":1}}"#, 4096).unwrap();
-        assert!(t.starts_with("# query Q\nquery Q { a }\n\n# variables\n{\n  \"x\": 1\n}"), "{t}");
+        assert!(
+            t.starts_with("# query Q\nquery Q { a }\n\n# variables\n{\n  \"x\": 1\n}"),
+            "{t}"
+        );
     }
 
     proptest::proptest! {

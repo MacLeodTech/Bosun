@@ -261,7 +261,11 @@ mod tests {
     fn garbage_is_refused() {
         assert!(parse_identity(b"nonsense", "").is_err());
         assert!(
-            parse_identity(b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n", "").is_err()
+            parse_identity(
+                b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+                ""
+            )
+            .is_err()
         );
     }
 }

@@ -101,7 +101,10 @@ impl Msg {
         m
     }
     pub fn by_num(&self, n: u64) -> Option<&Field> {
-        u32::try_from(n).ok().and_then(|n| self.by_num.get(&n)).map(|&i| &self.fields[i])
+        u32::try_from(n)
+            .ok()
+            .and_then(|n| self.by_num.get(&n))
+            .map(|&i| &self.fields[i])
     }
     pub fn by_name(&self, n: &str) -> Option<&Field> {
         self.by_name.get(n).map(|&i| &self.fields[i])
@@ -148,7 +151,10 @@ pub struct Typed<'a> {
 impl<'a> Typed<'a> {
     /// The message a field of this one holds.
     pub(crate) fn sub(&self, full: &str) -> Option<Typed<'a>> {
-        self.schema.messages.get(full).map(|msg| Typed { schema: self.schema, msg })
+        self.schema.messages.get(full).map(|msg| Typed {
+            schema: self.schema,
+            msg,
+        })
     }
     pub(crate) fn enumeration(&self, full: &str) -> Option<&'a Enum> {
         self.schema.enums.get(full)
@@ -249,14 +255,19 @@ fn lex(src: &str) -> Vec<Tok> {
             }
             i += 1;
             out.push(Tok::Str);
-        } else if c.is_ascii_alphabetic() || c == b'_' || (c == b'.' && b.get(i + 1).is_some_and(|d| d.is_ascii_alphabetic())) {
+        } else if c.is_ascii_alphabetic()
+            || c == b'_'
+            || (c == b'.' && b.get(i + 1).is_some_and(|d| d.is_ascii_alphabetic()))
+        {
             let s = i;
             i += 1;
             while i < b.len() && id_char(b[i]) {
                 i += 1;
             }
             out.push(Tok::Id(src.get(s..i).unwrap_or("").to_owned()));
-        } else if c.is_ascii_digit() || (matches!(c, b'-' | b'+') && b.get(i + 1).is_some_and(u8::is_ascii_digit)) {
+        } else if c.is_ascii_digit()
+            || (matches!(c, b'-' | b'+') && b.get(i + 1).is_some_and(u8::is_ascii_digit))
+        {
             let s = i;
             i += 1;
             while i < b.len() && (b[i].is_ascii_alphanumeric() || matches!(b[i], b'.' | b'_' | b'+' | b'-')) {
@@ -284,7 +295,11 @@ fn parse_int(s: &str) -> Option<i64> {
 }
 
 fn join(scope: &str, name: &str) -> String {
-    if scope.is_empty() { name.to_owned() } else { format!("{scope}.{name}") }
+    if scope.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{scope}.{name}")
+    }
 }
 
 struct RawField {
@@ -409,7 +424,10 @@ impl Parser {
         if self.msgs.len() + self.enums.len() >= MAX_ITEMS {
             return Err(bad());
         }
-        self.msgs.push(RawMsg { full, fields: Vec::new() });
+        self.msgs.push(RawMsg {
+            full,
+            fields: Vec::new(),
+        });
         Ok(self.msgs.len() - 1)
     }
 
@@ -576,7 +594,9 @@ impl Parser {
     /// `( [stream] Type )`
     fn rpc_type(&mut self) -> Result<String, CodecError> {
         self.need(b'(')?;
-        if matches!(self.peek(), Some(Tok::Id(s)) if s == "stream") && matches!(self.t.get(self.i + 1), Some(Tok::Id(_))) {
+        if matches!(self.peek(), Some(Tok::Id(s)) if s == "stream")
+            && matches!(self.t.get(self.i + 1), Some(Tok::Id(_)))
+        {
             self.i += 1;
         }
         let t = self.id()?;
@@ -620,7 +640,11 @@ impl Parser {
             let fields = m
                 .fields
                 .iter()
-                .map(|f| Field { name: f.name.clone(), num: f.num, ty: resolve(&m.full, &f.ty) })
+                .map(|f| Field {
+                    name: f.name.clone(),
+                    num: f.num,
+                    ty: resolve(&m.full, &f.ty),
+                })
                 .collect();
             messages.insert(m.full.clone(), Msg::new(fields));
         }
@@ -628,13 +652,23 @@ impl Parser {
             .rpcs
             .iter()
             .filter_map(|(svc, method, req, resp)| {
-                let (Ty::Message(request), Ty::Message(response)) = (resolve(&self.pkg, req), resolve(&self.pkg, resp)) else {
+                let (Ty::Message(request), Ty::Message(response)) =
+                    (resolve(&self.pkg, req), resolve(&self.pkg, resp))
+                else {
                     return None;
                 };
-                Some(Rpc { path: format!("/{svc}/{method}"), request, response })
+                Some(Rpc {
+                    path: format!("/{svc}/{method}"),
+                    request,
+                    response,
+                })
             })
             .collect();
-        Schema { messages, enums: self.enums.into_iter().collect(), rpcs }
+        Schema {
+            messages,
+            enums: self.enums.into_iter().collect(),
+            rpcs,
+        }
     }
 }
 
@@ -674,13 +708,25 @@ mod tests {
     fn reads_messages_enums_maps_and_services() {
         let s = Schema::parse(SAMPLE).unwrap();
         let names = s.message_names();
-        assert!(names.contains(&"shop.v1.Customer.Address".to_owned()), "{names:?}");
-        assert!(names.contains(&"shop.v1.Customer.LabelsEntry".to_owned()), "{names:?}");
+        assert!(
+            names.contains(&"shop.v1.Customer.Address".to_owned()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"shop.v1.Customer.LabelsEntry".to_owned()),
+            "{names:?}"
+        );
         let c = s.typed("Customer").unwrap();
         assert_eq!(c.msg.by_name("name").unwrap().num, 2);
-        assert_eq!(c.msg.by_num(3).unwrap().ty, Ty::Enum("shop.v1.Customer.Tier".into()));
+        assert_eq!(
+            c.msg.by_num(3).unwrap().ty,
+            Ty::Enum("shop.v1.Customer.Tier".into())
+        );
         // The nested Address wins inside Customer; the top-level one is still reachable by full name.
-        assert_eq!(c.msg.by_name("home").unwrap().ty, Ty::Message("shop.v1.Customer.Address".into()));
+        assert_eq!(
+            c.msg.by_name("home").unwrap().ty,
+            Ty::Message("shop.v1.Customer.Address".into())
+        );
         assert_eq!(c.msg.by_name("since").unwrap().ty, Ty::Opaque);
         assert_eq!(c.msg.by_name("phone").unwrap().num, 8);
         assert!(s.typed("shop.v1.Address").is_some());
@@ -693,12 +739,21 @@ mod tests {
 
     #[test]
     fn bad_input_is_an_error_not_a_panic() {
-        for src in ["message {", "message A { int32 x = 0; }", "message A { int32 x }", "garbage", "message A { group G = 1 {} }"] {
+        for src in [
+            "message {",
+            "message A { int32 x = 0; }",
+            "message A { int32 x }",
+            "garbage",
+            "message A { group G = 1 {} }",
+        ] {
             assert!(Schema::parse(src).is_err(), "{src}");
         }
         assert!(Schema::parse(&"message A {".repeat(100)).is_err());
         assert!(Schema::parse(&" ".repeat(MAX_SOURCE + 1)).is_err());
-        assert!(Schema::parse("message A { int32 a.b = 1; }").is_err(), "a dotted field name cannot be read back");
+        assert!(
+            Schema::parse("message A { int32 a.b = 1; }").is_err(),
+            "a dotted field name cannot be read back"
+        );
         assert!(Schema::parse("").unwrap().message_names().is_empty());
     }
 

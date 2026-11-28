@@ -117,9 +117,16 @@ pub async fn decode(caller: Caller, Json(b): Json<DecodeBody>) -> R {
             Some(src) => Some(Schema::parse(src).map_err(|e| format!("the schema: {e}"))?),
             None => None,
         };
-        let typed = match (&schema, message.as_deref().filter(|m| !m.trim().is_empty()), rpc.as_deref()) {
+        let typed = match (
+            &schema,
+            message.as_deref().filter(|m| !m.trim().is_empty()),
+            rpc.as_deref(),
+        ) {
             (None, ..) => None,
-            (Some(s), Some(m), _) => Some(s.typed(m).ok_or_else(|| format!("the schema has no message `{m}`"))?),
+            (Some(s), Some(m), _) => Some(
+                s.typed(m)
+                    .ok_or_else(|| format!("the schema has no message `{m}`"))?,
+            ),
             // A call the schema does not describe is decoded without names.
             (Some(s), None, Some(path)) => s.rpc(path).map(|(req, resp)| if response { resp } else { req }),
             (Some(_), None, None) => None,

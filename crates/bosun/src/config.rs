@@ -59,13 +59,13 @@ impl Config {
             cfg.data_key_file = std::env::var_os("BOSUN_DATA_KEY_FILE").map(PathBuf::from);
         }
         if cfg.data_key_store.is_none() {
-            cfg.data_key_store = match std::env::var("BOSUN_DATA_KEY_STORE") {
-                Ok(v) => Some(
-                    crate::keychain::KeySource::parse(&v)
-                        .with_context(|| format!("BOSUN_DATA_KEY_STORE must be file or keychain, not {v:?}"))?,
-                ),
-                Err(_) => None,
-            };
+            cfg.data_key_store =
+                match std::env::var("BOSUN_DATA_KEY_STORE") {
+                    Ok(v) => Some(crate::keychain::KeySource::parse(&v).with_context(|| {
+                        format!("BOSUN_DATA_KEY_STORE must be file or keychain, not {v:?}")
+                    })?),
+                    Err(_) => None,
+                };
         }
         cfg.proxy.resolve_secrets().map_err(anyhow::Error::msg)?;
         Ok(cfg)

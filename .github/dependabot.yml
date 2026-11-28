@@ -24,6 +24,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
+    # init, analyze and upload-sarif must run the same release ("Loaded a configuration file for version ...").
+    groups: {codeql-action: {patterns: ["github/codeql-action/*"]}}
   - package-ecosystem: docker
     directory: /
     schedule: {interval: weekly}

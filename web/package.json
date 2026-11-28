@@ -12,7 +12,7 @@
     "gen:api": "npx --yes openapi-typescript@7.13.0 ../docs/openapi.json -o src/lib/api-types.ts"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.2",
     "@tsconfig/svelte": "5.0.9",
     "svelte": "5.59.1",
     "svelte-check": "4.7.8",

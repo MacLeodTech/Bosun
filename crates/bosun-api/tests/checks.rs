@@ -39,7 +39,6 @@ async fn a_custom_check_is_validated_stored_switched_and_fires_on_recorded_traff
     let s = stack(true).await;
     let c = Client::new(format!("http://127.0.0.1:{}", s.api.port())).unwrap();
     c.setup(&s.code, "admin", "a long enough password").await.unwrap();
-    let _scanner = bosun_scan::Scanner::start(&s.state.project());
 
     // Validation reports the loader's message and stores nothing.
     let bad = c.validate_check("version: 1\nid: x\n").await.unwrap();

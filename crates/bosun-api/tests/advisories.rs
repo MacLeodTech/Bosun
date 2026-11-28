@@ -39,7 +39,6 @@ async fn a_signed_feed_is_verified_ordered_audited_and_applied_to_recorded_traff
     let s = stack(true).await;
     let c = Client::new(format!("http://127.0.0.1:{}", s.api.port())).unwrap();
     c.setup(&s.code, "admin", "a long enough password").await.unwrap();
-    let _scanner = bosun_scan::Scanner::start(&s.state.project());
 
     let rng = SystemRandom::new();
     let kp = Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&rng).unwrap().as_ref()).unwrap();
@@ -150,7 +149,6 @@ async fn the_built_in_advisories_match_without_any_feed_and_changes_need_admin()
     let s = stack(true).await;
     let c = Client::new(format!("http://127.0.0.1:{}", s.api.port())).unwrap();
     c.setup(&s.code, "admin", "a long enough password").await.unwrap();
-    let _scanner = bosun_scan::Scanner::start(&s.state.project());
     recorded(
         &s,
         "/",

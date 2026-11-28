@@ -34,7 +34,6 @@ async fn settled(c: &Client) -> IssueList {
 async fn the_scanner_reports_issues_that_can_be_triaged_and_rescanned() {
     let s = stack(true).await;
     let c = admin(&s).await;
-    let _scanner = bosun_scan::Scanner::start(&s.state.project());
     let key = b"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n";
     let flow = recorded(
         &s,
@@ -144,7 +143,6 @@ async fn the_scanner_reports_issues_that_can_be_triaged_and_rescanned() {
 async fn the_report_is_an_inert_attachment_with_secrets_redacted() {
     let s = stack(true).await;
     let c = admin(&s).await;
-    let _scanner = bosun_scan::Scanner::start(&s.state.project());
     recorded(
         &s,
         "/p?token=hunter2secret",
@@ -215,7 +213,6 @@ async fn the_report_is_an_inert_attachment_with_secrets_redacted() {
 async fn a_tracker_export_is_redacted_tester_only_and_audited() {
     let s = stack(true).await;
     let c = admin(&s).await;
-    let _scanner = bosun_scan::Scanner::start(&s.state.project());
     recorded(
         &s,
         "/p?token=hunter2secret",

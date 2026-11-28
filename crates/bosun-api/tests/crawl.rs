@@ -147,8 +147,16 @@ async fn a_crawl_stays_in_scope_and_announces_itself_on_the_event_stream() {
     assert!(d["out_of_scope"].to_string().contains("/secret"), "{d}");
     assert!(!seen.lock().unwrap().iter().any(|p| p == "/secret"));
     // Crawled pages are in the history as crawler flows, and the start is audited.
-    let flows: Value = c.get(s.url("/flows")).send().await.unwrap().json().await.unwrap();
-    assert!(flows.to_string().contains("crawler"));
+    // The recorder writes in batches, so give it a moment (slow on Windows CI).
+    let mut flows = Value::Null;
+    for _ in 0..100 {
+        flows = c.get(s.url("/flows")).send().await.unwrap().json().await.unwrap();
+        if flows.to_string().contains("crawler") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(flows.to_string().contains("crawler"), "{flows}");
     let audit: Value = c.get(s.url("/audit")).send().await.unwrap().json().await.unwrap();
     assert!(audit.to_string().contains("crawl.start"));
     // The event stream saw it begin, and end.

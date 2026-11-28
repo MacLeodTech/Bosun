@@ -3,7 +3,7 @@
   "metrics": {
     "idle_rss_mb": {
       "budget": 50,
-      "baseline": 17.0,
+      "baseline": 21.7,
       "unit": "MB"
     },
     "image_mb": {

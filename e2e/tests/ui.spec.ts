@@ -971,9 +971,13 @@ test('host analysis: the endpoints and parameters of a host are counted across t
   for (const n of [11, 12, 13]) {
     expect(await viaProxy(PROXY_PORT, `${TARGET}/analysis-probe/${n}?page=${n}&sort=asc`)).toMatchObject({ status: 200 });
   }
-  await applyFilter('path:/analysis-probe');
+  // The proxy answers before the recorder has written the flow, and a server-side filter holds late arrivals behind
+  // "N new", so apply the filter again until the three are in the list.
   const row = page.locator('.row', { hasText: '/analysis-probe/13' }).first();
-  await expect(row).toBeVisible();
+  await expect(async () => {
+    await applyFilter('path:/analysis-probe');
+    await expect(row).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 15_000 });
   await row.click({ button: 'right' });
   await page.getByRole('menu', { name: 'Request actions' }).getByRole('menuitem', { name: 'Analyse this host…' }).click();
   const panel = page.getByRole('tabpanel', { name: 'Host analysis' });

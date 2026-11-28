@@ -5,6 +5,8 @@
   import { b64ToBytes, bytesToB64, bytesToText, textToBytes, wireBytes, type TextMode } from '../lib/bytes';
   import { diffLines, type Op } from '../lib/diff';
   import DiffView from '../components/DiffView.svelte';
+  import { stashForIntruder } from '../lib/flowactions';
+  import { workspace } from '../lib/workspace.svelte';
   import MessageEditor from '../components/MessageEditor.svelte';
   import type { RepeaterSendBody, RepeaterSendReply, RepeaterSendResult, RepeaterWsBody, RepeaterWsReply } from '../lib/types';
 
@@ -21,6 +23,7 @@
 
   const INBOX = 'bosun.repeater.inbox';
   const INBOX_EVENT = 'bosun:repeater-inbox';
+  const RELOAD_EVENT = 'bosun:repeater-reload';
   const canSend = $derived(session.can('tester'));
 
   let tabs = $state<Tab[]>([]);
@@ -61,10 +64,11 @@
   onMount(() => {
     // The panel stays mounted in the background, so requests sent from History arrive as an event, not a mount.
     window.addEventListener(INBOX_EVENT, takeInbox);
+    window.addEventListener(RELOAD_EVENT, start);
     start();
     // Another project is open: its tabs replace these.
     const off = session.on((e) => { if (e.type === 'reload') start(); });
-    return () => { window.removeEventListener(INBOX_EVENT, takeInbox); off(); clearTimeout(saveTimer); };
+    return () => { window.removeEventListener(INBOX_EVENT, takeInbox); window.removeEventListener(RELOAD_EVENT, start); off(); clearTimeout(saveTimer); };
   });
 
   async function start() {
@@ -142,6 +146,14 @@
     t.shown = t.history.length - 1;
   }
 
+  /** Hand this tab's request to the Intruder, to mark positions in. */
+  function toIntruder() {
+    const t = tab;
+    if (!t || t.kind !== 'http') return;
+    stashForIntruder({ scheme: t.scheme, host: t.host.trim(), port: t.port, request: t.request });
+    workspace.open('intruder');
+  }
+
   async function send() {
     const t = tab;
     if (!t) return;
@@ -199,6 +211,7 @@
     <input class="grow mono" placeholder="host" bind:value={tab.host} aria-label="Host" />
     <input class="port mono" type="number" min="1" max="65535" bind:value={tab.port} aria-label="Port" />
     {#if tab.kind === 'http'}<select bind:value={tab.protocol} aria-label="Protocol"><option value="http1">HTTP/1.1</option><option value="h2">HTTP/2</option></select>{/if}
+    {#if tab.kind === 'http'}<button disabled={!canSend || !tab.host.trim()} title="Mark positions in this request and attack them with payloads" onclick={toIntruder}>Send to Intruder</button>{/if}
     <button class="primary" disabled={!canSend || busy || !tab.host.trim()} onclick={send}>{busy ? 'Sending…' : 'Send'}</button>
   </div>
   {#if tab.kind === 'http'}

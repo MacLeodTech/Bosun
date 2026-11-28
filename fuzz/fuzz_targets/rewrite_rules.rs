@@ -23,6 +23,7 @@ fuzz_target!(|data: &[u8]| {
                 replace: replace.clone(),
                 regex,
                 comment: String::new(),
+                operation: String::new(),
             };
             if let Ok(set) = RuleSet::compile(vec![spec]) {
                 let _ = set.apply_request(message);

@@ -9,6 +9,10 @@ pub enum Error {
     /// The request did not complete (connection refused, timeout, TLS failure).
     #[error("could not reach the engine: {0}")]
     Transport(#[from] reqwest::Error),
+    /// The password was right but the account has a second factor: finish with `Client::login_totp`, passing
+    /// this token and a code from the authenticator app (or a recovery code).
+    #[error("this account needs a second-factor code")]
+    SecondFactor { pending: String },
     /// The answer was not the shape this client expects (a version mismatch).
     #[error("unexpected answer from the engine: {0}")]
     Decode(String),

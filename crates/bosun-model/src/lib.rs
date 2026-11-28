@@ -24,6 +24,8 @@ pub enum FlowSource {
     Scanner,
     Crawler,
     Plugin,
+    /// Recorded in a HAR or Burp file and imported: nothing was sent.
+    Import,
 }
 
 impl FlowSource {
@@ -35,6 +37,7 @@ impl FlowSource {
             Self::Scanner => "scanner",
             Self::Crawler => "crawler",
             Self::Plugin => "plugin",
+            Self::Import => "import",
         }
     }
 
@@ -46,6 +49,7 @@ impl FlowSource {
             "scanner" => Self::Scanner,
             "crawler" => Self::Crawler,
             "plugin" => Self::Plugin,
+            "import" => Self::Import,
             _ => return None,
         })
     }
@@ -122,6 +126,9 @@ pub struct FlowSummary {
     /// Unix time in milliseconds when the request was received.
     pub started_ms: i64,
     pub duration_ms: Option<i64>,
+    /// Milliseconds from the request being received to the response head arriving.
+    #[serde(default)]
+    pub ttfb_ms: Option<i64>,
     pub scheme: Scheme,
     pub host: String,
     pub port: u16,

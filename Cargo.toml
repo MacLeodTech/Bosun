@@ -4,10 +4,21 @@ members = [
   "crates/bosun-model",
   "crates/bosun-ca",
   "crates/bosun-store",
+  "crates/bosun-checks",
   "crates/bosun-scope",
+  "crates/bosun-scan",
   "crates/bosun-proxy",
   "crates/bosun-http",
   "crates/bosun-codec",
+  "crates/bosun-report",
+  "crates/bosun-sequencer",
+  "crates/bosun-intruder",
+  "crates/bosun-auth",
+  "crates/bosun-crawl",
+  "crates/bosun-discover",
+  "crates/bosun-active",
+  "crates/bosun-testbed",
+  "crates/bosun-import",
   "crates/bosun-api",
   "crates/bosun-client",
   "crates/bosun",
@@ -19,10 +30,21 @@ default-members = [
   "crates/bosun-model",
   "crates/bosun-ca",
   "crates/bosun-store",
+  "crates/bosun-checks",
   "crates/bosun-scope",
+  "crates/bosun-scan",
   "crates/bosun-proxy",
   "crates/bosun-http",
   "crates/bosun-codec",
+  "crates/bosun-report",
+  "crates/bosun-sequencer",
+  "crates/bosun-intruder",
+  "crates/bosun-auth",
+  "crates/bosun-crawl",
+  "crates/bosun-discover",
+  "crates/bosun-active",
+  "crates/bosun-testbed",
+  "crates/bosun-import",
   "crates/bosun-api",
   "crates/bosun-client",
   "crates/bosun",
@@ -40,9 +62,19 @@ bosun-model = { path = "crates/bosun-model" }
 bosun-ca = { path = "crates/bosun-ca" }
 bosun-store = { path = "crates/bosun-store" }
 bosun-scope = { path = "crates/bosun-scope" }
+bosun-scan = { path = "crates/bosun-scan" }
+bosun-checks = { path = "crates/bosun-checks" }
 bosun-proxy = { path = "crates/bosun-proxy" }
 bosun-http = { path = "crates/bosun-http" }
 bosun-codec = { path = "crates/bosun-codec" }
+bosun-report = { path = "crates/bosun-report" }
+bosun-sequencer = { path = "crates/bosun-sequencer" }
+bosun-intruder = { path = "crates/bosun-intruder" }
+bosun-auth = { path = "crates/bosun-auth" }
+bosun-crawl = { path = "crates/bosun-crawl" }
+bosun-discover = { path = "crates/bosun-discover" }
+bosun-active = { path = "crates/bosun-active" }
+bosun-import = { path = "crates/bosun-import" }
 bosun-api = { path = "crates/bosun-api" }
 bosun-client = { path = "crates/bosun-client" }
 bosun = { path = "crates/bosun" }
@@ -53,6 +85,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "1.2", default-features = false, features = ["parse", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+clap_mangen = "0.3"
+rpassword = "7"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal", "fs", "sync", "time", "io-util", "process"] }
 bytes = "1"
 http = "1"
@@ -72,7 +107,10 @@ proptest = { version = "1.12", default-features = false, features = ["std"] }
 flate2 = "1"
 brotli = { version = "9", default-features = false, features = ["std"] }
 sha2 = "0.11"
+md-5 = "0.11"
+sha1 = "0.11"
 base64 = "0.23"
+ring = { version = "0.17", default-features = false }
 rand = "0.10"
 chacha20poly1305 = "0.11"
 argon2 = "0.6"
@@ -82,7 +120,7 @@ regex = "1"
 lru = "0.19.0"
 time = { version = "0.3", features = ["formatting", "serde"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "tokio", "json", "query", "ws"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 cookie = "0.18"
@@ -94,7 +132,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 tower-service = "0.3"
+criterion = { version = "0.5", default-features = false, features = ["async_tokio", "cargo_bench_support"] }
 subtle = "2"
+hmac = "0.13"
 openidconnect = { version = "4.1.0", default-features = false, features = ["reqwest", "rustls-tls", "timing-resistant-secret-traits"] }
 
 [workspace.lints.rust]

@@ -6,8 +6,10 @@ use reqwest::{Method, RequestBuilder, StatusCode, Url, cookie::Jar};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
+use crate::checks::*;
 use crate::error::{Error, Result};
 use crate::events::{EventStream, Position};
+use crate::issues::*;
 use crate::types::*;
 
 /// Builds a [`Client`].
@@ -199,15 +201,88 @@ impl Client {
     }
 
     /// Sign in with a password. The session cookie and CSRF token are kept for later calls.
+    ///
+    /// An account with a second factor answers [`Error::SecondFactor`] (no session yet): call
+    /// [`Client::login_totp`] with the `pending` token it carries.
     pub async fn login(&self, username: &str, password: &str) -> Result<Me> {
-        let me: Me = self
+        let v: serde_json::Value = self
             .json(
                 self.req(Method::POST, "/auth/login")
                     .json(&json!({ "username": username, "password": password })),
             )
             .await?;
+        if let Some(pending) = v.get("pending").and_then(|p| p.as_str()) {
+            return Err(Error::SecondFactor {
+                pending: pending.to_string(),
+            });
+        }
+        let me: Me = serde_json::from_value(v).map_err(Error::decode)?;
         self.remember(&me);
         Ok(me)
+    }
+
+    /// Finish a sign-in that asked for a second factor, with a 6-digit code or an unused recovery code.
+    pub async fn login_totp(&self, pending: &str, code: &str) -> Result<Me> {
+        let me: Me = self
+            .json(
+                self.req(Method::POST, "/auth/login/totp")
+                    .json(&json!({ "pending": pending, "code": code })),
+            )
+            .await?;
+        self.remember(&me);
+        Ok(me)
+    }
+
+    /// Your own second-factor state.
+    pub async fn totp_status(&self) -> Result<TotpStatus> {
+        self.json(self.req(Method::GET, "/auth/totp")).await
+    }
+
+    /// Make a TOTP secret for your account. Nothing is enforced until [`Client::totp_confirm`].
+    pub async fn totp_enroll(&self) -> Result<TotpEnrolment> {
+        self.json(self.req(Method::POST, "/auth/totp/enroll")).await
+    }
+
+    /// Turn the second factor on with the first valid code. The recovery codes are shown only here.
+    pub async fn totp_confirm(&self, code: &str) -> Result<RecoveryCodes> {
+        self.json(
+            self.req(Method::POST, "/auth/totp/confirm")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Turn your own second factor off (needs a valid code or recovery code).
+    pub async fn totp_disable(&self, code: &str) -> Result<()> {
+        self.unit(
+            self.req(Method::POST, "/auth/totp/disable")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Replace your recovery codes (needs a valid code).
+    pub async fn totp_recovery_codes(&self, code: &str) -> Result<RecoveryCodes> {
+        self.json(
+            self.req(Method::POST, "/auth/totp/recovery-codes")
+                .json(&json!({ "code": code })),
+        )
+        .await
+    }
+
+    /// Admin: require a second factor of every password account, or stop requiring it.
+    pub async fn totp_set_required(&self, required: bool) -> Result<TotpStatus> {
+        self.json(
+            self.req(Method::PUT, "/auth/totp/required")
+                .json(&json!({ "required": required })),
+        )
+        .await
+    }
+
+    /// Admin: remove a user's second factor (a lost device); their sessions end.
+    pub async fn reset_user_totp(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/users/{id}/totp")))
+            .await
     }
 
     /// Sign in with the login ticket an embedded engine (`bosun serve --embedded`) gave its parent process.
@@ -366,6 +441,15 @@ impl Client {
             .await
     }
 
+    /// The distinct endpoints and parameters of a host across the history, with counts.
+    pub async fn host_analysis(&self, host: &str, port: Option<u16>) -> Result<HostAnalysis> {
+        let mut rb = self.req(Method::GET, "/analysis").query(&[("host", host)]);
+        if let Some(p) = port {
+            rb = rb.query(&[("port", p)]);
+        }
+        self.json(rb).await
+    }
+
     /// A CSRF proof of concept for the request, as HTML text.
     pub async fn flow_csrf_poc(&self, id: FlowId, auto_submit: bool) -> Result<String> {
         let mut rb = self.req(Method::GET, &format!("/flows/{id}/csrf-poc"));
@@ -433,6 +517,31 @@ impl Client {
         self.json(self.req(Method::PUT, "/rules").json(rules)).await
     }
 
+    /// The project's `.proto` schema (empty source when there is none).
+    pub async fn proto_schema(&self) -> Result<ProtoSchema> {
+        self.json(self.req(Method::GET, "/proto/schema")).await
+    }
+
+    /// Replace the project's `.proto` schema; an empty `source` clears it. A schema that does not parse is refused.
+    pub async fn put_proto_schema(&self, source: &str) -> Result<ProtoSchema> {
+        self.json(
+            self.req(Method::PUT, "/proto/schema")
+                .json(&serde_json::json!({ "source": source })),
+        )
+        .await
+    }
+
+    /// The Map Local, Map Remote and throttle rules, in the order they are tried.
+    pub async fn map_rules(&self) -> Result<Vec<MapRule>> {
+        self.json(self.req(Method::GET, "/map-rules")).await
+    }
+
+    /// Replace the Map Local, Map Remote and throttle rules. A Map Local rule needs the admin role; a Map Remote
+    /// target the scope gate refuses, or a missing directory, is a 400 that names the rule.
+    pub async fn put_map_rules(&self, rules: &[MapRule]) -> Result<Vec<MapRule>> {
+        self.json(self.req(Method::PUT, "/map-rules").json(rules)).await
+    }
+
     // --- intercept ----------------------------------------------------------------------------------------
 
     pub async fn intercept(&self) -> Result<InterceptSettings> {
@@ -441,6 +550,16 @@ impl Client {
 
     pub async fn put_intercept(&self, s: &InterceptSettings) -> Result<InterceptSettings> {
         self.json(self.req(Method::PUT, "/intercept").json(s)).await
+    }
+
+    pub async fn response_filter(&self) -> Result<ResponseFilter> {
+        self.json(self.req(Method::GET, "/intercept/response-filter"))
+            .await
+    }
+
+    pub async fn put_response_filter(&self, f: &ResponseFilter) -> Result<ResponseFilter> {
+        self.json(self.req(Method::PUT, "/intercept/response-filter").json(f))
+            .await
     }
 
     pub async fn intercept_queue(&self) -> Result<Vec<InterceptSummary>> {
@@ -475,6 +594,50 @@ impl Client {
         self.json(self.req(Method::GET, "/proxy")).await
     }
 
+    /// Import request definitions (OpenAPI, GraphQL introspection, Postman, HAR, URL list or Burp XML) as Repeater
+    /// tabs. `body` is the `ImportBody` of the API: `format`, `content`, and optionally `base_url` and `dry_run`.
+    /// Nothing is sent; the reply lists what was found and the hosts involved.
+    pub async fn import_requests(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/import").json(body)).await
+    }
+
+    /// The proxy listeners (`ListenerInfo` in the OpenAPI description; passwords are never returned).
+    pub async fn list_listeners(&self) -> Result<Vec<serde_json::Value>> {
+        self.json(self.req(Method::GET, "/proxy/listeners")).await
+    }
+
+    /// Start another proxy listener. `spec` is the `ListenerSpec` of the API: `addr` and optionally `invisible`,
+    /// `tls_passthrough`, `auth` and `allow_clients`. Needs the admin role.
+    pub async fn add_listener(&self, spec: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/proxy/listeners").json(spec))
+            .await
+    }
+
+    /// Change a listener's options live. Needs the admin role.
+    pub async fn update_listener(&self, id: u32, spec: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::PUT, &format!("/proxy/listeners/{id}"))
+                .json(spec),
+        )
+        .await
+    }
+
+    /// Stop an added listener. Needs the admin role.
+    pub async fn remove_listener(&self, id: u32) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/proxy/listeners/{id}")))
+            .await
+    }
+
+    /// The live proxy settings and the names of the settings that need a restart.
+    pub async fn proxy_config(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/proxy/config")).await
+    }
+
+    /// Change the live proxy settings (all of `LiveSettings`). A setting that needs a restart is a 409.
+    pub async fn put_proxy_config(&self, live: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::PUT, "/proxy/config").json(live)).await
+    }
+
     /// Send a raw request through the Repeater. `body` is the `SendBody` of the API (see `docs/openapi.json`):
     /// target, base64 request, and optionally protocol, count and mode. Returns the reply with one result per send.
     pub async fn repeater_send(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
@@ -500,6 +663,35 @@ impl Client {
                 .json(&json!({ "input": input_b64 })),
         )
         .await
+    }
+
+    /// Analyse how random a set of tokens is (20 to 10000). Returns the `Analysis` of the API: statistics, FIPS 140-2
+    /// results, an entropy estimate and a `verdict` (`excellent`, `good`, `poor`, `not_random`).
+    pub async fn sequencer_analyze(&self, tokens: &[String]) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/sequencer/analyze")
+                .json(&json!({ "tokens": tokens })),
+        )
+        .await
+    }
+
+    /// Start a live capture. `body` is the `CaptureBody` of the API: target, base64 request, `source` (header,
+    /// cookie or regex), `count` and optionally `delay_ms`. Returns `{ "id": n }`.
+    pub async fn sequencer_capture(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/sequencer/capture").json(body))
+            .await
+    }
+
+    /// The progress of a capture, with its tokens from index `from` on.
+    pub async fn sequencer_capture_status(&self, id: u64, from: usize) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/sequencer/capture/{id}?from={from}")))
+            .await
+    }
+
+    /// Stop a capture after the request in flight.
+    pub async fn sequencer_capture_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/sequencer/capture/{id}/stop")))
+            .await
     }
 
     /// Compare two base64 inputs; `level` is `words` or `bytes`.
@@ -544,6 +736,202 @@ impl Client {
     /// Replace the Repeater's saved tabs.
     pub async fn put_repeater_tabs(&self, doc: &serde_json::Value) -> Result<serde_json::Value> {
         self.json(self.req(Method::PUT, "/repeater/tabs").json(doc)).await
+    }
+
+    /// Check an attack without sending anything. `body` is the `StartBody` of the API: target, base64 request with
+    /// `§` around each position, attack type and payload sets (and optionally options and grep rules). Returns the
+    /// number of requests and the first few payloads, or an error that says what is wrong.
+    pub async fn intruder_plan(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/intruder/plan").json(body))
+            .await
+    }
+
+    /// Like [`Client::intruder_plan`], listing the payloads of the first `limit` requests (at most 1000).
+    pub async fn intruder_plan_limit(
+        &self,
+        body: &serde_json::Value,
+        limit: u32,
+    ) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/intruder/plan")
+                .query(&[("limit", limit)])
+                .json(body),
+        )
+        .await
+    }
+
+    /// Start an Intruder attack (same body as [`Client::intruder_plan`]). Returns the attack as it starts; results
+    /// arrive as `IntruderResult` events and can be read with [`Client::intruder_results`].
+    pub async fn intruder_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/intruder/attacks").json(body))
+            .await
+    }
+
+    /// The project's Intruder attacks, newest first.
+    pub async fn intruder_attacks(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/intruder/attacks")).await
+    }
+
+    /// One attack with its request and configuration.
+    pub async fn intruder_attack(&self, id: i64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/intruder/attacks/{id}")))
+            .await
+    }
+
+    /// A page of an attack's results, in request order (at most 5000 a page).
+    pub async fn intruder_results(&self, id: i64, offset: u64, limit: u64) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::GET, &format!("/intruder/attacks/{id}/results"))
+                .query(&[("offset", offset), ("limit", limit)]),
+        )
+        .await
+    }
+
+    /// Throw the stop switch of an attack. False if it was not running.
+    pub async fn intruder_stop(&self, id: i64) -> Result<bool> {
+        #[derive(serde::Deserialize)]
+        struct R {
+            stopped: bool,
+        }
+        let r: R = self
+            .json(self.req(Method::POST, &format!("/intruder/attacks/{id}/stop")))
+            .await?;
+        Ok(r.stopped)
+    }
+
+    /// Delete an attack and its results.
+    pub async fn intruder_delete(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/intruder/attacks/{id}")))
+            .await
+    }
+
+    /// Start a spider crawl. `body` is the `StartBody` of the API: `start` URLs and optionally depth, page limit,
+    /// form options and headers. Returns the crawl as it starts.
+    pub async fn crawl_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/crawl/crawls").json(body))
+            .await
+    }
+
+    /// The crawls of this run of the server, newest first.
+    pub async fn crawl_list(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/crawl/crawls")).await
+    }
+
+    /// One crawl with its pages from index `from` on.
+    pub async fn crawl_get(&self, id: u64, from: usize) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/crawl/crawls/{id}?from={from}")))
+            .await
+    }
+
+    /// Throw the stop switch of a crawl.
+    pub async fn crawl_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/crawl/crawls/{id}/stop")))
+            .await
+    }
+
+    /// Start content or parameter discovery. `body` is the `DiscoverStartBody` of the API: `base`, and optionally
+    /// `mode` (`paths` or `params`), `words`, `extensions`, `max_depth`, `max_requests` and headers.
+    pub async fn discover_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/discover/runs").json(body))
+            .await
+    }
+
+    /// The discovery runs of this run of the server, newest first.
+    pub async fn discover_list(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/discover/runs")).await
+    }
+
+    /// One discovery run with its hits.
+    pub async fn discover_get(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/discover/runs/{id}")))
+            .await
+    }
+
+    /// Throw the stop switch of a discovery run.
+    pub async fn discover_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/discover/runs/{id}/stop")))
+            .await
+    }
+
+    /// The advisory database in force (built-in or a loaded feed), with the trusted feed keys.
+    pub async fn advisories_status(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/advisories")).await
+    }
+
+    /// Set the public keys (base64 Ed25519) that may sign an advisory feed.
+    pub async fn advisories_trust(&self, keys: &[String]) -> Result<()> {
+        self.unit(
+            self.req(Method::PUT, "/advisories/trust")
+                .json(&serde_json::json!({ "keys": keys })),
+        )
+        .await
+    }
+
+    /// Load a signed advisory feed (`feed` is the file's text, `signature` the base64 detached signature).
+    pub async fn advisories_load_feed(
+        &self,
+        feed: &str,
+        signature: &str,
+        rescan: bool,
+    ) -> Result<serde_json::Value> {
+        self.json(
+            self.req(Method::POST, "/advisories/feed")
+                .json(&serde_json::json!({ "feed": feed, "signature": signature, "rescan": rescan })),
+        )
+        .await
+    }
+
+    /// Drop the loaded feed and go back to the built-in advisories.
+    pub async fn advisories_reset(&self) -> Result<()> {
+        self.unit(self.req(Method::DELETE, "/advisories/feed")).await
+    }
+
+    /// The authorisation matrix: replay recorded flows as each account and as nobody. `body` is the `MatrixBody` of
+    /// the API: `identities`, `probes` and optionally `options` and `save_issues`. Returns `rows`, `findings` and
+    /// `issues_saved`.
+    pub async fn auth_matrix(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/auth-matrix").json(body)).await
+    }
+
+    /// Start an active scan. `body` is the `ScanStartBody` of the API: `targets` (each a `url`, optionally with
+    /// `method`, `headers`, `body`, `content_type`) and optionally `checks`, `strength`, `concurrency`, `delay_ms`,
+    /// `max_requests`, and `session` (a login macro that keeps the scan signed in). Returns the scan as it starts.
+    pub async fn scan_start(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, "/scan/scans").json(body)).await
+    }
+
+    /// The scans of this run of the server, newest first.
+    pub async fn scan_list(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/scan/scans")).await
+    }
+
+    /// The active checks: id and description.
+    pub async fn scan_checks(&self) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, "/scan/checks")).await
+    }
+
+    /// One scan with its progress and findings.
+    pub async fn scan_get(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::GET, &format!("/scan/scans/{id}")))
+            .await
+    }
+
+    /// Throw the stop switch of a scan.
+    pub async fn scan_stop(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/scan/scans/{id}/stop")))
+            .await
+    }
+
+    /// Pause a scan: no request starts until it is resumed.
+    pub async fn scan_pause(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/scan/scans/{id}/pause")))
+            .await
+    }
+
+    /// Resume a paused scan.
+    pub async fn scan_resume(&self, id: u64) -> Result<serde_json::Value> {
+        self.json(self.req(Method::POST, &format!("/scan/scans/{id}/resume")))
+            .await
     }
 
     /// The kill switch for all tool traffic. Returns the new state.
@@ -734,6 +1122,167 @@ impl Client {
                 .query(&[("before", before), ("limit", limit.map(i64::from))]),
         )
         .await
+    }
+
+    // --- client certificates -----------------------------------------------------------------------------------
+
+    pub async fn client_certs(&self) -> Result<Vec<ClientCert>> {
+        Ok(self
+            .json::<ClientCertList>(self.req(Method::GET, "/client-certs"))
+            .await?
+            .certs)
+    }
+
+    /// Add a client certificate for a host pattern from a PEM file (certificate and key) or a base64 PKCS#12 file.
+    /// Needs the admin role.
+    pub async fn add_client_cert(
+        &self,
+        host: &str,
+        pem: Option<&str>,
+        pkcs12_base64: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<ClientCert> {
+        self.json(self.req(Method::POST, "/client-certs").json(&json!({
+            "host": host, "pem": pem, "pkcs12_base64": pkcs12_base64, "password": password
+        })))
+        .await
+    }
+
+    pub async fn delete_client_cert(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/client-certs/{id}")))
+            .await
+    }
+
+    // --- credential vault --------------------------------------------------------------------------------------
+
+    /// The vault's entries: never the secrets.
+    pub async fn vault(&self) -> Result<Vec<VaultEntry>> {
+        Ok(self
+            .json::<VaultList>(self.req(Method::GET, "/vault"))
+            .await?
+            .entries)
+    }
+
+    /// Store a named secret (needs the admin role). `kind` is one of `password`, `token`, `api_key`,
+    /// `auth_config`, `client_cert_password`, `oast_key`, `other`.
+    pub async fn create_vault_entry(&self, name: &str, kind: &str, secret: &str) -> Result<VaultEntry> {
+        self.json(
+            self.req(Method::POST, "/vault")
+                .json(&json!({ "name": name, "kind": kind, "secret": secret })),
+        )
+        .await
+    }
+
+    /// Rename, re-kind or replace the secret of an entry; `None` leaves a field as it is.
+    pub async fn update_vault_entry(
+        &self,
+        id: i64,
+        name: Option<&str>,
+        kind: Option<&str>,
+        secret: Option<&str>,
+    ) -> Result<VaultEntry> {
+        self.json(
+            self.req(Method::PATCH, &format!("/vault/{id}"))
+                .json(&json!({ "name": name, "kind": kind, "secret": secret })),
+        )
+        .await
+    }
+
+    pub async fn delete_vault_entry(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/vault/{id}"))).await
+    }
+
+    // --- custom checks ---------------------------------------------------------------------------------------
+
+    pub async fn checks(&self) -> Result<Vec<CustomCheck>> {
+        Ok(self
+            .json::<CustomCheckList>(self.req(Method::GET, "/checks"))
+            .await?
+            .checks)
+    }
+
+    /// Add a custom passive check (YAML). A 400 error carries what is wrong with it.
+    pub async fn add_check(&self, yaml: &str) -> Result<CustomCheck> {
+        self.json(self.req(Method::POST, "/checks").json(&json!({ "yaml": yaml })))
+            .await
+    }
+
+    /// Validate without storing.
+    pub async fn validate_check(&self, yaml: &str) -> Result<CheckValidation> {
+        self.json(
+            self.req(Method::POST, "/checks/validate")
+                .json(&json!({ "yaml": yaml })),
+        )
+        .await
+    }
+
+    pub async fn replace_check(&self, id: i64, yaml: &str) -> Result<CustomCheck> {
+        self.json(
+            self.req(Method::PUT, &format!("/checks/{id}"))
+                .json(&json!({ "yaml": yaml })),
+        )
+        .await
+    }
+
+    pub async fn set_check_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/checks/{id}"))
+                .json(&json!({ "enabled": enabled })),
+        )
+        .await
+    }
+
+    pub async fn delete_check(&self, id: i64) -> Result<()> {
+        self.unit(self.req(Method::DELETE, &format!("/checks/{id}")))
+            .await
+    }
+
+    // --- issues (passive scanner) --------------------------------------------------------------------------
+
+    pub async fn issues(&self, q: &IssueQuery) -> Result<IssueList> {
+        self.json(self.req(Method::GET, "/issues").query(q)).await
+    }
+
+    pub async fn issue(&self, id: i64) -> Result<Issue> {
+        self.json(self.req(Method::GET, &format!("/issues/{id}"))).await
+    }
+
+    pub async fn change_issue(&self, id: i64, status: IssueStatus) -> Result<()> {
+        self.unit(
+            self.req(Method::PATCH, &format!("/issues/{id}"))
+                .json(&json!({ "status": status })),
+        )
+        .await
+    }
+
+    /// The issues as a report file (`format`: html, json, sarif, junit or markdown). Secrets are redacted unless
+    /// `redact` is false (tester role; audited).
+    pub async fn issues_report(&self, q: &IssueQuery, format: &str, redact: bool) -> Result<Bytes> {
+        let mut rb = self
+            .req(Method::GET, "/issues/report")
+            .query(q)
+            .query(&[("format", format)]);
+        if !redact {
+            rb = rb.query(&[("redact", "0")]);
+        }
+        Ok(self.check(rb.send().await?).await?.bytes().await?)
+    }
+
+    /// One issue prepared for a tracker (`github`, `jira` or `linear`): title, Markdown body and the create-issue
+    /// JSON, to copy or post by hand. Secrets are redacted unless `redact` is false (tester role; audited either way).
+    pub async fn issue_tracker(&self, id: i64, tracker: &str, redact: bool) -> Result<serde_json::Value> {
+        let mut rb = self
+            .req(Method::GET, &format!("/issues/{id}/tracker"))
+            .query(&[("tracker", tracker)]);
+        if !redact {
+            rb = rb.query(&[("redact", "0")]);
+        }
+        Ok(self.check(rb.send().await?).await?.json().await?)
+    }
+
+    /// Queue every recorded flow for the scanner again.
+    pub async fn rescan_issues(&self) -> Result<()> {
+        self.unit(self.req(Method::POST, "/issues/rescan")).await
     }
 
     // --- events --------------------------------------------------------------------------------------------

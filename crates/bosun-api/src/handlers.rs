@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use std::io::Read as _;
 
 use bosun_model::{FlowId, RawResponse};
-use bosun_proxy::{Decision, InterceptSettings, RuleSpec};
+use bosun_proxy::{Decision, InterceptSettings, ResponseFilter, RuleSpec};
 use bosun_scope::{Scope, ScopeSpec};
 use bosun_store::codec;
 use bosun_store::{FlowFilter, Role, TokenScope};
@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{Caller, check_password_policy, check_username, hash_password, random_token};
 use crate::security::{empty, reject};
-use crate::{AppState, SETTING_INTERCEPT, SETTING_RULES, SETTING_SAVED_FILTERS, SETTING_SCOPE};
+use crate::{
+    AppState, SETTING_INTERCEPT, SETTING_PROTO_SCHEMA, SETTING_RESPONSE_FILTER, SETTING_RULES,
+    SETTING_SAVED_FILTERS, SETTING_SCOPE,
+};
 
 type R = Result<Response, Response>;
 
@@ -42,6 +45,11 @@ async fn save_setting<T: Serialize + Send + 'static>(
     blocking(move || p.set_setting(key, &value))
         .await?
         .map_err(internal)
+}
+
+/// Liveness for container health checks: no authentication, no detail.
+pub async fn healthz() -> &'static str {
+    "ok"
 }
 
 pub async fn status(State(st): State<AppState>) -> Response {
@@ -821,6 +829,38 @@ pub async fn put_intercept(
     Ok(Json(s).into_response())
 }
 
+pub async fn get_response_filter(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    Ok(Json(st.inner.proxy.intercept().response_filter()).into_response())
+}
+
+pub async fn put_response_filter(
+    State(st): State<AppState>,
+    caller: Caller,
+    Json(f): Json<ResponseFilter>,
+) -> R {
+    caller.require(Role::Tester)?;
+    f.validate().map_err(|e| reject(StatusCode::BAD_REQUEST, &e))?;
+    let _settings = st.inner.projects.settings_guard().await;
+    st.inner.proxy.intercept().set_response_filter(f.clone());
+    caller
+        .audit(
+            &st,
+            "intercept.response_filter",
+            &format!(
+                "statuses={} mime={} header={} body={} only_if_request_held={}",
+                f.statuses.join(","),
+                f.mime_contains.join(","),
+                f.header_contains.is_some(),
+                f.body_contains.is_some(),
+                f.only_if_request_held
+            ),
+        )
+        .await;
+    save_setting(&st, SETTING_RESPONSE_FILTER, f.clone()).await?;
+    Ok(Json(f).into_response())
+}
+
 pub async fn intercept_queue(State(st): State<AppState>, caller: Caller) -> R {
     caller.require(Role::Viewer)?;
     Ok(Json(st.inner.proxy.intercept().list()).into_response())
@@ -874,15 +914,25 @@ pub async fn intercept_forward_all(State(st): State<AppState>, caller: Caller) -
 pub async fn proxy_info(State(st): State<AppState>, caller: Caller) -> R {
     caller.require(Role::Viewer)?;
     let c = st.inner.proxy.config();
+    let live = st.inner.proxy.live();
+    // The configured listener as it is now (its options may have been changed live).
+    let main = st
+        .inner
+        .proxy
+        .listeners()
+        .into_iter()
+        .find(|l| l.primary)
+        .map(|l| l.spec)
+        .unwrap_or_else(|| c.listener_spec());
     Ok(Json(serde_json::json!({
-        "listen": c.listen,
-        "http2": c.http2,
-        "invisible": c.invisible,
+        "listen": main.addr,
+        "http2": live.http2,
+        "invisible": main.invisible,
         "verify_upstream_tls": c.verify_upstream_tls,
         "upstream": c.upstream,
-        "tls_passthrough": c.tls_passthrough,
-        "auth_required": c.auth.is_some(),
-        "record_out_of_scope": c.record_out_of_scope,
+        "tls_passthrough": main.tls_passthrough,
+        "auth_required": main.auth.is_some(),
+        "record_out_of_scope": live.record_out_of_scope,
         "tools_stopped": st.inner.gate.is_stopped(),
         "stats": st.inner.proxy.stats(),
     }))
@@ -908,6 +958,10 @@ pub async fn ca_info(State(st): State<AppState>, caller: Caller) -> R {
         "fingerprint_sha256": st.inner.ca.fingerprint(),
         "spki_sha256": st.inner.ca.spki_hash(),
         "pem": st.inner.ca.cert_pem(),
+        "not_after": st.inner.ca.not_after().unix_timestamp(),
+        "days_left": st.inner.ca.days_left(),
+        "expiring": st.inner.ca.days_left() <= bosun_ca::EXPIRY_WARN_DAYS,
+        "permitted_domains": st.inner.ca.permitted_domains(),
     }))
     .into_response())
 }
@@ -1210,4 +1264,76 @@ pub async fn audit_log(State(st): State<AppState>, caller: Caller, Query(q): Que
         .await?
         .map_err(internal)?;
     Ok(Json(entries).into_response())
+}
+
+/// The project's `.proto` schema, as the Decoder, the message viewer and the Repeater use it.
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ProtoSchema {
+    /// The `.proto` source (empty when none is set).
+    pub source: String,
+    /// The full names of the messages it defines.
+    #[serde(default)]
+    pub messages: Vec<String>,
+    /// The gRPC calls it defines, as paths (`/package.Service/Method`).
+    #[serde(default)]
+    pub calls: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ProtoSchemaBody {
+    /// The `.proto` source (up to 256 KiB); empty clears it.
+    pub source: String,
+}
+
+fn proto_schema_reply(source: String) -> Result<ProtoSchema, Response> {
+    if source.trim().is_empty() {
+        return Ok(ProtoSchema {
+            source: String::new(),
+            messages: Vec::new(),
+            calls: Vec::new(),
+        });
+    }
+    let s = bosun_codec::Schema::parse(&source)
+        .map_err(|e| reject(StatusCode::BAD_REQUEST, &format!("the schema: {e}")))?;
+    Ok(ProtoSchema {
+        messages: s.message_names(),
+        calls: s.rpc_paths(),
+        source,
+    })
+}
+
+pub async fn get_proto_schema(State(st): State<AppState>, caller: Caller) -> R {
+    caller.require(Role::Viewer)?;
+    let p = st.project();
+    let source: Option<String> = blocking(move || p.setting(SETTING_PROTO_SCHEMA))
+        .await?
+        .map_err(internal)?;
+    // A schema that was saved is one that parsed, so this only fails if the parser changed under it.
+    let reply = proto_schema_reply(source.unwrap_or_default()).unwrap_or_else(|_| ProtoSchema {
+        source: String::new(),
+        messages: Vec::new(),
+        calls: Vec::new(),
+    });
+    Ok(Json(reply).into_response())
+}
+
+pub async fn put_proto_schema(
+    State(st): State<AppState>,
+    caller: Caller,
+    Json(b): Json<ProtoSchemaBody>,
+) -> R {
+    caller.require(Role::Tester)?;
+    let _settings = st.inner.projects.settings_guard().await;
+    let reply = tokio::task::spawn_blocking(move || proto_schema_reply(b.source))
+        .await
+        .map_err(|_| reject(StatusCode::INTERNAL_SERVER_ERROR, "the schema could not be read"))??;
+    save_setting(&st, SETTING_PROTO_SCHEMA, reply.source.clone()).await?;
+    caller
+        .audit(
+            &st,
+            "proto_schema.update",
+            &format!("{} messages, {} calls", reply.messages.len(), reply.calls.len()),
+        )
+        .await;
+    Ok(Json(reply).into_response())
 }

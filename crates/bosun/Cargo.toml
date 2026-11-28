@@ -23,6 +23,13 @@ bosun-scope.workspace = true
 bosun-proxy.workspace = true
 bosun-api.workspace = true
 bosun-client.workspace = true
+bosun-report.workspace = true
+bosun-codec.workspace = true
+bosun-import.workspace = true
+bosun-checks.workspace = true
+ring.workspace = true
+url = "2"
+tempfile.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["io-std"] }
@@ -32,9 +39,14 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 base64.workspace = true
+time.workspace = true
+rpassword.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
 
 [dev-dependencies]
-tempfile.workspace = true
+bosun-testbed = { path = "../bosun-testbed" }
 reqwest = { workspace = true, features = ["json"] }
 
 [lints]

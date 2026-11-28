@@ -18,3 +18,10 @@ regexes = [
 description = "UI storage-key names and shortcut strings"
 targetRules = ["generic-api-key"]
 paths = ['''^web/src/''']
+
+# The passive scanner's unit tests feed it a truncated, fake PEM block ("MIIE") to prove the private-key rule fires.
+# Only that rule, only in that file; every other rule still applies there.
+[[allowlists]]
+description = "Fake PEM fixture in the scanner's tests"
+targetRules = ["private-key"]
+paths = ['''^crates/bosun-scan/src/rules\.rs$''']

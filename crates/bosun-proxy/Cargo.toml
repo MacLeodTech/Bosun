@@ -11,6 +11,8 @@ publish.workspace = true
 bosun-model.workspace = true
 bosun-ca.workspace = true
 bosun-store.workspace = true
+bosun-scan.workspace = true
+bosun-codec.workspace = true
 rand.workspace = true
 bosun-scope.workspace = true
 tokio.workspace = true
@@ -33,6 +35,13 @@ regex.workspace = true
 base64.workspace = true
 subtle.workspace = true
 ipnet.workspace = true
+flate2.workspace = true
+p12-keystore = "0.4.1"
+x509-parser.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Safe wrapper over getsockopt(SO_ORIGINAL_DST) for transparent (redirected) connections.
+nix = { version = "0.32", default-features = false, features = ["net", "socket"] }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -41,6 +50,11 @@ tokio-tungstenite.workspace = true
 futures-util.workspace = true
 rcgen.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "proxy"
+harness = false
 
 [lints]
 workspace = true

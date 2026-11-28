@@ -422,6 +422,66 @@ async fn engagement_helpers_report_a_response_and_build_a_csrf_page() {
 }
 
 #[tokio::test]
+async fn target_analysis_lists_endpoints_and_parameters_of_a_host() {
+    use bosun_client::ParamWhere;
+    let s = stack(true).await;
+    let c = admin(&s).await;
+    for (i, q) in ["?page=1&sort=asc", "?page=2", "?page=3&sort=desc"]
+        .iter()
+        .enumerate()
+    {
+        let path = format!("/items/{}{q}", 10 + i);
+        let req = format!("GET {path} HTTP/1.1\r\nHost: a.test\r\n\r\n");
+        common::recorded_exchange(&s, "GET", &path, req.as_bytes(), "", b"", None);
+    }
+    let login = b"POST /login HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nuser=a&pass=b";
+    common::recorded_exchange(&s, "POST", "/login", login, "", b"", None);
+    let json = b"POST /api/n HTTP/1.1\r\nHost: a.test\r\nContent-Type: application/json\r\n\r\n{\"id\":7,\"user\":{\"role\":\"x\"}}";
+    common::recorded_exchange(&s, "POST", "/api/n", json, "", b"", None);
+
+    let r = c.host_analysis("A.test", None).await.unwrap();
+    assert_eq!(
+        (r.host.as_str(), r.requests, r.capped, r.truncated),
+        ("a.test", 5, false, false)
+    );
+    let items = &r.endpoints[0];
+    assert_eq!(
+        (items.method.as_str(), items.path.as_str(), items.count),
+        ("GET", "/items/{n}", 3)
+    );
+    assert_eq!(items.params, ["page", "sort"]);
+    assert_eq!(items.statuses.len(), 1);
+    let page = r.params.iter().find(|p| p.name == "page").unwrap();
+    assert_eq!(
+        (page.location, page.count, page.endpoints, page.values.len()),
+        (ParamWhere::Query, 3, 1, 3)
+    );
+    assert!(
+        r.params
+            .iter()
+            .any(|p| p.name == "pass" && p.location == ParamWhere::Form)
+    );
+    assert!(
+        r.params
+            .iter()
+            .any(|p| p.name == "user.role" && p.location == ParamWhere::Json)
+    );
+
+    // The port narrows it; another host, or a limit, changes what is read.
+    assert_eq!(c.host_analysis("a.test", Some(443)).await.unwrap().requests, 5);
+    assert_eq!(c.host_analysis("a.test", Some(8080)).await.unwrap().requests, 0);
+    assert_eq!(c.host_analysis("b.test", None).await.unwrap().requests, 0);
+    assert!(c.host_analysis("  ", None).await.is_err());
+    let anon = reqwest::Client::new();
+    let r = anon
+        .get(format!("{}/api/v1/analysis?host=a.test", url(&s)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test]
 async fn history_bodies_annotations_and_sitemap() {
     let s = stack(true).await;
     let c = admin(&s).await;
@@ -547,6 +607,7 @@ async fn scope_rules_proxy_and_ca() {
         replace: "User-Agent: bosun".into(),
         regex: true,
         comment: "disguise".into(),
+        operation: String::new(),
     };
     assert_eq!(
         c.put_rules(std::slice::from_ref(&rule)).await.unwrap(),
@@ -563,6 +624,17 @@ async fn scope_rules_proxy_and_ca() {
         .is_err()
     );
 
+    // The project's .proto schema: kept, listed by message and call, refused when it does not parse.
+    let src = "package a; message M { int32 x = 1; } service S { rpc Go (M) returns (M); }";
+    let saved = c.put_proto_schema(src).await.unwrap();
+    assert_eq!(saved.calls, ["/a.S/Go"]);
+    assert_eq!(c.proto_schema().await.unwrap(), saved);
+    assert_eq!(
+        c.put_proto_schema("message {").await.unwrap_err().status(),
+        Some(400)
+    );
+    assert_eq!(c.put_proto_schema("").await.unwrap().source, "");
+
     let want = InterceptSettings {
         requests: true,
         responses: true,
@@ -571,6 +643,19 @@ async fn scope_rules_proxy_and_ca() {
     };
     assert_eq!(c.put_intercept(&want).await.unwrap(), want);
     assert_eq!(c.intercept().await.unwrap(), want);
+    let f = bosun_client::ResponseFilter {
+        statuses: vec!["5xx".into()],
+        mime_contains: vec!["json".into()],
+        ..Default::default()
+    };
+    assert_eq!(c.put_response_filter(&f).await.unwrap(), f);
+    assert_eq!(c.response_filter().await.unwrap(), f);
+    let bad = bosun_client::ResponseFilter {
+        statuses: vec!["fifty".into()],
+        ..Default::default()
+    };
+    assert!(c.put_response_filter(&bad).await.is_err());
+    assert_eq!(c.response_filter().await.unwrap(), f);
     assert!(c.intercept_queue().await.unwrap().is_empty());
     assert_eq!(c.intercept_forward_all().await.unwrap(), 0);
     assert!(c.intercept_item(1).await.unwrap_err().is_not_found());
@@ -590,11 +675,17 @@ async fn scope_rules_proxy_and_ca() {
             && !ca.fingerprint_sha256.is_empty()
             && !ca.spki_sha256.is_empty()
     );
+    assert!(ca.days_left > 365 && !ca.expiring && ca.not_after > 0 && ca.permitted_domains.is_empty());
     // The test engine has no browser launcher.
     assert!(c.launch_browser().await.unwrap_err().is_forbidden());
 
     let audit = c.audit(None, None).await.unwrap();
-    for a in ["scope.update", "rules.update", "intercept.settings"] {
+    for a in [
+        "scope.update",
+        "rules.update",
+        "intercept.settings",
+        "intercept.response_filter",
+    ] {
         assert!(audit.iter().any(|e| e.action == a), "{a} missing");
     }
 }
@@ -843,40 +934,112 @@ fn the_client_covers_every_documented_operation() {
         ("post", "/organizer", "add_to_organizer"),
         ("patch", "/organizer/{id}", "update_organizer_item"),
         ("delete", "/organizer/{id}", "delete_organizer_item"),
+        ("get", "/client-certs", "client_certs"),
+        ("post", "/client-certs", "add_client_cert"),
+        ("delete", "/client-certs/{id}", "delete_client_cert"),
+        ("get", "/vault", "vault"),
+        ("post", "/vault", "create_vault_entry"),
+        ("patch", "/vault/{id}", "update_vault_entry"),
+        ("delete", "/vault/{id}", "delete_vault_entry"),
+        ("get", "/checks", "checks"),
+        ("post", "/checks", "add_check"),
+        ("post", "/checks/validate", "validate_check"),
+        ("put", "/checks/{id}", "replace_check"),
+        ("patch", "/checks/{id}", "set_check_enabled"),
+        ("delete", "/checks/{id}", "delete_check"),
+        ("get", "/issues", "issues"),
+        ("post", "/issues/rescan", "rescan_issues"),
+        ("get", "/issues/report", "issues_report"),
+        ("get", "/issues/{id}/tracker", "issue_tracker"),
+        ("get", "/issues/{id}", "issue"),
+        ("patch", "/issues/{id}", "change_issue"),
+        ("post", "/intruder/plan", "intruder_plan"),
+        ("get", "/intruder/attacks", "intruder_attacks"),
+        ("post", "/intruder/attacks", "intruder_start"),
+        ("get", "/intruder/attacks/{id}", "intruder_attack"),
+        ("delete", "/intruder/attacks/{id}", "intruder_delete"),
+        ("get", "/intruder/attacks/{id}/results", "intruder_results"),
+        ("post", "/intruder/attacks/{id}/stop", "intruder_stop"),
+        ("post", "/crawl/crawls", "crawl_start"),
+        ("get", "/crawl/crawls", "crawl_list"),
+        ("get", "/crawl/crawls/{id}", "crawl_get"),
+        ("post", "/crawl/crawls/{id}/stop", "crawl_stop"),
+        ("post", "/discover/runs", "discover_start"),
+        ("get", "/discover/runs", "discover_list"),
+        ("get", "/discover/runs/{id}", "discover_get"),
+        ("post", "/discover/runs/{id}/stop", "discover_stop"),
+        ("get", "/advisories", "advisories_status"),
+        ("put", "/advisories/trust", "advisories_trust"),
+        ("post", "/advisories/feed", "advisories_load_feed"),
+        ("delete", "/advisories/feed", "advisories_reset"),
+        ("post", "/auth-matrix", "auth_matrix"),
+        ("post", "/scan/scans", "scan_start"),
+        ("get", "/scan/scans", "scan_list"),
+        ("get", "/scan/checks", "scan_checks"),
+        ("get", "/scan/scans/{id}", "scan_get"),
+        ("post", "/scan/scans/{id}/stop", "scan_stop"),
+        ("post", "/scan/scans/{id}/pause", "scan_pause"),
+        ("post", "/scan/scans/{id}/resume", "scan_resume"),
         ("get", "/flows/{id}", "flow"),
         ("patch", "/flows/{id}", "annotate_flow"),
         ("get", "/flows/{id}/ws", "ws_messages"),
         ("get", "/flows/{id}/engage", "flow_engage"),
         ("get", "/flows/{id}/csrf-poc", "flow_csrf_poc"),
+        ("get", "/analysis", "host_analysis"),
         ("get", "/flows/{id}/{part}/body", "flow_body"),
         ("get", "/sitemap", "site_map"),
         ("get", "/scope", "scope"),
         ("put", "/scope", "put_scope"),
         ("get", "/rules", "rules"),
         ("put", "/rules", "put_rules"),
+        ("get", "/proto/schema", "proto_schema"),
+        ("put", "/proto/schema", "put_proto_schema"),
+        ("get", "/map-rules", "map_rules"),
+        ("put", "/map-rules", "put_map_rules"),
         ("get", "/intercept", "intercept"),
         ("put", "/intercept", "put_intercept"),
+        ("get", "/intercept/response-filter", "response_filter"),
+        ("put", "/intercept/response-filter", "put_response_filter"),
         ("get", "/intercept/queue", "intercept_queue"),
         ("get", "/intercept/queue/{id}", "intercept_item"),
         ("post", "/intercept/queue/{id}", "intercept_decide"),
         ("post", "/intercept/forward-all", "intercept_forward_all"),
         ("get", "/proxy", "proxy_info"),
+        ("get", "/proxy/listeners", "list_listeners"),
+        ("post", "/proxy/listeners", "add_listener"),
+        ("put", "/proxy/listeners/{id}", "update_listener"),
+        ("delete", "/proxy/listeners/{id}", "remove_listener"),
+        ("get", "/proxy/config", "proxy_config"),
+        ("put", "/proxy/config", "put_proxy_config"),
         ("put", "/tools/stop", "set_stopped"),
         ("post", "/decoder/apply", "decoder_apply"),
         ("post", "/decoder/smart", "decoder_smart"),
         ("post", "/comparer/diff", "comparer_diff"),
+        ("post", "/import", "import_requests"),
         ("post", "/repeater/send", "repeater_send"),
         ("get", "/repeater/settings", "repeater_settings"),
         ("put", "/repeater/settings", "put_repeater_settings"),
         ("post", "/repeater/ws", "repeater_ws"),
         ("get", "/repeater/tabs", "repeater_tabs"),
         ("put", "/repeater/tabs", "put_repeater_tabs"),
+        ("post", "/sequencer/analyze", "sequencer_analyze"),
+        ("post", "/sequencer/capture", "sequencer_capture"),
+        ("get", "/sequencer/capture/{id}", "sequencer_capture_status"),
+        ("post", "/sequencer/capture/{id}/stop", "sequencer_capture_stop"),
         ("get", "/ca", "ca_info"),
         ("get", "/ca/cert.pem", "ca_pem"),
         ("post", "/browser/launch", "launch_browser"),
         ("get", "/tokens", "tokens"),
         ("post", "/tokens", "create_token"),
         ("delete", "/tokens/{id}", "delete_token"),
+        ("post", "/auth/login/totp", "login_totp"),
+        ("get", "/auth/totp", "totp_status"),
+        ("post", "/auth/totp/enroll", "totp_enroll"),
+        ("post", "/auth/totp/confirm", "totp_confirm"),
+        ("post", "/auth/totp/disable", "totp_disable"),
+        ("post", "/auth/totp/recovery-codes", "totp_recovery_codes"),
+        ("put", "/auth/totp/required", "totp_set_required"),
+        ("delete", "/users/{id}/totp", "reset_user_totp"),
         ("get", "/users", "users"),
         ("post", "/users", "create_user"),
         ("delete", "/users/{id}", "delete_user"),
@@ -979,5 +1142,221 @@ async fn a_login_ticket_signs_in_once_and_sets_up_a_local_admin() {
     assert!(
         actions.contains(&"login.ticket.failed") && actions.contains(&"setup"),
         "{actions:?}"
+    );
+}
+
+/// Listeners are added, changed and removed while the engine runs, each with its own options, and the live
+/// settings change without a restart. Every change is audited and only an admin may make it.
+#[tokio::test]
+async fn proxy_listeners_and_live_settings_change_without_a_restart() {
+    use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let s = stack(true).await;
+    let c = admin(&s).await;
+
+    let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let up_port = up.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let (mut sock, _) = up.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                    .await;
+            });
+        }
+    });
+    let target = format!("http://127.0.0.1:{up_port}/x");
+    let via = |addr: &str, auth: Option<&str>| {
+        let mut p = reqwest::Proxy::http(format!("http://{addr}")).unwrap();
+        if let Some(a) = auth {
+            p = p.basic_auth("tester", a);
+        }
+        reqwest::Client::builder()
+            .proxy(p)
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap()
+    };
+    let raw_get = |addr: String| async move {
+        let mut raw = tokio::net::TcpStream::connect(&addr).await.unwrap();
+        raw.write_all(
+            format!("GET /x HTTP/1.1\r\nHost: 127.0.0.1:{up_port}\r\nConnection: close\r\n\r\n").as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut out = String::new();
+        raw.read_to_string(&mut out).await.unwrap();
+        out
+    };
+
+    // The configured listener is there, and cannot be removed.
+    let l = c.list_listeners().await.unwrap();
+    assert_eq!(l.len(), 1);
+    assert_eq!(l[0]["primary"], true);
+    assert_eq!(l[0]["addr"], s.proxy.to_string());
+    assert!(
+        c.remove_listener(l[0]["id"].as_u64().unwrap() as u32)
+            .await
+            .is_err()
+    );
+
+    // Add one: it works at once.
+    let added = c.add_listener(&json!({"addr": "127.0.0.1:0"})).await.unwrap();
+    let (id, addr) = (
+        added["id"].as_u64().unwrap() as u32,
+        added["addr"].as_str().unwrap().to_string(),
+    );
+    assert_eq!(c.list_listeners().await.unwrap().len(), 2);
+    let r = via(&addr, None).get(&target).send().await.unwrap();
+    assert_eq!(r.text().await.unwrap(), "ok");
+
+    // An open proxy is refused; so are bad bodies and a repeated address.
+    let open = c.add_listener(&json!({"addr": "0.0.0.0:0"})).await.unwrap_err();
+    assert_eq!(open.status(), Some(400));
+    assert!(
+        c.add_listener(&json!({"addr": "127.0.0.1:0", "nope": 1}))
+            .await
+            .is_err()
+    );
+    assert!(c.add_listener(&json!({"addr": addr})).await.is_err());
+
+    // Credentials, live. The password is never returned.
+    let pw = "a long proxy password";
+    let upd = c
+        .update_listener(
+            id,
+            &json!({"addr": addr, "auth": {"username": "tester", "password": pw}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(upd["auth_required"], true);
+    assert!(!upd.to_string().contains(pw));
+    let status = |r: reqwest::Response| r.status().as_u16();
+    assert_eq!(status(via(&addr, None).get(&target).send().await.unwrap()), 407);
+    assert_eq!(
+        status(via(&addr, Some(pw)).get(&target).send().await.unwrap()),
+        200
+    );
+    // The configured listener is unaffected.
+    let main = s.proxy.to_string();
+    assert_eq!(status(via(&main, None).get(&target).send().await.unwrap()), 200);
+    // An empty password on edit keeps the current one.
+    c.update_listener(
+        id,
+        &json!({"addr": addr, "invisible": true, "auth": {"username": "tester", "password": ""}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        status(via(&addr, Some(pw)).get(&target).send().await.unwrap()),
+        200
+    );
+
+    // Invisible mode: an origin-form request with a Host header.
+    c.update_listener(id, &json!({"addr": addr, "invisible": true}))
+        .await
+        .unwrap();
+    let out = raw_get(addr.clone()).await;
+    assert!(out.starts_with("HTTP/1.1 200") && out.ends_with("ok"), "{out}");
+    c.update_listener(id, &json!({"addr": addr, "invisible": false}))
+        .await
+        .unwrap();
+    let out = raw_get(addr.clone()).await;
+    assert!(out.starts_with("HTTP/1.1 400"), "{out}");
+
+    // A client allowlist that excludes the caller.
+    c.update_listener(id, &json!({"addr": addr, "allow_clients": ["10.0.0.0/8"]}))
+        .await
+        .unwrap();
+    assert!(via(&addr, None).get(&target).send().await.is_err());
+
+    // A per-listener connection cap is stored, shown, and zero is refused.
+    c.update_listener(id, &json!({"addr": addr, "max_connections": 5}))
+        .await
+        .unwrap();
+    let shown = c.list_listeners().await.unwrap();
+    assert!(shown.iter().any(|l| l["max_connections"] == 5), "{shown:?}");
+    assert!(
+        c.update_listener(id, &json!({"addr": addr, "max_connections": 0}))
+            .await
+            .is_err()
+    );
+
+    // Remove: the port stops answering.
+    c.remove_listener(id).await.unwrap();
+    assert_eq!(c.list_listeners().await.unwrap().len(), 1);
+    assert!(c.remove_listener(id).await.unwrap_err().is_not_found());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(tokio::net::TcpStream::connect(&addr).await.is_err());
+
+    // Live settings.
+    let cfg = c.proxy_config().await.unwrap();
+    let names: Vec<&str> = cfg["restart_required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"upstream") && names.contains(&"listen"));
+    let mut live = cfg["live"].clone();
+    live["max_request_body"] = json!(10);
+    let put = c.put_proxy_config(&live).await.unwrap();
+    assert_eq!(put["live"]["max_request_body"], 10);
+    let big = via(&main, None)
+        .post(&target)
+        .body("x".repeat(100))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status(big), 413);
+    live["max_request_body"] = json!(1_000_000);
+    c.put_proxy_config(&live).await.unwrap();
+    let ok = via(&main, None)
+        .post(&target)
+        .body("x".repeat(100))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status(ok), 200);
+    let mut bad = live.clone();
+    bad["upstream"] = json!(null);
+    assert_eq!(c.put_proxy_config(&bad).await.unwrap_err().status(), Some(409));
+    let mut zero = live.clone();
+    zero["max_connections"] = json!(0);
+    assert_eq!(c.put_proxy_config(&zero).await.unwrap_err().status(), Some(400));
+
+    // Only an admin changes them.
+    c.create_user("bob", "another long password", Role::Tester)
+        .await
+        .unwrap();
+    let bobc = Client::new(url(&s)).unwrap();
+    bobc.login("bob", "another long password").await.unwrap();
+    assert!(bobc.list_listeners().await.is_ok());
+    assert!(bobc.proxy_config().await.is_ok());
+    assert!(
+        bobc.add_listener(&json!({"addr": "127.0.0.1:0"}))
+            .await
+            .unwrap_err()
+            .is_forbidden()
+    );
+    assert!(bobc.put_proxy_config(&live).await.unwrap_err().is_forbidden());
+    assert!(bobc.remove_listener(1).await.unwrap_err().is_forbidden());
+
+    let audit = c.audit(None, None).await.unwrap();
+    for a in [
+        "proxy.listener.add",
+        "proxy.listener.update",
+        "proxy.listener.remove",
+        "proxy.config.update",
+    ] {
+        assert!(audit.iter().any(|e| e.action == a), "{a} missing");
+    }
+    assert!(
+        !audit.iter().any(|e| e.detail.contains(pw)),
+        "the password is in the audit log"
     );
 }

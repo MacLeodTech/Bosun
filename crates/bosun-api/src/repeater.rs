@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use bosun_http::h2::H2Request;
-use bosun_http::ws::{Frame, to_ws_message};
+use bosun_http::ws::Frame;
 use bosun_http::{Exchange, SendError, SendOptions};
 use bosun_model::{Direction, FlowSource, Scheme, Target};
 use bosun_scope::OutOfScopePolicy;
@@ -376,9 +376,9 @@ pub struct TabsDoc {
     pub next: i64,
 }
 
-const MAX_TABS: usize = 100;
+pub(crate) const MAX_TABS: usize = 500;
 /// Largest stored tab set, bytes of JSON. The request body limit is lower, so this is a second guard.
-const MAX_TABS_BYTES: usize = 8 << 20;
+pub(crate) const MAX_TABS_BYTES: usize = 8 << 20;
 
 pub async fn get_tabs(State(st): State<AppState>, caller: Caller) -> R {
     caller.require(Role::Viewer)?;
@@ -622,6 +622,7 @@ pub async fn ws_send(State(st): State<AppState>, caller: Caller, Json(b): Json<W
             let id = st.project().next_flow_id();
             let hs = ws.handshake().clone();
             st.inner.proxy.record(hs.to_new_flow(id, FlowSource::Repeater));
+            let mut rec = bosun_http::ws::WsRecorder::new(id, &hs);
             let mut out = Vec::new();
             let mut error = None;
             for f in &frames {
@@ -629,9 +630,9 @@ pub async fn ws_send(State(st): State<AppState>, caller: Caller, Json(b): Json<W
                     error = Some(e.to_string());
                     break;
                 }
-                st.inner
-                    .proxy
-                    .record_ws(to_ws_message(id, Direction::ClientToServer, f, WS_RECORD_LIMIT));
+                if let Some(m) = rec.message(Direction::ClientToServer, f, WS_RECORD_LIMIT) {
+                    st.inner.proxy.record_ws(m);
+                }
                 out.push(ws_out(Direction::ClientToServer, f));
             }
             let end = std::time::Instant::now() + std::time::Duration::from_millis(u64::from(b.listen_ms));
@@ -642,12 +643,9 @@ pub async fn ws_send(State(st): State<AppState>, caller: Caller, Json(b): Json<W
                 match ws.recv(left).await {
                     Ok(Some(f)) => {
                         received += 1;
-                        st.inner.proxy.record_ws(to_ws_message(
-                            id,
-                            Direction::ServerToClient,
-                            &f,
-                            WS_RECORD_LIMIT,
-                        ));
+                        if let Some(m) = rec.message(Direction::ServerToClient, &f, WS_RECORD_LIMIT) {
+                            st.inner.proxy.record_ws(m);
+                        }
                         out.push(ws_out(Direction::ServerToClient, &f));
                         if f.opcode == 0x8 {
                             closed = true;
@@ -665,12 +663,9 @@ pub async fn ws_send(State(st): State<AppState>, caller: Caller, Json(b): Json<W
                 // A clean goodbye, recorded like the rest.
                 let bye = Frame::close(1000, "");
                 if ws.send(&bye).await.is_ok() {
-                    st.inner.proxy.record_ws(to_ws_message(
-                        id,
-                        Direction::ClientToServer,
-                        &bye,
-                        WS_RECORD_LIMIT,
-                    ));
+                    if let Some(m) = rec.message(Direction::ClientToServer, &bye, WS_RECORD_LIMIT) {
+                        st.inner.proxy.record_ws(m);
+                    }
                     out.push(ws_out(Direction::ClientToServer, &bye));
                 }
             }

@@ -9,7 +9,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use bosun_codec::engage::{self, Finding, Param, PocError, PocInput};
+use bosun_codec::engage::{self, Analyzer, Finding, Observation, Param, PocError, PocInput, TargetAnalysis};
 use bosun_model::FlowId;
 use bosun_store::{Role, Which, codec};
 use serde::{Deserialize, Serialize};
@@ -216,4 +216,89 @@ pub async fn flow_csrf_poc(
         HeaderValue::from_static("nosniff"),
     );
     Ok(r)
+}
+
+/// The most requests of a host one analysis reads, and how many of them it may read a body for.
+const ANALYSIS_DEFAULT: u32 = 5_000;
+const ANALYSIS_MAX: u32 = 20_000;
+/// Request bodies longer than this are not read for parameters.
+const ANALYSIS_BODY: u64 = 64 << 10;
+
+#[derive(Debug, Deserialize)]
+pub struct AnalysisQuery {
+    pub host: String,
+    pub port: Option<u16>,
+    /// How many of the newest requests to read (default 5,000, most 20,000).
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HostAnalysis {
+    pub host: String,
+    pub port: Option<u16>,
+    /// The host has more recorded requests than were read; the newest were.
+    pub capped: bool,
+    #[serde(flatten)]
+    pub analysis: TargetAnalysis,
+}
+
+/// The distinct endpoints and parameters of one host across the whole history, with counts.
+pub async fn host_analysis(State(st): State<AppState>, caller: Caller, Query(q): Query<AnalysisQuery>) -> R {
+    caller.require(Role::Viewer)?;
+    let host = q.host.trim().to_ascii_lowercase();
+    if host.is_empty() || host.len() > 255 {
+        return Err(reject(StatusCode::BAD_REQUEST, "give a host"));
+    }
+    let limit = q.limit.unwrap_or(ANALYSIS_DEFAULT).clamp(1, ANALYSIS_MAX);
+    let port = q.port;
+    let p = st.project();
+    let name = host.clone();
+    let (analysis, capped) = tokio::task::spawn_blocking(
+        move || -> Result<(TargetAnalysis, bool), bosun_store::StoreError> {
+            // One extra row tells whether there was more than `limit`.
+            let rows = p.host_requests(&name, port, limit + 1)?;
+            let capped = rows.len() > limit as usize;
+            let mut an = Analyzer::new();
+            for r in rows.iter().take(limit as usize) {
+                // Query parameters come with the request line; only a method that can carry a body needs the message.
+                let wants_body = !matches!(r.method.as_str(), "GET" | "HEAD" | "OPTIONS" | "TRACE");
+                let (ct, body) = if wants_body {
+                    p.with_message(r.id, Which::Request, |m| {
+                        let Some(m) = m else { return Ok((None, Vec::new())) };
+                        let head = m.head()?;
+                        let ct = header_value(&head, "content-type");
+                        let head_len = head.len() as u64;
+                        let mut body = Vec::new();
+                        if m.size.saturating_sub(head_len) <= ANALYSIS_BODY {
+                            m.body(head_len, 0, None)?
+                                .take(ANALYSIS_BODY)
+                                .read_to_end(&mut body)
+                                .map_err(bosun_store::StoreError::Compress)?;
+                        }
+                        Ok((ct, body))
+                    })?
+                } else {
+                    (None, Vec::new())
+                };
+                an.add(&Observation {
+                    method: &r.method,
+                    path: &r.path,
+                    status: r.status,
+                    content_type: ct.as_deref(),
+                    body: &body,
+                });
+            }
+            Ok((an.finish(), capped))
+        },
+    )
+    .await
+    .map_err(crate::handlers::internal)?
+    .map_err(crate::handlers::internal)?;
+    Ok(Json(HostAnalysis {
+        host,
+        port,
+        capped,
+        analysis,
+    })
+    .into_response())
 }

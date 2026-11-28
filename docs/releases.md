@@ -7,7 +7,156 @@ There is no tagged release yet. The first public preview is v0.2, at the end of 
 
 Newest first. Each entry keeps the work package's original brief (why, do, done when) and its "Done" note.
 
+## Technology fingerprints and known-vulnerable components (branch `wp-43`, 2026-11-27)
+
+- **WP-82 (first slice):** `bosun_checks::components` reads the `Server`, `X-Powered-By`, `X-AspNet-Version` and
+  `X-Generator` headers, framework cookie names, `<meta name="generator">` and versioned `<script src>` file names from
+  every recorded flow (the passive scanner runs it with the other checks) and raises `technology-fingerprint` (Info; a
+  disclosed version is CWE-200) and, per advisory that covers the version, `vulnerable-component` (the advisory's own
+  severity, Tentative, with a note that a package may have back-ported the fix). `bosun_checks::advisory` holds the
+  OSV-style database (introduced, fixed, last affected) and the offline feed: a JSON file with a detached Ed25519
+  signature over its exact bytes, verified with `ring` against keys the admin trusts, content-checked (sizes, product
+  names, severities, numeric versions, `http(s)` links only) and ordered by `sequence`, so an old validly signed feed
+  cannot be put back. A small database ships with the program (Apache 2.4.49/2.4.50, nginx before 1.20.1, PHP-FPM
+  RCE branches); a loaded feed replaces it. `GET /advisories`, `PUT /advisories/trust`, `POST/DELETE /advisories/feed`
+  (admin to change, audited, refusals too); the stored feed is verified again at every load, so changing the keys or
+  editing the project file by hand cannot make an unsigned feed count. Loading a feed queues a rescan of the recorded
+  traffic. `bosun advisory keygen|sign` make keys and signatures (a feed the engine would refuse is not signed). Fuzz
+  target `advisory_feed`. No request ever leaves the machine for a lookup. Left: see the roadmap row.
+
+## Content and parameter discovery (branch `wp-43`, 2026-11-27)
+
+- **WP-81 (first slice):** `bosun-discover` (paths below a directory, with optional extensions and recursion into the
+  directories found, or parameter names on one page; `GET` or `POST`), `POST/GET /discover/runs`,
+  `GET /discover/runs/{id}`, `POST .../stop` (tester to start and stop, audited, two runs at once) and a "Discover
+  content" panel. It first asks for random names that cannot exist to learn what "not found" looks like, so a soft 404
+  (200 for everything) gives no hits and an echoed name does not count as a difference. A page that varies from request
+  to request earns a size tolerance; a steady one needs an identical answer to match. Hits with the same answer are
+  clustered, and a cluster of eight or more is dropped as a wildcard and counted. Every request goes through the gate
+  and its per-host rate limit; a refused request ends the run with the reason; only hits are recorded as flows (source
+  `intruder`). Testbed: hidden `/admin/` (redirect, nested paths, a 403), `/.git/HEAD`, `/backup.zip`, a soft-404
+  directory `/ghost/` with one real page, and `/tool?debug`. Left: see the roadmap row (it does not reuse the Intruder
+  engine or the crawler queue; it has its own small sender).
+
+## Active checks rest and the credential vault (branch `wp-43`, 2026-11-26)
+
+- **WP-55 (rest):** `active-xxe`, `active-file-upload` (destructive), `active-jwt`, `active-deserialization`,
+  `active-prototype-pollution`, `active-graphql`, `active-session` and `active-tls`, each with a planted testbed target
+  and a safe twin. TLS probes go through `Gate::check`. Prototype pollution sets one inert property and is not marked
+  destructive.
+- **WP-68:** sealed `vault` table (migration 10), `/vault` API (admin writes, audited, masked hints only), client
+  methods and a Vault panel. Tests show secrets absent from the project file and API responses. Client certificate
+  passwords are not stored, so nothing migrated. `vault::open_secret` is ready for WP-56 and WP-59.
+
 ## Phase 3, track A (branch `wp-43`, 2026-11-25)
+
+- **Priority batch** (`wp-43`, 2026-11-26).
+  - **WP-20** Data key in the OS keychain: `data_key_store = file|keychain` (`BOSUN_DATA_KEY_STORE`), `OsKeychain` via `keyring`, `bosun key migrate --to keychain|file` (same bytes, checked before the old copy is removed), `doctor` reports the location; desktop defaults to the keychain. Tested with an in-memory keychain; the real OS keychain is untested.
+  - **WP-33** Client certificates: migration 8 `client_certs`, PEM or PKCS#12 (`p12-keystore`), key sealed and never returned, `GET/POST /client-certs` and `DELETE /client-certs/{id}` (admin, audited `clientcert.add|remove`), used by the proxy upstream and `bosun_http::Engine`; fuzz target `client_cert`; Settings form.
+  - **WP-54** Active scan engine (first slice): `bosun-active` (insertion points, strength, queue, pause/resume/stop, request cap, SQLi and reflected XSS), `bosun-testbed`, `/scan/*` API (tester to change, audited; findings become issues; probes recorded as `scanner` flows), fuzz target `active_targets`. The WP-52 crawler is tested against the testbed, which completes WP-52.
+  - **WP-85** (part) `GET /issues/{id}/tracker?tracker=github|jira|linear`: title, Markdown body, labels and create-issue JSON; tester, redacted by default, audited `issues.tracker_export`; no outbound request.
+
+- **Leftovers batch** (`wp-43`, 2026-11-26).
+  - WP-33: `upstream_sni` applies in `bosun_http::Engine` (Repeater, Intruder, Sequencer, scanner); Repeater WebSocket messages are recorded inflated (`bosun_http::ws::WsRecorder`).
+  - WP-38: per-listener `max_connections`, enforced at accept, live, audited.
+  - WP-49: `IssuesChanged` event replaces polling; evidence is highlighted in the flow viewer as plain-text spans (raw view only).
+  - WP-52: `crawl_started`, `crawl_progress` (4 a second at most) and `crawl_done` events; `/crawl` integration tests.
+  - WP-60: `introspection_url` (through the gate, 403 out of scope) and `store_responses` (HAR and Burp responses become `import` flows).
+  - WP-50: email-disclosure, suspicious-comments, sensitive-info-in-url and php-source-disclosure checks; jquery-ui, underscore, dompurify, axios and vue added to the library table.
+  - WP-47: UI forms for dates, character substitution and built-in wordlists; `/intruder/plan?limit=` up to 1000 requests.
+
+- **WP-52 Spider API, CLI and UI** (`wp-43`, 2026-11-26). `POST/GET /crawl/crawls`, `GET /crawl/crawls/{id}`, `POST .../stop` (tester to start and stop, audited; every request through the gate; pages recorded as flows with source `crawler`; POST forms only with `submit_post_forms`; jobs in memory, 2 at once). `bosun crawl run`, and a Spider panel. Left: `crawl_*` events (the UI polls), a Rust integration test, the testbed run (WP-54).
+- **WP-50 Custom checks** (`wp-43`, 2026-11-26). Migration 7 adds `checks`; `/checks` routes to list, add, validate, replace, enable and delete (tester, audited, at most 200 per project); the scanner reloads them on change; a Checks panel with a "Rescan history" button. New built-ins: `jwt-weak-secret` (never copies the secret), Referrer-Policy and Permissions-Policy checks. Left: more ZAP ports and a larger library table.
+- **WP-60 Import panel** (`wp-43`, 2026-11-26). Import panel with dry-run preview (plain text only); Repeater tabs refresh after an import. Left: live GraphQL introspection through the gate, HAR and Burp responses.
+- **WP-27 Storage layout v2 and benchmarks** (`wp-43`, 2026-11-27). Migration 11: generated `ext` column with an index. Migration 12: each message's head is stored compressed on the flow row and only the body in `blobs`, shared by hash and counted in `blobs.refs`, so `delete_flows` touches only the deleted flows' blobs; flows written earlier keep their whole-message blob and still read. `host:` stays "contains" with no index. `cargo bench -p bosun-store` (1M flows; `BOSUN_BENCH_FLOWS=50000` in the CI `footprint` job, budgets in `footprint-budgets.json`): latest 100 in 0.12 ms, extension filter 0.8 ms, one flow 0.04 ms, delete 1,000 flows 0.3 s, flat from 20k to 1M. Messages 314 bytes per flow against 582 before (46% less); the file is 5.6 KB per flow because the full-text index holds about 4.7 KB. Left: old flows are not repacked, and the full-text index size (WP-29 decides whether it becomes optional).
+- **WP-33 (part): protocol gaps** (`wp-43`, 2026-11-26). `permessage-deflate` WebSocket messages are recorded inflated (bomb-capped, corrupt data kept raw and flagged); `proxy.upstream_sni` overrides the upstream server name per host (restart-only); edited requests keep the client's header-name case. Left: client certificates (need WP-20), SNI in `bosun_http::Engine`, Repeater WebSocket inflation.
+- **WP-79 gRPC, Protobuf and GraphQL views and rules** (`wp-79`, 2026-11-27). New Decoder operations: `protobuf_decode`/`protobuf_encode` (field numbers and wire types as text, like `protoc --decode_raw`, and back), `grpc_decode`/`grpc_encode` (frames as `@message`, `@message compressed gzip|deflate|zstd`, `@message compressed` (unknown algorithm, as hex), `@raw` and `@trailers` sections, and back) and `graphql_decode` (query and variables apart). Compressed gRPC messages are unpacked (bomb-capped) and shown as fields, and packed again with the same algorithm on the way back. A `.proto` schema (`bosun_codec::Schema`: messages, nested types, enums, `oneof`, `map<,>`, `service`/`rpc`; imports and unknown types are skipped, so those fields stay numbered) gives fields their names and types: `id: -7`, `tier: GOLD`, `home { city: "Oslo" }`, and a field can be written by name when encoding. `POST /decoder/apply` takes `schema`, and `message` or `rpc` (a call path like `/pkg.Service/Method`, with `response` for the reply's message); `GET`/`PUT /proto/schema` keep one schema in the project (tester, audited). The message viewer's Pretty view shows gRPC, gRPC-Web and GraphQL bodies this way, with names when the project has a schema; the Repeater editor has a `gRPC` view that edits the messages as text and rebuilds the frames (Content-Length is the existing "Update Content-Length" option); the Decoder page has a schema box with "Save to project". A body rule takes an optional GraphQL operation name (`operationName`, or the name in the query) and fires only on that operation; the Rules page has a column for it. Fuzz target `grpc_graphql` (also schemas and typed text); property tests that typed text reads back. Tests: API (schema by call and direction, bad schema and unknown message are 400, gzip round trip), e2e (a recorded gRPC response in the viewer, a saved schema naming its fields, a Repeater edit rebuilding the frames).
+- **WP-56 signed-in scans and crawls, matrix issues, Send to matrix** (`wp-43`, 2026-11-27). `session` on `POST /scan/scans` and `POST /crawl/crawls` signs in with a login request whose body or headers may name vault entries (`{{vault:ID}}`, `|url`, `|json`), keeps the session's cookies or token on every request, signs in again when an answer looks expired, and ends the run on a failed sign-in. The crawler gained `crawl_with_session`. `save_issues` on the matrix saves findings as issues. History's menu has "Access matrix", the Spider has a "Sign in first" row, and the Access matrix panel has "Save findings as issues". Tests: the API test crawls and scans the logged-in testbed area with a vault password and stops on a wrong one; the matrix test saves one issue once; an e2e test sends a flow to the matrix.
+- **WP-56 API and UI** (`wp-43`, 2026-11-27). `POST /auth-matrix` runs the matrix over recorded flows; an account's header can come from a vault entry (opened on the server, never returned). The Access matrix panel takes accounts and `flow-id owner [allowed] [label]` lines and shows findings and the grid. The matrix types carry `Authz` schema names, because plain `Row`, `Cell` and `Finding` collided with existing schemas. Test: the planted IDOR is found with one account's cookie from the vault and the safe twin is not.
+- **WP-56 `bosun-auth`, engine** (`wp-43`, 2026-11-27). The authorisation matrix replays each recorded request as every account and as nobody, and flags another account (or nobody) getting the owner's answer; `Session` signs in with a login macro (cookies, or a token from the body or a header), signs in again when an answer looks expired (status, login redirect, body text), and stops after a failed sign-in so a wrong password is not tried over and over. `scan_with_session` keeps an active scan logged in. The testbed gained a logged-in area (login, per-user orders with a planted IDOR, an admin page with no role check, and safe twins). Tests: the matrix finds both planted bugs and nothing on the twins; a scan re-signs in once after the session was ended and is bounced everywhere without a session; bad credentials stop the scan with the reason. Left: API and UI, vault credentials, browser-recorded logins (see `roadmap.md`).
+- **WP-31 transparent HTTPS** (`wp-43`, 2026-11-27). With `invisible` on, a listener peeks at the first byte of each connection; a TLS ClientHello is intercepted like a CONNECT, with the host from the SNI, and a certificate issued for that name. On Linux the listener also reads the firewall's original destination (`SO_ORIGINAL_DST`, IPv4 and IPv6, through the safe `nix` wrapper): the port comes from it (so non-443 TLS and non-80 plain HTTP work), and a hello without an SNI falls back to the original IP. Without a redirect (or off Linux) the port is 443/80 and an SNI-less hello is closed. Test: HTTPS sent straight to the listener, recorded as a flow. Not tested: a real iptables/nft REDIRECT (needs root).
+- **WP-38 listeners and live reload** (`wp-43`, 2026-11-26). Several proxy listeners with their own address, invisible mode, pass-through, credentials and client allowlist, added, changed and removed live (`/proxy/listeners`, admin, audited, passwords sealed with the data key, kept across restarts). `GET`/`PUT /proxy/config` changes body limits, timeouts, HTTP/2, out-of-scope recording and the connection limit live; restart-only keys get 409. Settings panel in the UI. Left: per-listener connection caps.
+- **WP-50 Check language and passive checks** (`wp-43`, 2026-11-26). New crate `bosun-checks`: versioned YAML check language (matchers, extractors, templates, OAST hooks), a Nuclei `http` subset importer that keeps licence notices, five YAML and eight code passive checks (mixed content, vulnerable JS libraries, JWT, cacheable sensitive responses, open redirect hints), each with positive and negative fixtures; `bosun-scan` runs them. Fuzz target `check_language`. Left: stored custom checks, API and UI.
+- **WP-51 Reports** (`wp-43`, 2026-11-26). New crate `bosun-report`: HTML (no script, CSP), JSON, SARIF 2.1.0 (validated against the schema), JUnit and Markdown, redacted by default. `GET /issues/report` (always an attachment with `sandbox` CSP; `redact=0` needs tester and is audited), `bosun report`, a "Save report" button, and a Playwright test that the HTML runs no script. The global CSP layer now keeps a handler's own policy.
+- **WP-60 Imports** (`wp-43`, 2026-11-26). New crate `bosun-import`: OpenAPI 3 and Swagger 2, GraphQL introspection, Postman, HAR, URL lists and Burp XML, with size, depth and entity limits. `POST /import` (tester, audited, `dry_run`) saves Repeater tabs; nothing is sent. `bosun import`. Fuzz target `import_formats`. Repeater tab cap is 500. Left: UI screen, live introspection, responses.
+- **WP-49 Passive scanner and issues view** (`wp-43`, 2026-11-26). New crate `bosun-scan`: reads flows in batches on its own thread, queued by a `scanned` mark so backlog, imports and restarts are one case; 13 passive rules; issues are deduplicated by fingerprint and count repeats; migration 6 adds `issues`. `GET /issues`, `GET`/`PATCH /issues/{id}`, `POST /issues/rescan` (status changes and rescans audited), and an Issues panel with filters, grouping, evidence and triage. Left: no proxy-speed benchmark with the scanner on, the panel polls every 5 s, and the flow viewer does not highlight evidence.
+- **WP-38 part 1 and WP-28 leftover** (`wp-43`, 2026-11-26). Response interception rules: a filter on status, MIME, header or body text and "request was held", at `GET`/`PUT /intercept/response-filter` (audited, saved per project), with an Intercept page form. History gets sortable TTFB (store migration 5) and request-size columns. A streamed request answered before its upload ends is now stored whole when the upload ends (300 s cap).
+- **WP-26 keychain and Intruder CLI** (`wp-43`, 2026-11-26). `bosun login` stores the token in the OS keychain (`keyring` 3, vendored), falling back to the 0600 file; `BOSUN_KEYCHAIN=off` forces the file. Intruder gains `dates`, `char_substitution` and `builtin` sources, and `bosun intruder run PLAN.json [--format csv|json] [-o file] [--exact]` (formula-safe CSV).
+- **WP-52 Spider engine** (`wp-43`, 2026-11-26). New crate `bosun-crawl`: follows links, frames, resources, redirects and GET forms; reads robots.txt and sitemaps; bounded by depth, pages and concurrency. Every request goes through `Engine::send`, so the gate decides. POST forms are listed, not sent, unless enabled. Fuzz target `crawl_html`. No API, CLI or UI yet.
+- **WP-28 Proxy hot path** (`wp-43`, 2026-11-26). `new_flow` no longer re-parses (method, path, version and status are
+  passed through); bodies stay `Bytes`; a request that isn't recorded, held or touched by a rule isn't serialised; request
+  bodies stream with a capped tee for the record when intercept and request-body rules don't need them (413 and 503
+  admission kept); flow ids are reserved only for recorded or held flows. Criterion benchmarks in
+  `crates/bosun-proxy/benches`: 4 MiB upload 5.2 to 1.8 ms, 4 MiB download 8.3 to 6.9 ms, small GET unchanged (~167 µs).
+  Left: a streamed request recorded before its upload ends is stored with only the part captured so far.
+
+- **WP-23 Server mode** (`wp-43`, 2026-11-26). `GET /healthz` and `bosun healthcheck` (with `api.tls` on it only checks
+  that the port accepts connections); `BOSUN_ADMIN_USER`, `BOSUN_ADMIN_PASSWORD_FILE` and
+  `BOSUN_BOOTSTRAP_TOKEN_FILE` create the first admin and a full API token at start-up (audited; ignored once any user
+  exists); `password_file` for `proxy.auth` and `proxy.upstream`; `BOSUN_LOG_FORMAT=json`; an optional unauthenticated
+  Prometheus `/metrics` on its own listener (`metrics_listen`, off by default). The memory budget already followed the
+  cgroup limit. Dockerfile healthcheck and a CI container smoke test (not run locally: needs Docker).
+
+- **WP-32 CA management** (`wp-43`, 2026-11-26). `bosun ca rotate [--permit-domain D]...` creates a new CA, keeps the
+  old certificate in `ca/previous/` and deletes its key (restart needed; the launched browser takes the new pin on its
+  next launch). `--permit-domain` makes a name-constrained CA (all IP addresses excluded). `doctor` warns 30 days
+  before expiry and fails after; `ca info` and `/ca` show expiry and constraint, and Settings warns. The constraint is a
+  flag, not taken from the scope automatically.
+
+- **WP-26 CLI client commands, first part** (`wp-43`, 2026-11-26). `history list|search|show|export` (HAR 1.2 and
+  ndjson), `scope get|set|add`, `rules get|set|import`, `intercept on|off|status|queue|forward|drop`, `events
+  [--follow]`, `ca export --server/--profile`, and `--json`, `--ndjson` and `--quiet` output; `history search` exits 4
+  when nothing matches. An integration test runs each command against a live engine. Left: the OS keychain.
+
+- **WP-47 Intruder, first part, and the rest of WP-43** (`wp-43`, 2026-11-26). The `bosun-intruder` crate: sniper, battering
+  ram, pitchfork and cluster bomb; payload sources list, numbers (decimal or hex), brute force, null payloads and case
+  changes; processing (prefix, suffix, encode and hash through `bosun-codec`, regex replace, skip rules); a pool
+  with concurrency, delay, retries and a stop switch, sending through the Repeater's engine so the gate, the per-host
+  rate limit and the memory budget apply (a request the limit holds back is retried for up to 60 s). Limits: 1M
+  requests, 20 positions, 200k list items, three attacks at once. Results go to the project (migration 4 of the
+  project file) and over the event stream; an attack found running at open is marked interrupted. API under
+  `/intruder/*` (tester to run, viewer to read; start, stop and delete audited), the Intruder panel (position markers,
+  grep match and extract, sorting, filter, CSV and JSON export) and the `intruder_plan` fuzz target. "Send to
+  Intruder" is in the History menu and the Repeater, which finishes WP-43. Left: see WP-47 in the roadmap.
+
+- **WP-48 Sequencer** (`wp-43`, 2026-11-26). The `bosun-sequencer` crate (pure, bounded, fuzzed): FIPS 140-2 monobit, poker,
+  runs and long-run tests, character-level and bit-level analysis, an entropy estimate, counter and repeat
+  detection and a verdict (excellent, good, poor, not random; under 100 tokens is marked unreliable). Token
+  extraction from a header, a cookie or a body regex. API: `POST /sequencer/analyze` (viewer) and a live capture
+  job (`/sequencer/capture`, status, stop; tester) that sends through the Repeater's engine, so the gate, the
+  rate limit and the recording apply. Sequencer panel with Export JSON. Not done: captured requests are recorded
+  with the Repeater's source, regexes run on the raw body (no chunked or gzip decoding), captures are kept in
+  memory only.
+
+- **WP-39 TOTP second factor** (`wp-43`, 2026-11-26). RFC 6238 (SHA-1, 6 digits, 30 s, previous/current/next step) with
+  constant-time comparison and a per-account replay guard. Enrolment is enforced only after a first valid code, which
+  also returns 10 one-time recovery codes (stored as SHA-256 hashes). Secrets are sealed with the install's data key.
+  `POST /auth/login` answers `second_factor: totp` with a pending token (5 minutes, bound to the client address, five
+  tries) and `POST /auth/login/totp` completes the sign-in. Code attempts share the login limiter plus 10 failures
+  per account. Admins can reset a user's factor (`DELETE /users/{id}/totp`, `bosun user totp-reset`) and require one
+  of all password accounts (`PUT /auth/totp/required`). The sign-in page, Settings and `bosun login` handle the second
+  step. Not done: SSO sessions and the desktop login ticket are never asked for a code; API tokens made before
+  "required" was switched on keep working; pending sign-ins are in memory, so a restart drops them; no per-user
+  indicator in the users list. Migration 4 of the account database.
+
+- **WP-25 CLI local admin commands** (`wp-43`, 2026-11-26). `bosun project list|create|rename|delete|export|import|backup`,
+  `token create|list|revoke`, `user role|delete|sessions`, `audit` (with filters and paging), `serve --no-ui`,
+  `completions` and `man`. They work on the data directory with no engine running; project commands exit 3 while
+  a running Bosun holds the project. Every change writes an audit entry ("via CLI"). Exit codes: 0 ok, 1 failure,
+  2 usage, 3 project in use, 4 not found, 5 delete not confirmed. New dependencies: `rpassword`, `clap_complete`,
+  `clap_mangen`. Not done: revoking a single session from the CLI.
+
+- **WP-45 Engagement helpers, rest** (`wp-43`, 2026-11-26). `GET /analysis?host=&port=&limit=`: the distinct endpoints and
+  parameters of one host across the history, with counts, status codes and example values. Paths fold ids into
+  `{n}`, `{uuid}` and `{hex}`, so `/users/1` and `/users/2` are one endpoint. It reads the newest 5,000 requests
+  (at most 20,000) and a request body only for methods that can carry one (up to 64 KiB). The counting is
+  `bosun_codec::engage::Analyzer` (bounded: 5,000 endpoints and 5,000 parameters, then `truncated`), covered by unit
+  tests, the API test and the `engage` fuzz target. The Host analysis panel (History menu: "Analyse this host…") has
+  a Playwright test.
+- **WP-42 leftovers** (`wp-43`, 2026-11-26). MD5 and SHA-1 (`md-5` and `sha1`, the RustCrypto crates next to the
+  existing `sha2`; `cargo deny` passes), gzip, zlib, Brotli and Zstandard compression, in the API and the Decoder panel;
+  and `bosun decode [STEPS…] [--file F] [--smart] [--list] [--limit N]`, which runs the same chain offline on stdin or
+  a file. Exit code 2 names the failed step. Not done: nothing left of WP-42.
 
 - **Recorder under bursts** (PR #32). The proxy now counts refused connections, and a test pins how the recorder
   behaves under a burst (see the PR for what the 7,000 requests a second burst showed).
@@ -28,7 +177,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 - **WP-45 Engagement helpers, first part** (`wp-43`). `bosun_codec::engage` (comments, scripts, links, forms,
   resources, URLs, quoted paths, request parameters, the CSRF page builder; an `engage` fuzz target),
   `GET /flows/{id}/engage`, `GET /flows/{id}/csrf-poc` (an attachment with a sandboxing CSP), the Findings panel and
-  History menu items. Left: analysing a target across the whole history.
+  History menu items. Analysing a target across the whole history is above.
 
 ## Phase 3 so far (on `main`)
 
@@ -87,7 +236,7 @@ Newest first. Each entry keeps the work package's original brief (why, do, done 
 - **Done (PR #23 and the UI PR):** the `bosun-codec` crate (URL, HTML, Base64 and Base64url, hex, gzip, deflate, brotli,
   zstd, JWT, Unicode escapes, SHA-256 and SHA-512, smart decode, word and byte diff), the `/decoder/apply`,
   `/decoder/smart` and `/comparer/diff` endpoints, client methods, OpenAPI, tests, the `codec` fuzz target, and the
-  Decoder and Comparer panels. **Not done:** MD5 and SHA-1, compression encoders, and a `bosun decode` command (WP-26).
+  Decoder and Comparer panels. The MD5, SHA-1, compression encoders and `bosun decode` that were left are in the track A entry above.
 
 ### WP-44: Message editor
 
@@ -628,3 +777,13 @@ Delivered before the phase plan, as checked off in the milestone lists.
 - [x] Get CI green: SAST + SCA, Container image and Desktop shell have not passed yet → **WP-34**
 - [x] Set up branch protection and required checks once CI is green → **WP-34**
 - [x] Review the Dependabot PRs: TypeScript 7 is not applied (`svelte-check` cannot load it), the rest are merged → **WP-34**
+
+### Scanner checks, `bosun scan` and Map rules (branch `wp-43`, 2026-11-26)
+
+- **WP-55 (part):** ten new active checks (boolean and time SQLi, stored XSS (destructive, opt-in), SSTI, command
+  injection, path traversal, open redirect, CRLF, CORS, Host header), each with a testbed target and a safe twin.
+  `scan_checks` reports `destructive`.
+- **WP-57 (part):** `bosun scan URL` with import, in-process or remote engine, `--fail-on` exit codes, SARIF and JSON
+  output, `scan_started/progress/done` events, and `docs/ci.md` recipes.
+- **WP-76:** Map Local (inside a chosen directory, no traversal or symlink escape), Map Remote (through `Gate::check`)
+  and throttle rules; `GET/PUT /map-rules`, audited; a Match & replace panel form. Saving Map Local rules needs admin.

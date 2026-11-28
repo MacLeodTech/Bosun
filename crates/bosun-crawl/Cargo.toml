@@ -1,0 +1,23 @@
+[package]
+name = "bosun-crawl"
+description = "The HTTP spider: follows links, forms, robots.txt and sitemaps inside the scope, through the gate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-scope.workspace = true
+bosun-http.workspace = true
+bosun-auth.workspace = true
+tokio.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bosun-proxy.workspace = true
+
+[lints]
+workspace = true

@@ -2,3 +2,18 @@ Bosun
 Copyright 2026 fiddler110 (https://github.com/MacLeodTech/Bosun)
 
 This product includes software developed by the Bosun project.
+
+Third-party material
+--------------------
+
+- Nuclei templates (https://github.com/projectdiscovery/nuclei-templates), Copyright (c) ProjectDiscovery, Inc.,
+  MIT License. Bosun's importer (`bosun-checks`) converts a subset of them into its own check language; a converted
+  check carries a `source` block naming the template, its author and this licence, and the copyright notice and
+  licence text must stay with any copy of a template.
+- ZAP (https://www.zaproxy.org), Copyright the ZAP Dev Team, Apache License 2.0. Some of Bosun's passive checks
+  (stack traces and debug errors, SQL error messages, private IP disclosure, email addresses, suspicious comments,
+  sensitive values in URLs, PHP source disclosure) follow the ideas of ZAP's passive and
+  active rules; each says so in its `source` block.
+- Retire.js (https://retirejs.github.io/retire.js/), Apache License 2.0: the library table in
+  `bosun-checks` follows its approach (recognise a library and version, compare with a vulnerable range). The entries
+  are Bosun's own.

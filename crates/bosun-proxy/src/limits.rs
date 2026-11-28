@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -13,7 +13,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 pub struct ConnLimit {
     name: &'static str,
     sem: Arc<Semaphore>,
-    max: usize,
+    max: Arc<AtomicUsize>,
     log: Arc<Mutex<(Instant, u64)>>,
     refused: Arc<AtomicU64>,
 }
@@ -24,9 +24,20 @@ impl ConnLimit {
         Self {
             name,
             sem: Arc::new(Semaphore::new(max)),
-            max,
+            max: Arc::new(AtomicUsize::new(max)),
             log: Arc::new(Mutex::new((Instant::now() - Duration::from_secs(60), 0))),
             refused: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Change the limit while running. Connections already open are never closed; room opens up as they end.
+    pub fn set_max(&self, new: usize) {
+        let new = new.max(1);
+        let old = self.max.swap(new, Ordering::Relaxed);
+        if new > old {
+            self.sem.add_permits(new - old);
+        } else {
+            self.sem.forget_permits(old - new);
         }
     }
 
@@ -46,7 +57,7 @@ impl ConnLimit {
                 if l.0.elapsed() >= Duration::from_secs(10) {
                     tracing::warn!(
                         listener = self.name,
-                        limit = self.max,
+                        limit = self.max.load(Ordering::Relaxed),
                         refused = l.1,
                         "connection limit reached; refusing new connections"
                     );

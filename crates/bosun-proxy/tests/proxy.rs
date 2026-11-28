@@ -286,6 +286,7 @@ async fn match_and_replace_rules_apply() {
                 replace: "X-Added: yes".into(),
                 regex: false,
                 comment: String::new(),
+                operation: String::new(),
             },
             RuleSpec {
                 enabled: true,
@@ -294,6 +295,7 @@ async fn match_and_replace_rules_apply() {
                 replace: "TEG".into(),
                 regex: false,
                 comment: String::new(),
+                operation: String::new(),
             },
         ])
         .unwrap();
@@ -375,6 +377,7 @@ async fn proxy_auth_is_enforced() {
         auth: Some(ProxyAuth {
             username: "tester".into(),
             password: "correct horse battery".into(),
+            password_file: None,
         }),
         ..Default::default()
     };
@@ -502,6 +505,7 @@ async fn passthrough_tunnels_go_through_the_upstream_socks_proxy() {
                 addr: socks.to_string(),
                 username: None,
                 password: None,
+                password_file: None,
                 local_dns: false,
             }),
             ..Default::default()
@@ -844,4 +848,454 @@ async fn a_full_intercept_queue_refuses_with_503_and_never_forwards() {
     assert_eq!(h.proxy.stats().intercept_refused, 1);
     h.proxy.intercept().forward_all();
     assert_eq!(first.await.unwrap(), 200);
+}
+
+#[tokio::test]
+async fn a_large_streamed_upload_arrives_whole_and_is_recorded_whole() {
+    let up = upstream_http().await;
+    let h = start(ProxyConfig::default(), &[]).await;
+    let c = client(&h);
+    let body = "abcdefgh".repeat(40_000);
+    let r = c
+        .post(format!("http://{up}/up"))
+        .body(body.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        r.text().await.unwrap().ends_with(&body),
+        "the upstream got the whole body"
+    );
+    h.proxy.flush();
+    let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
+    let d = h.project.get_flow(flows[0].id).unwrap().unwrap();
+    assert!(
+        d.request.ends_with(body.as_bytes()),
+        "the record holds the whole body"
+    );
+    assert_eq!(h.proxy.stats().memory_used, 0);
+}
+
+#[tokio::test]
+async fn response_filter_decides_which_responses_are_held() {
+    use bosun_proxy::ResponseFilter;
+    let up = upstream_http().await;
+    let h = start(ProxyConfig::default(), &[]).await;
+    h.proxy.intercept().set(InterceptSettings {
+        requests: false,
+        responses: true,
+        in_scope_only: false,
+        timeout_secs: None,
+    });
+    // Not JSON: the response is not held, the request completes by itself.
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        mime_contains: vec!["json".into()],
+        ..Default::default()
+    });
+    let c = client(&h);
+    let r = tokio::time::timeout(Duration::from_secs(5), c.get(format!("http://{up}/a")).send())
+        .await
+        .expect("not held")
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(h.proxy.intercept().list().is_empty());
+    // A body filter that does not match: not held. One that matches: held.
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        body_contains: Some("nothing-like-this".into()),
+        ..Default::default()
+    });
+    tokio::time::timeout(Duration::from_secs(5), c.get(format!("http://{up}/b")).send())
+        .await
+        .expect("not held")
+        .unwrap();
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        statuses: vec!["2xx".into()],
+        mime_contains: vec!["PLAIN".into()],
+        body_contains: Some("get /c".into()),
+        ..Default::default()
+    });
+    let c2 = c.clone();
+    let url = format!("http://{up}/c");
+    let req = tokio::spawn(async move { c2.get(url).send().await.unwrap().status() });
+    let id = loop {
+        if let Some(s) = h.proxy.intercept().list().first() {
+            break s.id;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    h.proxy.intercept().resolve(id, Decision::Forward { raw: None });
+    assert_eq!(req.await.unwrap(), 200);
+    // Only when the request was held too.
+    h.proxy.intercept().set_response_filter(ResponseFilter {
+        only_if_request_held: true,
+        ..Default::default()
+    });
+    tokio::time::timeout(Duration::from_secs(5), c.get(format!("http://{up}/d")).send())
+        .await
+        .expect("not held")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_flow_answered_before_its_upload_ends_is_recorded_whole() {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let up = l.local_addr().unwrap();
+    // Answers as soon as the head has arrived, then keeps reading until the whole body is in.
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut got = Vec::new();
+                let mut buf = [0u8; 4096];
+                let mut answered = false;
+                loop {
+                    let n = s.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..n]);
+                    if !answered && got.windows(4).any(|w| w == b"\r\n\r\n") {
+                        answered = true;
+                        let _ = s
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nok",
+                            )
+                            .await;
+                    }
+                    if got.ends_with(b"0123456789abcdefghij") {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    let h = start(ProxyConfig::default(), &[]).await;
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    s.write_all(
+        format!("POST http://{up}/up HTTP/1.1\r\nHost: {up}\r\nContent-Length: 20\r\n\r\n0123456789")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let r = tokio::time::timeout(Duration::from_secs(5), read_response(&mut s))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    s.write_all(b"abcdefghij").await.unwrap();
+    let mut stored = String::new();
+    for _ in 0..100 {
+        h.proxy.flush();
+        if let Some(f) = h.project.list_flows(&FlowFilter::default()).unwrap().first() {
+            let d = h.project.get_flow(f.id).unwrap().unwrap();
+            stored = String::from_utf8_lossy(&d.request).into_owned();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(stored.ends_with("0123456789abcdefghij"), "{stored:?}");
+}
+
+/// A target that records the raw bytes of each request head it receives and answers 200.
+async fn raw_target(seen: Arc<std::sync::Mutex<Vec<String>>>) -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let mut got = Vec::new();
+                let mut b = [0u8; 1024];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut b).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => got.extend_from_slice(&b[..n]),
+                    }
+                }
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&got).into_owned());
+                let _ = s
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn header_name_case_survives_an_edit_of_the_request() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let up = raw_target(seen.clone()).await;
+    let h = start(ProxyConfig::default(), &["127.0.0.1"]).await;
+    h.proxy.intercept().set(InterceptSettings {
+        requests: true,
+        responses: false,
+        in_scope_only: true,
+        timeout_secs: None,
+    });
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    s.write_all(
+        format!("GET http://{up}/original HTTP/1.1\r\nHost: {up}\r\nX-Custom-CASE: yes\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let item = loop {
+        if let Some(i) = h.proxy.intercept().list().first() {
+            break h.proxy.intercept().get(i.id).unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let edited = String::from_utf8(item.raw.clone())
+        .unwrap()
+        .replace("/original", "/edited");
+    assert!(h.proxy.intercept().resolve(
+        item.summary.id,
+        Decision::Forward {
+            raw: Some(edited.into_bytes())
+        }
+    ));
+    let mut resp = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut resp)).await;
+    let got = seen.lock().unwrap().first().cloned().unwrap();
+    assert!(got.starts_with("GET /edited"), "{got}");
+    assert!(got.contains("X-Custom-CASE: yes"), "{got}");
+}
+
+#[tokio::test]
+async fn upstream_sni_override_is_sent_to_the_target() {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let cfg = Arc::new(
+        rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.cert.der().clone()],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into()),
+            )
+            .unwrap(),
+    );
+    let names = Arc::new(std::sync::Mutex::new(Vec::<Option<String>>::new()));
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let up = l.local_addr().unwrap();
+    let n2 = names.clone();
+    tokio::spawn(async move {
+        loop {
+            let (s, _) = l.accept().await.unwrap();
+            let (cfg, n2) = (cfg.clone(), n2.clone());
+            tokio::spawn(async move {
+                let Ok(start) =
+                    tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), s).await
+                else {
+                    return;
+                };
+                n2.lock()
+                    .unwrap()
+                    .push(start.client_hello().server_name().map(str::to_string));
+                if let Ok(tls) = start.into_stream(cfg).await {
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(tls), service_fn(echo))
+                        .await;
+                }
+            });
+        }
+    });
+    let mut cfg = ProxyConfig::default();
+    cfg.upstream_sni
+        .insert("LOCALHOST".into(), "front.example.net".into());
+    let h = start(cfg, &[]).await;
+    let c = client(&h);
+    let r = c
+        .get(format!("https://localhost:{}/x", up.port()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.text().await.unwrap().starts_with("GET /x"));
+    let seen = names.lock().unwrap().clone();
+    assert!(!seen.is_empty());
+    assert!(
+        seen.iter().all(|n| n.as_deref() == Some("front.example.net")),
+        "{seen:?}"
+    );
+}
+
+/// A target that accepts the WebSocket handshake with `permessage-deflate` and sends two compressed text
+/// messages sharing one window.
+async fn deflate_ws_target() -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = l.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut got = Vec::new();
+                let mut b = [0u8; 1024];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut b).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => got.extend_from_slice(&b[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&got).into_owned();
+                let key = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("Sec-WebSocket-Key: "))
+                    .unwrap()
+                    .trim()
+                    .to_string();
+                let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+                s.write_all(
+                    format!(
+                        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+                         Sec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+                let mut c = flate2::Compress::new(flate2::Compression::default(), false);
+                for text in ["compressed hello compressed hello", "compressed hello again"] {
+                    let mut z = Vec::with_capacity(256);
+                    c.compress_vec(text.as_bytes(), &mut z, flate2::FlushCompress::Sync)
+                        .unwrap();
+                    z.truncate(z.len() - 4);
+                    let mut f = vec![0xC1, z.len() as u8];
+                    f.extend_from_slice(&z);
+                    s.write_all(&f).await.unwrap();
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn permessage_deflate_messages_are_recorded_inflated() {
+    let up = deflate_ws_target().await;
+    let h = start(ProxyConfig::default(), &[]).await;
+    let mut s = TcpStream::connect(h.addr).await.unwrap();
+    s.write_all(format!("CONNECT {up} HTTP/1.1\r\nHost: {up}\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut buf = [0u8; 256];
+    let n = s.read(&mut buf).await.unwrap();
+    assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+    s.write_all(
+        format!(
+            "GET /chat HTTP/1.1\r\nHost: {up}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\
+             Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    // The client still receives the compressed frames untouched.
+    let mut got = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_millis(400), async {
+        let mut b = [0u8; 1024];
+        loop {
+            match s.read(&mut b).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => got.extend_from_slice(&b[..n]),
+            }
+        }
+    })
+    .await;
+    assert!(got.contains(&0xC1));
+    h.proxy.flush();
+    let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
+    assert_eq!(flows.len(), 1);
+    let msgs = h.project.ws_messages(flows[0].id, None, 100).unwrap();
+    let texts: Vec<_> = msgs
+        .iter()
+        .map(|m| String::from_utf8_lossy(&m.payload).to_string())
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["compressed hello compressed hello", "compressed hello again"]
+    );
+}
+
+#[tokio::test]
+async fn listener_connection_cap_applies_per_listener_and_changes_live() {
+    let h = start(ProxyConfig::default(), &[]).await;
+    let spec = |addr: &str, max| bosun_proxy::ListenerSpec {
+        addr: addr.parse().unwrap(),
+        invisible: false,
+        tls_passthrough: vec![],
+        auth: None,
+        allow_clients: vec![],
+        max_connections: max,
+    };
+    let info = h.proxy.add_listener(spec("127.0.0.1:0", Some(1))).await.unwrap();
+    let capped = info.spec.addr;
+    let first = TcpStream::connect(capped).await.unwrap();
+    // Let the accept loop register the first connection before the second arrives.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut second = TcpStream::connect(capped).await.unwrap();
+    let mut b = [0u8; 1];
+    let r = tokio::time::timeout(Duration::from_secs(2), second.read(&mut b)).await;
+    assert!(matches!(r, Ok(Ok(0) | Err(_))), "the second connection is closed");
+    // Raise the cap live: a second connection now stays open.
+    h.proxy
+        .update_listener(info.id, spec(&capped.to_string(), Some(2)))
+        .await
+        .unwrap();
+    let mut third = TcpStream::connect(capped).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), third.read(&mut b))
+            .await
+            .is_err(),
+        "a connection under the raised cap stays open"
+    );
+    drop(first);
+    assert!(
+        h.proxy
+            .update_listener(info.id, spec(&capped.to_string(), Some(0)))
+            .await
+            .is_err(),
+        "zero is refused"
+    );
+}
+
+#[tokio::test]
+async fn transparent_https_is_intercepted_by_sni_and_recorded() {
+    let h = start(
+        ProxyConfig {
+            invisible: true,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    // No proxy settings: the client connects straight to the listener, as a redirected connection would.
+    let c = reqwest::Client::builder()
+        .resolve("transparent.test", h.addr)
+        .add_root_certificate(reqwest::Certificate::from_pem(h.ca.cert_pem().as_bytes()).unwrap())
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    // The proxy reaches for transparent.test:443, which does not exist, so it answers with an error page;
+    // getting an answer over a certificate the Bosun CA issued for the SNI is the point.
+    let r = c.get("https://transparent.test/x?y=1").send().await.unwrap();
+    assert!(r.status().is_server_error(), "{}", r.status());
+
+    h.proxy.flush();
+    let flows = h.project.list_flows(&FlowFilter::default()).unwrap();
+    assert!(
+        flows.iter().any(|f| f.host == "transparent.test"
+            && f.path == "/x?y=1"
+            && f.scheme == bosun_model::Scheme::Https),
+        "{flows:?}"
+    );
 }

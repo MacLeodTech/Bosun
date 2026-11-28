@@ -58,10 +58,9 @@ Legend: `[x]` done, `[ ]` to do, `[~]` partly done. Finished work moves to `docs
   `wp-43` branch (WP-43, WP-45, WP-77), which contains the commits of #28 to #33 until they merge. After each merge,
   merge `main` into the next branch and regenerate `docs/openapi.json` and `web/src/lib/api-types.ts` if they conflict.
 - **Next, in order** (see the phase plan below):
-  1. Small WP-42 leftovers: MD5 and SHA-1 (new dependencies), compression encoders, and `bosun decode` (with WP-26).
-  2. **Phase 3, track A (M2):** the rest of WP-43 and WP-45 (small). WP-38 and WP-39 are the M1 follow-ups.
+  1. **Phase 3, track A (M2):** WP-38 is the M1 follow-up. Intruder is in; its leftovers are under WP-47.
   3. **Phase 3, tracks B to D:** server mode and the CLI (WP-23 to WP-26), the desktop shell (WP-18 to WP-22) and
-     release work (WP-69, WP-70, WP-31). These can run in parallel sessions on separate branches. Windows desktop
+     release work (WP-69, WP-70). These can run in parallel sessions on separate branches. Windows desktop
      is built with Tauri for now; WP-18 (WinUI 3) is still planned.
   4. **Owner tasks before v0.2:** look up the pending BOSUN Class 9 filing; an Apple Developer account.
   5. **After v0.2:** Phase 4 (Intruder, Sequencer, WP-76, WP-79), then Phase 5 and on as in the phase plan.
@@ -108,16 +107,16 @@ Sizes: **S** is about a session, **M** a few sessions, **L** should be split int
 **Phases 0 to 2: done** (repository and CI, hardening, foundation). See `docs/releases.md` for what each delivered.
 
 **Phase 3: manual tools and the front ends. Release v0.2, the first public preview.**
-- Track A, M2 tools: WP-41 (finish), then WP-43 and WP-45. Also WP-38 and WP-39, the M1
+- Track A, M2 tools: WP-41 (finish), then WP-43 and WP-45. Also WP-38, the M1
   follow-ups.
 - Track B, server and CLI: WP-23, then WP-24; WP-25; WP-26.
 - Track C, desktop: WP-20 and WP-21, then WP-18 and WP-19, then WP-22.
-- Track D, release: WP-69, WP-70 (the first pages), WP-31.
+- Track D, release: WP-69, WP-70 (the first pages).
 - Owner: look up the pending BOSUN Class 9 filing before v0.2; an Apple Developer account. Windows signing is deferred.
 - Gate: v0.2 for Windows, macOS and Linux; Docker and Podman images; the CLI; security review 3.
 
 **Phase 4: Intruder, Sequencer and performance. Release v0.3.**
-- WP-47, WP-48, WP-27, WP-28, WP-32, WP-33. WP-46 is optional.
+- WP-47, WP-48, WP-49, WP-27, WP-28, WP-32, WP-33. WP-46 is optional.
 - From the gap analysis: WP-75 (history query language), WP-76 (Map Local, Map Remote, throttling), WP-79 (gRPC,
   Protobuf, GraphQL).
 - Gate: footprint budgets green on storage v2; the WP-27 and WP-28 benchmarks recorded here.
@@ -189,56 +188,37 @@ These rules apply to every package:
 
 ### Index (in phase order)
 
-Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
+Open work packages only. Finished ones (WP-01 to WP-17, WP-34 to WP-37, WP-40, WP-23, WP-25, WP-26, WP-28, WP-32, WP-39, WP-42, WP-43, WP-45, WP-48, WP-75, WP-77) are in `docs/releases.md`; their numbers stay
 valid in the "Depends on" column.
 
 | Status | WP | Title | Phase | Size | Depends on |
 |---|---|---|---|---|---|
 | [x] | WP-41 | Repeater | 3 | L | WP-40, WP-12, WP-13, WP-35 |
-| [ ] | WP-43 | History, Organizer, Logger and "send to" (rest) | 3 | S | WP-35, WP-41 |
-| [ ] | WP-45 | Engagement helpers (rest) | 3 | S | WP-41 |
-| [ ] | WP-38 | Proxy follow-ups from M1 | 3 | M | WP-04, WP-12 |
-| [ ] | WP-39 | TOTP second factor | 3 | M | WP-07 |
-| [ ] | WP-23 | Server mode in the engine | 3 | M | WP-03 |
 | [ ] | WP-24 | Docker and Podman support | 3 | M | WP-23 |
-| [ ] | WP-25 | CLI: local admin commands | 3 | M | WP-07, WP-16 |
-| [ ] | WP-26 | CLI: client commands | 3 | L | WP-14 |
-| [ ] | WP-20 | Data key in the OS keychain | 3 | M | |
 | [ ] | WP-21 | Browser provisioning | 3 | M | WP-01 |
 | [ ] | WP-18 | Windows desktop app (WinUI 3) | 3 | L | WP-09, WP-13, WP-15 |
 | [ ] | WP-19 | Tauri shell on the child-process model | 3 | M | WP-15 |
 | [ ] | WP-22 | Desktop packaging and updates | 3 | L | WP-18, WP-19, WP-21 |
 | [ ] | WP-69 | Release workflow | 3 | M | WP-09, WP-24 |
 | [ ] | WP-70 | Docs site | 3 | M | WP-13 |
-| [ ] | WP-31 | Transparent HTTPS (invisible mode for TLS) | 3 | M | |
-| [ ] | WP-47 | Intruder | 4 | L | WP-40, WP-41 |
-| [ ] | WP-48 | Sequencer | 4 | M | WP-40 |
-| [ ] | WP-27 | Storage layout v2 and benchmarks | 4 | L | WP-11, WP-35 |
-| [ ] | WP-28 | Proxy hot path | 4 | M | WP-05 |
-| [ ] | WP-32 | CA management | 4 | M | |
-| [ ] | WP-33 | Protocol gaps | 4 | M | WP-20 |
+| [ ] | WP-47 | Intruder (rest) | 4 | M | WP-40, WP-41 |
+| [ ] | WP-26 | CLI: keychain (rest) | 3 | S | WP-14 |
+| [ ] | WP-33 | Protocol gaps (only header case left) | 4 | S | |
 | [ ] | WP-46 | Optional `legacy-tls` backend | 4 | M | WP-40 |
-| [ ] | WP-76 | Map Local, Map Remote and throttling | 4 | M | WP-10, WP-38 |
-| [ ] | WP-79 | gRPC, Protobuf and GraphQL-aware views and rules | 4 | M | WP-33, WP-44 |
-| [ ] | WP-49 | Passive scanner, findings and the issues view | 5 | L | WP-05, WP-35 |
-| [ ] | WP-50 | `bosun-checks`: the check language and passive checks | 5 | L | WP-49 |
-| [ ] | WP-51 | `bosun-report` | 5 | M | WP-49 |
+| [ ] | WP-50 | `bosun-checks`: more ZAP ports and library entries | 5 | S | WP-49 |
 | [ ] | WP-29 | Encrypted projects | 5 | L | WP-20, WP-27 |
 | [ ] | WP-73 | Accessibility and keyboard shortcuts | 5 | M | WP-44 |
 | [ ] | WP-80 | Command palette and one shared message viewer | 5 | M | WP-44, WP-73 |
-| [ ] | WP-52 | `bosun-crawl`: the HTTP spider | 6 | M | WP-10, WP-40 |
-| [ ] | WP-68 | Encrypted credential vault | 6 | M | WP-20, WP-29 |
 | [ ] | WP-53 | Browser crawler and the `BrowserEngine` trait | 6 | L | WP-01, WP-21, WP-24 |
 | [ ] | WP-54 | Active scan engine and the testbed | 6 | L | WP-40, WP-49, WP-50 |
-| [ ] | WP-55 | Core active checks | 6 | L | WP-54 |
-| [ ] | WP-56 | `bosun-auth` and the authorisation matrix | 6 | L | WP-54, WP-68 |
-| [ ] | WP-57 | `bosun scan` for CI | 6 | M | WP-25, WP-26, WP-51, WP-54 |
+| [ ] | WP-55 | Core active checks (rest: out-of-band variants via WP-59, wider JWT/GraphQL/XXE coverage, prototype pollution is non-destructive by default, decide) | 6 | S | WP-54 |
+| [ ] | WP-56 | `bosun-auth` and the authorisation matrix (rest: recorded browser logins, token refresh calls; a scan panel in the UI with session fields) | 6 | M | WP-54, WP-68 |
+| [ ] | WP-57 | `bosun scan` (rest: consume `scan_*` events in the client, drive a `--no-ui` engine, scope SARIF to the scan, container recipes untested in CI) | 6 | S | WP-25, WP-26, WP-51, WP-54 |
 | [ ] | WP-72 | Scanner benchmarks against ZAP | 6 | M | WP-55 |
-| [ ] | WP-81 | Content and parameter discovery | 6 | M | WP-47, WP-52 |
-| [ ] | WP-82 | Technology fingerprint and known-vulnerable components | 6 | M | WP-49, WP-69 |
+| [ ] | WP-81 | Content and parameter discovery (rest: signed-in runs, a wordlist from a file or the vault, a bigger built-in list, parameter batches) | 6 | M | WP-47, WP-52 |
+| [ ] | WP-82 | Technology fingerprint and known-vulnerable components (rest: a published, regularly updated feed and its signing key in the release workflow (WP-69), a UI panel, back-port awareness for distro versions) | 6 | M | WP-49, WP-69 |
 | [ ] | WP-58 | Lookout, the OAST server | 7 | L | WP-23, WP-24 |
 | [ ] | WP-59 | OAST client, payloads and checks | 7 | M | WP-58, WP-41, WP-47, WP-54 |
-| [ ] | WP-60 | Imports (OpenAPI, GraphQL, Postman, HAR, URL lists, Burp XML) | 7 | M | WP-16 |
 | [ ] | WP-85 | Issue tracker export | 7 | S | WP-49, WP-51 |
 | [ ] | WP-61 | Plugin host | 8 | L | WP-05, WP-10, WP-69 |
 | [ ] | WP-62 | Plugin SDK and hooks | 8 | L | WP-61 |
@@ -252,7 +232,7 @@ valid in the "Depends on" column.
 | [ ] | WP-67 | `bosun-tui` | 9 | L | WP-14 |
 | [ ] | WP-71 | Migration guide from Burp and ZAP | 9 | S | WP-60 |
 | [ ] | WP-74 | HTTP/3 | 9 | L | WP-40 |
-| [ ] | WP-78 | Proxy modes: reverse proxy, WireGuard or local capture, TLS key log | 9 | L | WP-31, WP-32 |
+| [ ] | WP-78 | Proxy modes: reverse proxy, WireGuard or local capture, TLS key log | 9 | L | WP-32 |
 | [ ] | WP-86 | Optional AI assistance | 9 | L | WP-49, WP-62 |
 
 ---
@@ -299,18 +279,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** the desktop CI job builds on Linux and macOS, and a smoke test launches the app headless where
   possible.
 
-#### WP-20 Data key in the OS keychain · Phase 3 · M
-
-- **Why:** by default `data.key` sits in the same directory as the data it protects.
-- **Do:**
-  - A `keychain` data-key source using the `keyring` crate (Windows Credential Manager, macOS Keychain, Secret
-    Service on Linux).
-  - The desktop apps default to it. Servers keep `BOSUN_DATA_KEY_FILE`.
-  - `bosun key migrate --to keychain|file` moves the key, re-sealing the CA key.
-  - `doctor` reports where the key lives.
-- **Done when:** tests use a mock keychain store; migration round-trips; a missing keychain entry gives a clear
-  error.
-
 #### WP-21 Browser provisioning · Phase 3 · M
 
 - **Why:** bundling Chrome for Testing makes every installer about 150 MB, and system browser discovery misses
@@ -334,22 +302,6 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Replaces:** Release items "Desktop installers" and "Auto-update for the desktop app".
 - **Decision for the owner:** deferred (2026-11-23). Ship unsigned Windows builds for now. The free option to try later
     is SignPath Foundation, which signs open-source projects at no cost.
-
-#### WP-23 Server mode in the engine · Phase 3 · M
-
-- **Why:** the container needs features that don't exist yet: health checks, setup without a terminal, secrets
-  from files and operational output.
-- **Do:**
-  - `GET /healthz` (no auth, no detail) and a `bosun healthcheck` subcommand, which needs no curl in distroless.
-  - Non-interactive setup: `BOSUN_ADMIN_USER` plus `BOSUN_ADMIN_PASSWORD_FILE`, and optionally
-    `BOSUN_BOOTSTRAP_TOKEN_FILE`, to create the first admin and an API token at start-up. Audited, and ignored when
-    users already exist.
-  - `password_file` options for `proxy.auth` and the upstream proxy credentials.
-  - JSON logs (`BOSUN_LOG_FORMAT=json`), and an optional Prometheus `/metrics` on a separate listener (off by
-    default).
-  - Size the WP-05 memory budget from the cgroup limit.
-- **Done when:** the container smoke test uses `bosun healthcheck` and the non-interactive setup.
-- **Replaces:** M1 "Health endpoint and a `bosun healthcheck` subcommand".
 
 #### WP-24 Docker and Podman support · Phase 3 · M
 
@@ -388,66 +340,12 @@ Open packages only; finished ones are in `docs/releases.md`.
 - **Done when:** CI builds and smoke-tests the image under Docker and rootless Podman, and the Quadlet unit starts,
   passes its health check and restarts on failure in a test VM or runner.
 
-#### WP-25 CLI: local admin commands · Phase 3 · M
+#### WP-26 CLI: client commands: what is left · Phase 3 · S
 
-- **Do:**
-  - `user role`, `user delete`, `user sessions [--revoke]`, `token create|list|revoke`.
-  - `project list|export|import|backup` (built on WP-16).
-  - Hidden password input when stdin is a terminal (`rpassword`), still read from stdin for scripts.
-  - `serve --no-ui` for recording only.
-  - Shell completions (`clap_complete`) and man pages (`clap_mangen`).
-  - `--json` output for `list` commands.
-- **Done when:** each command has a test (CLI tests with `assert_cmd` against a temporary data directory).
-
-#### WP-26 CLI: client commands · Phase 3 · L
-
-- **Why:** a CLI for a running engine (local or a server), not just local administration.
-- **Do:**
-  - Built on `bosun-client`.
-  - `bosun login --server URL` with named profiles in the config directory; the token is kept in the OS keychain,
-    or in a 0600 file when there is no keychain.
-  - `history list|search|show|export` (HAR and ndjson), `scope get|set|add`, `rules get|set|import`,
-    `intercept on|off|queue|forward|drop`, `ca export`, `status`, `events --follow`.
-  - Output as tables, `--json` or `--ndjson`; meaningful exit codes; `--quiet`.
-  - Later packages add `scan` (M5). `repeater send` is done.
-- **Progress (2026-11-25):** `login` (a token in a 0600 profiles file), `status` and `repeater send` exist. The rest
-  of the list, and the OS keychain, are open.
-- **Done when:** integration tests run each command against an engine started in the test.
+- **Do:** keep the token in the OS keychain (today a 0600 profiles file). `scan` arrives with M5.
+- **Done when:** the keychain is used where one exists, with the file as the fallback.
 
 ### WP-27 to WP-33: performance and depth
-
-#### WP-27 Storage layout v2 and benchmarks · Phase 4 · L
-
-- **Depends on:** WP-11, WP-35.
-
-- **Why:**
-  - Content addressing on whole raw messages rarely deduplicates anything, because headers such as `Date` and
-    cookies differ.
-  - `delete_flows` scans every flow to clean up blobs.
-  - "Fast at millions of rows" isn't measured, and host search and extension filters scan the whole table.
-- **Do:**
-  - Store header blocks and bodies separately and deduplicate bodies only. Count references to blobs, or clean
-    them up in the background.
-  - Write the v1-to-v2 migration with the framework from WP-35, tested on a real v1 file.
-  - Indexes for host search (for example a reversed-host column) and extensions (an `ext` column).
-  - Criterion benchmarks at 1 million flows, tracked in CI as part of the footprint budgets.
-- **Done when:** a v1 project migrates, the benchmarks run in CI, and the measured storage saving is noted here.
-
-#### WP-28 Proxy hot path · Phase 4 · M
-
-- **Why:**
-  - Each message is copied about three times, and `new_flow` re-parses the full request and response to get
-    values already known.
-  - Request bodies are always fully buffered.
-  - Flow ids are reserved for flows that won't be recorded.
-- **Do:**
-  - Pass the method, path and status through instead of re-parsing.
-  - Keep bodies as `Bytes` (no copies).
-  - Stream request bodies (with a capped tee for recording) when neither intercept nor a request-body rule needs
-    them buffered.
-  - Reserve an id only when recording.
-  - Criterion throughput and latency benchmarks.
-- **Done when:** the benchmarks show the improvement and the proxy tests still pass.
 
 #### WP-29 Encrypted projects · Phase 5 · L
 
@@ -473,57 +371,10 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Rate-limit failed proxy authentication.
 - **Relates to:** M8 multi-user hardening.
 
-#### WP-31 Transparent HTTPS (invisible mode for TLS) · Phase 3 · M
-
-- **Why:** the README promises invisible (transparent) proxying, but a TLS ClientHello arriving directly at the
-  listener is handed to the HTTP/1 server, so transparent HTTPS doesn't work.
-- **Do:**
-  - First (do this in Phase 1, it is one line): change the README to say "HTTP only" until this lands.
-  - Then: when `invisible` is on, peek at the first byte on accept; for TLS, take the target from the SNI (and
-    optionally from the original destination on Linux through `SO_ORIGINAL_DST`, which needs a safe wrapper or a
-    crate) and intercept as for CONNECT.
-- **Done when:** a test sends HTTPS straight to the listener with SNI and gets the flow recorded.
-
-#### WP-32 CA management · Phase 4 · M
-
-- **Do:**
-  - `bosun ca rotate` (new CA, old one kept for reference, the browser profile updated with the new pin).
-  - Expiry warnings in `doctor` and the UI.
-  - An optional **name-constrained** CA (limited to the scope's domains) for installing on test devices.
-  - Document when to use each.
-
 #### WP-33 Protocol gaps · Phase 4 · M
 
 - **Do:**
-  - Client certificates for targets that require them (per-host PKCS#12 or PEM, keys sealed with the data key).
-  - Inflate `permessage-deflate` WebSocket messages for display.
-  - Upstream SNI override and HTTP/1 header-case preservation for edited requests.
-
-### WP-38 and WP-39: M1 follow-ups
-
-#### WP-38 Proxy follow-ups from M1 · Phase 3 · M
-
-- **Do:**
-  - **Response interception rules:** hold a response only when it matches conditions (status, MIME type, header
-    or body match, the request was intercepted).
-  - **Listener management:** several proxy listeners, each with its own options (address, invisible mode,
-    pass-through, auth). Managed in the UI, changed live without a restart, using the connection limits from
-    WP-04. Every change is audited.
-  - **Live config reload** for the settings that can change safely; the others say a restart is needed.
-  - **Size and timing stats in history:** request and response sizes, time to first byte and total time, as
-    sortable columns.
-- **Done when:** API and Playwright tests cover each item; adding a listener needs no restart.
-
-#### WP-39 TOTP second factor · Phase 3 · M
-
-- **Do:**
-  - Optional TOTP per account (RFC 6238), with the secret sealed with the data key, and one-time recovery codes.
-  - Sign-in asks for the code after the password. Codes count towards the WP-03 limits.
-  - Admins can require TOTP for everyone, and reset a user's TOTP (audited).
-  - The desktop login ticket (WP-15) skips TOTP, because it is a local, single-use exchange.
-- **Done when:** API tests cover enrolment, sign-in, a replayed code (refused), recovery codes and admin reset.
-
-### WP-41 to WP-46: M2 manual tools
+  - Exact header-name case for headers added by an edit needs a raw HTTP/1 send.
 
 #### WP-41 Repeater · Phase 3 · L
 
@@ -542,19 +393,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   received), and `bosun repeater send` sends a raw request file (with `bosun login` and `bosun status` from WP-26 as
   its base). WP-41 is complete.
 
-#### WP-43 History, Organizer, Logger and "send to": what is left · Phase 3 · S
-
-- **Do:** "Send to Intruder" from every message view (waits for WP-47). A separate Logger panel only if panels become
-  multi-instance (History already shows every source through the Source column and `source:`). The query bar's reuse
-  for Intruder results is in WP-47.
-- **Done when:** a Playwright test sends a request to the Intruder.
-
-#### WP-45 Engagement helpers: what is left · Phase 3 · S
-
-- **Do:** analyse a target across the whole history: the distinct endpoints and parameters of a host, with counts.
-  (The per-request Findings panel, the parameter list and the CSRF proof of concept are done.)
-- **Done when:** unit tests on recorded fixtures; a Playwright test opens the analysis for a host.
-
 #### WP-46 Optional `legacy-tls` backend · Phase 4 · M
 
 - **Do:**
@@ -563,69 +401,25 @@ Open packages only; finished ones are in `docs/releases.md`.
   - A `cargo-deny` exception scoped to the feature; it is not in default builds or the published images.
 - **Done when:** a feature-gated test reaches a TLS 1.0 test server; default builds still contain no OpenSSL.
 
-### WP-47 and WP-48: M3 Intruder and Sequencer
+### WP-47: M3 Intruder (what is left)
 
-#### WP-47 Intruder · Phase 4 · L
+#### WP-47 Intruder: what is left · Phase 4 · M
 
-- **Do:**
-  - Attack types: sniper, battering ram, pitchfork, cluster bomb.
-  - Payload sources: lists, files, numbers, dates, brute-forcer, character substitution, case changes, null
-    payloads, recursive grep, the results of earlier attacks. Bundled wordlists and SecLists support.
-  - Payload processing: prefix and suffix, encode and decode, hash, regex replace, skip rules.
-  - Resource pools: concurrency, delays, throttling and retries, inside the gate's per-host rate limit (WP-10) and
-    the memory budget (WP-05).
-  - A results table with grep match, grep extract, status, length and timing; sorting, filtering and export.
-    Results are stored with a migration and streamed over the event stream.
-  - The stop switch halts attacks at once.
-- **Done when:** tests against a local server cover each attack type, the rate limit and the stop switch.
-
-#### WP-48 Sequencer · Phase 4 · M
-
-- **Do:**
-  - Live capture (a request and a token location, sent through WP-40) and manual load.
-  - Analysis: FIPS 140-2 tests (monobit, poker, runs, long runs), character-level and bit-level analysis, an
-    entropy estimate and a verdict; exportable results.
-- **Done when:** known-good and known-bad token sets get the right verdicts.
+- **Do:** the engine, API, panel, "Send to Intruder", the dates, character-substitution and built-in sources and
+  `bosun intruder run` are done (see `docs/releases.md`). Left:
+  - Payload sources: recursive grep, the results of earlier attacks and SecLists support.
+  - A server-side export and the query bar's reuse for Intruder results (WP-75).
+- **Done when:** tests cover each new source; the CLI runs an attack from a file.
 
 ### WP-49 to WP-51: M4 passive scanning and reports
 
-#### WP-49 Passive scanner, findings and the issues view · Phase 5 · L
+#### WP-50 `bosun-checks`: what is left · Phase 5 · S
 
-- **Do:**
-  - A passive scanner fed from the recorder through a bounded queue (WP-05), off the hot path, also run on
-    imports. Deduplicated.
-  - The finding model: issue type, severity, confidence, evidence (highlighted ranges in the request and
-    response), remediation, CWE and OWASP references, status (new, confirmed, false positive). Stored with a
-    migration.
-  - An issues view in the UI with filters, grouping and links back to the evidence.
-- **Done when:** a backlog of recorded traffic is scanned without slowing the proxy; findings survive a restart.
-
-#### WP-50 `bosun-checks`: the check language and passive checks · Phase 5 · L
-
-- **Do:**
-  - A YAML check language (request templates, matchers, extractors, OAST hooks), versioned and validated, with a
-    fuzz target for the loader.
-  - Import a compatible subset of Nuclei templates (MIT; keep their notices).
-  - Port ZAP's passive rules where useful (Apache-2.0; attribution in `NOTICE`).
-  - Passive checks: security headers, cookie flags, CSP weaknesses, CORS, information disclosure, mixed content,
-    vulnerable JS libraries (Retire.js-style data), JWT issues, cacheable sensitive responses, open redirect hints,
-    directory listings.
-- **Done when:** every check has a positive and a negative fixture test.
-
-#### WP-51 `bosun-report` · Phase 5 · M
-
-- **Do:**
-  - HTML (self-contained, no script), JSON, SARIF, JUnit and Markdown reports. Secrets are redacted by default.
-  - Endpoints, a `bosun report` CLI command, and a Playwright test that the HTML report runs no script.
-- **Done when:** golden-file tests for each format; the SARIF validates against its schema.
+- **Do:** the language, importer, built-in and custom checks, API and UI are done. Left: more ZAP ports and a
+  larger Retire.js-style library table.
+- **Done when:** each new check has a positive and a negative fixture.
 
 ### WP-52 to WP-57, WP-68 and WP-72: M5 active scanning
-
-#### WP-52 `bosun-crawl`: the HTTP spider · Phase 6 · M
-
-- **Do:** an HTTP spider (forms, links, robots.txt, sitemap.xml) bounded by scope, depth and the gate's rate limit,
-  sending through WP-40.
-- **Done when:** a crawl of the testbed finds every linked page and never leaves scope.
 
 #### WP-53 Browser crawler and the `BrowserEngine` trait · Phase 6 · L
 
@@ -639,13 +433,11 @@ Open packages only; finished ones are in `docs/releases.md`.
 
 #### WP-54 Active scan engine and the testbed · Phase 6 · L
 
-- **Do:**
-  - First, the in-repo `testbed` crate: a small server with known vulnerabilities, so scanner tests in CI are
-    deterministic.
-  - Insertion points: query, body (form, JSON, XML, multipart), headers, cookies, path segments, nested encodings
-    (Base64 or JSON inside a parameter), GraphQL variables.
-  - Scan policies (checks, strength, thresholds), a scan queue, pause and resume, a live progress view.
-  - Checks come from WP-50's language and from Rust checks; all traffic goes through WP-40 and the gate.
+- **Do:** the testbed (`bosun-testbed`), the engine (`bosun-active`), the `/scan/*` API, query/form/JSON/cookie/
+  path/header insertion points, strength levels, pause and resume, and SQLi and reflected-XSS checks are done (see
+  `docs/releases.md`). Left:
+  - Insertion points: XML, multipart, nested encodings (Base64 or JSON inside a parameter), GraphQL variables.
+  - Checks written in WP-50's language, a persistent scan queue, `scan_*` events and a live progress view.
 - **Done when:** a scan of the testbed finds its planted issues, pauses and resumes, and stays in scope.
 
 #### WP-55 Core active checks · Phase 6 · L
@@ -665,6 +457,13 @@ Open packages only; finished ones are in `docs/releases.md`.
     in the encrypted vault (WP-68).
   - A multi-user authorisation matrix for IDOR and access-control testing across accounts.
 - **Done when:** a scan of the testbed's logged-in area stays logged in, and the matrix finds its planted IDOR.
+- **Built so far (engine, tested against the testbed):** `bosun-auth` has the matrix (`matrix::run`: replay a
+  request as each account and as nobody, compare with the owner's answer, findings for broken access control and
+  missing authentication) and `Session` (a login macro that keeps cookies or a token, signs in again when an answer
+  looks expired, and stops after one failed sign-in). `bosun_active::scan_with_session` keeps a scan logged in.
+- **Left:** API endpoints and a UI panel for the matrix; a login macro in the scan and crawl requests that takes
+  its credentials from the vault (`vault::open_secret`); recording a login from the browser; matrix findings
+  saved as issues; fuzz is not needed (nothing here parses untrusted input beyond HTTP responses already handled).
 
 #### WP-57 `bosun scan` for CI · Phase 6 · M
 
@@ -674,12 +473,6 @@ Open packages only; finished ones are in `docs/releases.md`.
   - Runs without the UI (`serve --no-ui` from WP-25) or against a remote engine (WP-26).
   - Documented recipes for GitHub Actions and GitLab CI, and use as a container image (WP-24).
 - **Done when:** a CI job scans the testbed and fails on its planted high-severity issue.
-
-#### WP-68 Encrypted credential vault · Phase 6 · M
-
-- **Do:** a vault for auth configs, client certificates (WP-33) and OAST keys (WP-59), sealed with the project key
-  from WP-29 and the data key. Its secrets are never sent to the UI in full; they are referenced by id.
-- **Done when:** tests show vault contents are unreadable in the project file and absent from API responses.
 
 #### WP-72 Scanner benchmarks against ZAP · Phase 6 · M
 
@@ -707,12 +500,10 @@ Open packages only; finished ones are in `docs/releases.md`.
   - OAST checks in the scanner (WP-54): blind SQL injection, SSRF, XXE, RCE, blind XSS, DNS rebinding probes.
 - **Done when:** the testbed's blind SSRF is found through a local Lookout.
 
-#### WP-60 Imports · Phase 7 · M
+#### WP-60 Imports: what is left
 
-- **Do:** OpenAPI/Swagger 2 and 3, GraphQL introspection, Postman collections, HAR, plain URL lists, and Burp XML
-  exports where the format allows. Imports go through the WP-16 import path, with size caps, and fuzz targets for
-  each parser.
-- **Done when:** fixture files of each format import; hostile fixtures are refused cleanly.
+- **Do:** everything is done, including live introspection and HAR/Burp responses. Nothing left except format
+  additions as people ask for them.
 
 ### WP-61 to WP-63: M7 plugins and advanced checks
 
@@ -816,15 +607,6 @@ From `docs/competitive-analysis.md` (2026-11-25), which compares Bosun with Burp
 others. Every package here follows the platform contracts above. Packages that decode or parse untrusted input get a
 fuzz target; ones that send traffic go through the gate.
 
-#### WP-76 Map Local, Map Remote and throttling · Phase 4 · M
-
-- **Do:**
-  - Rules that answer a matching request from a local file (Map Local) or send it to another host (Map Remote),
-    next to match-and-replace, with an audit entry on change.
-  - Throttle and latency simulation per host or rule.
-  - Map Remote's new target goes through `Gate::check`; Map Local reads only from a directory the user picked, with
-    no path traversal (tested).
-- **Done when:** tests cover each rule type, the path-traversal case, and an out-of-scope Map Remote target being refused.
 
 #### WP-78 Proxy modes: reverse proxy, WireGuard or local capture, TLS key log · Phase 9 · L
 
@@ -832,19 +614,11 @@ fuzz target; ones that send traffic go through the gate.
   - Reverse-proxy mode: listen in front of one upstream and rewrite Host.
   - A TLS key log file option (`SSLKEYLOGFILE` format) so Wireshark can decrypt captures; off by default, with a
     warning because the file exposes traffic secrets.
-  - WireGuard or local capture mode and guided setup for phones and emulators, on top of WP-31's transparent proxying.
+  - WireGuard or local capture mode and guided setup for phones and emulators, on top of the transparent proxying already in (WP-31).
   - Decision first: ask the owner whether WireGuard (a user-space implementation) or per-OS local capture is wanted.
   - The first pull request may be reverse mode and the key log alone; they can be pulled into an earlier phase.
 - **Done when:** a test client through each mode is recorded and the scope gate still applies; the key log decrypts a
   captured session in a test; the threat model covers the new listener and the key file.
-
-#### WP-79 gRPC, Protobuf and GraphQL-aware views and rules · Phase 4 · M
-
-- **Do:**
-  - Decode gRPC and Protobuf (with a user-supplied schema, or schema-less field numbers), and edit and re-send them.
-  - GraphQL-aware matching and editing by operation name; query and variables shown separately.
-  - Decoders respect WP-06's size caps and have fuzz targets.
-- **Done when:** a recorded gRPC call shows decoded fields; a rule fires on a GraphQL operation name.
 
 #### WP-80 Command palette and one shared message viewer · Phase 5 · M
 
@@ -892,7 +666,8 @@ fuzz target; ones that send traffic go through the gate.
 
 #### WP-85 Issue tracker export · Phase 7 · S
 
-- **Do:** push a finding to GitHub issues, Jira or Linear. Credentials go in the vault (WP-68); the destination host
+- **Do:** the export of a finding as a GitHub, Jira or Linear issue body is done (`GET /issues/{id}/tracker`,
+  redacted by default, audited; no UI button yet). Left: push a finding to GitHub issues, Jira or Linear. Credentials go in the vault (WP-68); the destination host
   is on a user-set allow list; secrets in evidence are redacted by default.
 - **Done when:** tests against a mock tracker; a host off the allow list is refused.
 
@@ -917,7 +692,6 @@ the phase plan above sets the order. Tick an item here when its package lands.
 ### M1 Proxy: done except these items
 
 - [ ] Bundle Chrome for Testing with the desktop installers (download, verify by SHA-256, keep it updated): **WP-21**
-- [ ] Optional TOTP second factor for UI accounts → **WP-39**
 - [ ] Response interception rules (intercept only when the response matches a condition) → **WP-38**
 - [ ] Proxy listener management in the UI (several listeners, per-listener options) and a live-config reload → **WP-38**
 - [ ] Request/response size and timing stats in history → **WP-38**
@@ -932,14 +706,12 @@ the phase plan above sets the order. Tick an item here when its package lands.
   follow redirects (optional), response diff with the previous send, send groups (in order or in parallel,
   single-packet attack for race conditions) → **WP-41**
 - [ ] **Logger** as its own panel (History already lists every source) → **WP-43**
-- [ ] "Send to Intruder" (Repeater, Comparer and Decoder are done) → **WP-43**
 - [ ] Request editor with syntax highlighting (CodeMirror 6), a hex editor, and pretty-printing of JSON, XML and
   HTML (as text, never rendered) → **WP-44**
-- [ ] Engagement helpers: analyse a target across the history (parameters and endpoints) → **WP-45**
 - [ ] The scope gate enforced for every tool request (refuse out-of-scope, a per-host rate limit, the stop switch),
   with pinned addresses: **WP-10** must land first
 - [ ] Map Local, Map Remote and throttling → **WP-76**
-- [ ] gRPC, Protobuf and GraphQL-aware views and rules → **WP-79**
+- [x] gRPC, Protobuf and GraphQL-aware views and rules → **WP-79**
 - [ ] A command palette, and one message viewer shared by every tool → **WP-80**
 
 ### M3 Intruder and Sequencer
@@ -1049,7 +821,7 @@ the phase plan above sets the order. Tick an item here when its package lands.
 
 ### Quality, performance and security work (continuous)
 
-- [ ] Throughput and latency benchmarks (criterion) and tracked image sizes feed the footprint budgets in CI → **WP-27**, **WP-28**
+- [ ] Throughput and latency benchmarks (criterion) and tracked image sizes feed the footprint budgets in CI → **WP-28** (the WP-27 store benchmarks are in)
 - [ ] `cargo-fuzz` targets: the HTTP parser, the WebSocket frame parser, decoders and decompression, the scope
   rule compiler, the YAML check loader, the plugin host boundary → **WP-36**, then each package that adds a parser
 - [ ] Scanner benchmarks against OWASP Juice Shop, DVWA, WebGoat, VAmPI/crAPI and the OWASP Benchmark, comparing

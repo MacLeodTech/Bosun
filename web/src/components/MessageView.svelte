@@ -7,6 +7,10 @@
   import { contentTypeOf, detectLang, highlight, splitText, MAX_HIGHLIGHT } from '../lib/highlight';
   import { pretty } from '../lib/pretty';
   import { parseRequest, toCurl } from '../lib/export';
+  import { api } from '../lib/api';
+  import { grpcSteps, requestPath } from '../lib/protoview';
+  import { protoSchema } from '../lib/protoschema.svelte';
+  import { marks, type Range } from '../lib/evidence';
   import CodeView from './CodeView.svelte';
   import MessageEditor from './MessageEditor.svelte';
 
@@ -23,6 +27,8 @@
     role,
     scheme = '',
     onFilterHeader,
+    evidence = [],
+    rpcPath,
   }: {
     raw: string | null;
     decodedBody?: string | null;
@@ -43,6 +49,10 @@
     scheme?: string;
     /** Called with a header's name and value to filter the history by it. */
     onFilterHeader?: (name: string, value: string) => void;
+    /** Byte ranges of the stored message to highlight (the passive scanner's evidence). */
+    evidence?: Range[];
+    /** The call's path when this is a response (a response does not carry it); a request has it in its first line. */
+    rpcPath?: string;
   } = $props();
 
   let localView = $state<MessageViewMode>('raw');
@@ -67,7 +77,40 @@
   });
   const split = $derived(splitText(text.text));
   const lang = $derived(detectLang(contentTypeOf(split.head), split.body));
-  const prettyBody = $derived(editable ? null : pretty(split.body, lang));
+  // gRPC and GraphQL bodies are decoded by the server's codec (the same one the Decoder uses), so the view and the
+  // rules agree on what an operation is. The result replaces the "pretty" text for those messages.
+  const ct = $derived((contentTypeOf(split.head) ?? '').toLowerCase());
+  const protoOps = $derived.by((): string[] | null => {
+    if (editable) return null;
+    const g = grpcSteps(ct);
+    if (g) return g.decode;
+    if (ct.includes('json') && /^\s*[[{][\s\S]{0,4096}"(query|operationName)"\s*:/.test(split.body)) return ['graphql_decode'];
+    return null;
+  });
+  // With a project schema, a gRPC body shows field names: the call's path says which messages.
+  const callPath = $derived(rpcPath ?? requestPath(split.head));
+  protoSchema.ensure();
+  let protoText = $state<string | null>(null);
+  $effect(() => {
+    const ops = protoOps;
+    const body = decoded ?? parts.body;
+    const call = callPath;
+    const isResponse = role === 'response';
+    protoText = null;
+    if (!ops || !body.length || body.length > (1 << 20)) return;
+    let live = true;
+    api
+      .post<{ steps: { output: string }[]; error: unknown }>('/decoder/apply', {
+        input: bytesToB64(body), ops, ...(ops.includes('grpc_decode') ? protoSchema.forCall(call, isResponse) : {}),
+      })
+      .then((r) => {
+        const last = r.steps[ops.length - 1];
+        if (live && !r.error && last) protoText = bytesToText(b64ToBytes(last.output)).text;
+      })
+      .catch(() => {});
+    return () => (live = false);
+  });
+  const prettyBody = $derived(editable ? null : (protoText ?? pretty(split.body, lang)));
   // "pretty" quietly shows the raw text when there is nothing to re-indent, so the choice sticks across messages.
   const view = $derived<MessageViewMode>(chosen === 'pretty' && !prettyBody ? 'raw' : chosen);
   const oversize = $derived(text.text.length > MAX_HIGHLIGHT);
@@ -76,8 +119,12 @@
     const body = view === 'pretty' && prettyBody ? prettyBody : split.body;
     const head = highlight(split.head, 'http');
     // The blank line between head and body is shown; an empty body adds nothing after it.
-    return split.sep ? (body ? [...head, [], ...highlight(body, lang)] : [...head, []]) : head;
+    return split.sep ? (body ? [...head, [], ...highlight(body, protoText && view === 'pretty' ? 'plain' : lang)] : [...head, []]) : head;
   });
+  // Evidence positions are into the stored bytes, so they only line up with the raw text as stored.
+  const evidenceMarks = $derived(
+    evidence.length && view === 'raw' && !(decoded && showDecoded && !editable) ? marks(bytes, text.text, text.mode === 'utf8', evidence) : [],
+  );
   const shownText = $derived(view === 'pretty' && prettyBody ? `${split.head}\r\n\r\n${prettyBody}` : text.text);
 
   const headers = $derived(
@@ -163,7 +210,7 @@
       <MessageEditor text={draft} mode={draftMode} label={title || 'Message'} onchange={edited} />
     {:else}
       {#if oversize}<div class="small muted pad">Large message: shown without colour.</div>{/if}
-      <CodeView bind:this={code} {lines} wrap={prefs.wrap} label={title || 'Message'} />
+      <CodeView bind:this={code} {lines} wrap={prefs.wrap} label={title || 'Message'} marks={evidenceMarks} />
     {/if}
   {:else if view === 'headers'}
     <div class="scroll">

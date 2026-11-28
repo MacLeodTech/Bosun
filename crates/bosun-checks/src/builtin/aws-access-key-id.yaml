@@ -1,0 +1,17 @@
+version: 1
+id: aws-access-key-id
+info:
+  name: AWS access key ID in a response
+  severity: high
+  confidence: tentative
+  description: The response contains a string shaped like an AWS access key ID. The matching secret is not checked.
+  remediation: Remove the key from the response, rotate it, and check the account's access logs.
+  cwe: [200, 798]
+  owasp: ["A02:2021 Cryptographic Failures"]
+  tags: [secret, aws]
+passive:
+  matchers:
+    - type: regex
+      part: body
+      regex:
+        - '\b(?:AKIA|ASIA)[A-Z2-7]{16}\b'

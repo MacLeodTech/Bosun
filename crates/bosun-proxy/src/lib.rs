@@ -7,22 +7,27 @@
 
 pub mod body;
 pub mod budget;
+pub mod clientcert;
 pub mod config;
 pub mod events;
 pub mod intercept;
 mod limits;
+pub mod mapping;
 pub mod recorder;
 pub mod rules;
 pub mod server;
 pub mod upstream;
 pub mod ws;
 
-pub use config::{ProxyAuth, ProxyConfig, UpstreamProxy};
+pub use config::{
+    ListenerSpec, LiveSettings, ProxyAuth, ProxyConfig, RESTART_ONLY, UpstreamProxy, read_secret_file,
+};
 pub use events::{EventBus, EventReceiver, EventSender, ProxyEvent, Resume, Sequenced};
 pub use intercept::{
-    Decision, InterceptController, InterceptItem, InterceptSettings, InterceptSummary, Phase,
+    Decision, InterceptController, InterceptItem, InterceptSettings, InterceptSummary, Phase, ResponseFilter,
 };
 pub use limits::ConnLimit;
+pub use mapping::{MapKind, MapRule, MapRules};
 pub use rules::{RuleSet, RuleSpec, RuleTarget};
-pub use server::{MAGIC_HOST, Proxy, ProxyError, ProxyStats};
+pub use server::{ListenerInfo, MAGIC_HOST, Proxy, ProxyError, ProxyStats};
 pub use upstream::LoopGuard;

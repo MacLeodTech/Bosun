@@ -12,10 +12,21 @@ build = "build.rs"
 bosun-model.workspace = true
 bosun-ca.workspace = true
 bosun-store.workspace = true
+bosun-scan.workspace = true
+bosun-checks.workspace = true
+bosun-report.workspace = true
 bosun-scope.workspace = true
 bosun-proxy.workspace = true
 bosun-http.workspace = true
 bosun-codec.workspace = true
+bosun-sequencer.workspace = true
+bosun-intruder.workspace = true
+bosun-crawl.workspace = true
+bosun-discover.workspace = true
+bosun-active.workspace = true
+bosun-auth.workspace = true
+bosun-import.workspace = true
+url = "2"
 axum.workspace = true
 tower.workspace = true
 tokio.workspace = true
@@ -29,12 +40,15 @@ rustls.workspace = true
 serde.workspace = true
 utoipa.workspace = true
 serde_json.workspace = true
+regex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 argon2.workspace = true
 rand.workspace = true
 base64.workspace = true
 subtle.workspace = true
+hmac.workspace = true
+sha1.workspace = true
 cookie.workspace = true
 rust-embed.workspace = true
 mime_guess.workspace = true
@@ -52,6 +66,8 @@ tokio-tungstenite.workspace = true
 rsa = { version = "0.9", features = ["sha2"] }
 sha2.workspace = true
 flate2.workspace = true
+bosun-testbed = { path = "../bosun-testbed" }
+ring.workspace = true
 
 [lints]
 workspace = true

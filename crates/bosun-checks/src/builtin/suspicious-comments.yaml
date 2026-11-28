@@ -1,0 +1,22 @@
+version: 1
+id: suspicious-comments
+info:
+  name: Suspicious comment in a response
+  severity: info
+  confidence: tentative
+  description: A comment in the page or script mentions a password, a key, a bug or an unfinished task, which can help an attacker.
+  remediation: Remove developer comments from production responses.
+  cwe: [615]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  tags: [disclosure]
+source:
+  origin: zap
+  id: "Information Disclosure - Suspicious Comments"
+  license: Apache-2.0
+  notice: Ported in spirit from the ZAP passive rule set, Copyright the ZAP Dev Team, Apache License 2.0.
+passive:
+  matchers:
+    - type: regex
+      part: body
+      regex:
+        - '(?i)(?:<!--|/\*|(?:^|\s)//)[^\n]{0,80}?\b(?:todo|fixme|hack|password|passwd|secret|api[_-]?key|credentials?|debug|admin)\b'

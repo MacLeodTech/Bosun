@@ -8,3 +8,6 @@
 .env
 
 /crates/bosun-desktop/gen
+
+# CodeGraph index (local)
+.codegraph/

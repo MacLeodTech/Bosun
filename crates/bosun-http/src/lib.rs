@@ -149,6 +149,7 @@ impl Exchange {
             source,
             started_ms: self.started_ms,
             duration_ms: Some(self.timings.total_ms as i64),
+            ttfb_ms: self.timings.first_byte_ms.map(|m| m as i64),
             scheme: self.target.scheme,
             host: self.target.host.clone(),
             port: self.target.port,
@@ -331,8 +332,10 @@ impl Engine {
             Scheme::Http => Box::new(tcp),
             Scheme::Https => {
                 let cfg = self.tls.get(opts.verify_tls, h2);
+                let cfg = self.connector.client_certs().apply(&c.pinned.host, cfg);
                 let host = &c.pinned.host;
-                let name = tls::server_name(host).map_err(|e| SendError::Tls(host.clone(), e))?;
+                let sni = self.connector.sni_for(host);
+                let name = tls::server_name(&sni).map_err(|e| SendError::Tls(host.clone(), e))?;
                 let t1 = Instant::now();
                 let conn =
                     tokio::time::timeout(opts.connect_timeout, TlsConnector::from(cfg).connect(name, tcp))

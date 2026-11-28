@@ -41,6 +41,14 @@ This document says what is protected, from whom, and how. Code comments refer ba
   which a cross-origin page cannot set without a CORS preflight the API never answers. The Origin header must
   match the UI's own origin exactly (scheme, host and port) or an allowlisted origin, on every request including
   the WebSocket upgrade; `Sec-Fetch-Site: cross-site` is refused. There is no CORS at all.
+- *Non-interactive setup (containers).* `BOSUN_ADMIN_USER` with `BOSUN_ADMIN_PASSWORD_FILE` (and optionally
+  `BOSUN_BOOTSTRAP_TOKEN_FILE`, whose content becomes a full-scope API token) create the first admin at start-up,
+  only while there are no users, and each is audited (`setup`, `token.create`). Secrets come from files, never from
+  environment values, so they stay out of `docker inspect` and process listings; the same holds for
+  `password_file` on `proxy.auth` and the upstream proxy. Whoever can write those files or set that environment
+  controls the first admin, which is the same trust as owning the container. `/healthz` is the only unauthenticated
+  route besides `/status`: it returns `ok` and nothing else. The optional `/metrics` listener
+  (`metrics_listen`, off by default) has no authentication and shows only counters; bind it to an internal interface.
 - *DNS rebinding.* A hostile page rebinds its own name to 127.0.0.1 and becomes "same origin" with the UI. The
   Host header must be a known name (loopback names plus `api.hosts`); anything else gets 421.
 - *Guessing passwords.* argon2id hashes, a 12-character minimum, the same work for unknown users as for wrong
@@ -57,6 +65,24 @@ This document says what is protected, from whom, and how. Code comments refer ba
   `read` scoped: such a token is refused (403) on anything but GET and HEAD. Users can list and end their own
   sessions; admins can list and end anyone's sessions and tokens and change roles (a role change ends the user's
   sessions; the last admin cannot be demoted).
+- *A stolen or guessed password (TOTP second factor).* An account can turn on an RFC 6238 second factor (HMAC-SHA-1,
+  6 digits, 30 s). Enrolment is two steps (a secret, then a first valid code), so a half-finished setup never locks
+  anyone out. With it on, `POST /auth/login` only checks the password and returns a five-minute `pending` token
+  bound to the client address; no session or cookie exists until `POST /auth/login/totp` receives the token and a
+  code. A pending sign-in allows five code tries. Codes are compared in constant time against the previous, current
+  and next step; the newest step used is stored in the account database and an equal or older step is refused, so
+  a code works once (the update is atomic, so two simultaneous requests cannot both win). Wrong codes use the
+  password limiter (three free tries per address and account, then growing delays; per-address caps) and also count
+  towards ten failures per account across all addresses in 15 minutes, which locks the second factor of that
+  account (and only that) for the rest of the window: guessing a six-digit code from many addresses is stopped at
+  about ten tries per window. Ten recovery codes (80 bits each) are shown once, stored as SHA-256 hashes and work once; using one is audited.
+  Turning the factor off, or making new recovery codes, needs a valid code or recovery code (so a stolen session
+  cannot remove it). An admin can reset a user's factor (`DELETE /users/{id}/totp`, or `bosun user totp-reset`; the
+  user's sessions end) for a lost device, and can require a second factor of every password account: until a
+  session's account has one, the API answers 403 for everything except the enrolment pages. Limits worth knowing:
+  single sign-on sessions are not asked for a code (the identity provider is the second factor) and are not subject
+  to the requirement; API tokens made before the requirement keep working (they are not ambient credentials, and
+  making one needs a session); the desktop login ticket skips the code, as it is a local single-use exchange.
 - *Spoofed client addresses.* Behind a reverse proxy every client shares the proxy's address. Set
   `api.trusted_proxies` to the proxy's network; only then are `X-Forwarded-For` (the rightmost entry that is not a
   trusted proxy) and `X-Forwarded-Proto` believed, and used for limits, audit entries and the `Secure` cookie.
@@ -77,6 +103,13 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Traffic that reaches the UI through the proxy.* Requests the proxy would send to its own listeners are refused
   (the proxy knows the API's address), and the API refuses any connection whose source address belongs to one of
   the proxy's own outbound sockets (covers aliases such as other loopback addresses or the host's LAN address).
+- *Compressed WebSocket messages from a target.* The proxy relays `permessage-deflate` frames untouched and inflates
+  a copy only to record it. The copy is capped at the record limit (1 MiB per message), so a decompression bomb is
+  cut and flagged truncated; corrupt data is stored as the raw compressed bytes, flagged. The extension header the
+  server sends is read tolerantly, and the frame parser, inflater and header reader share the `ws_frames` fuzz target.
+- *Upstream SNI override.* `proxy.upstream_sni` (restart-only, a config-file setting) sends a chosen server name to a
+  target instead of its own. It changes only the TLS name; the request still goes through `Gate::check` for the
+  original host, and with `verify_upstream_tls` the certificate is checked against the name sent.
 - *Hostile HTML in the UI.* The UI's CSP forbids inline script and inline style and allows nothing but its own
   origin. Responses are shown as text; the "render" view is an iframe with an empty `sandbox` attribute (no
   scripts, opaque origin) whose `srcdoc` also inherits the UI's CSP. Syntax colour is drawn from a tokeniser's
@@ -131,15 +164,94 @@ This document says what is protected, from whom, and how. Code comments refer ba
 ### Repudiation
 
 - An append-only audit log (database triggers refuse UPDATE and DELETE) records sign-ins, account, token, scope,
-  rule, kill-switch, role, session-revocation, login-ticket, project (create, open, close, rename, delete, export,
-  backup, import and refused imports) and intercept changes (settings, drop, edited forward, forward-all),
+  rule, kill-switch, role, session-revocation, login-ticket, second-factor (enrolment, enable, disable, recovery
+  codes used or replaced, failed codes, the require-everyone policy, admin and CLI resets), project (create, open, close, rename, delete, export,
+  backup, import and refused imports), proxy listener changes (`proxy.listener.add|update|remove`: address and
+  options, never the password) and live proxy settings (`proxy.config.update`: the values that changed), and intercept changes (settings, response filter, drop, edited forward, forward-all),
   with the user and remote address. Admins can read it in the UI.
 
 ### Information disclosure
 
+- *Map Local, Map Remote and throttle rules (WP-76).* Rules saved with `PUT /map-rules` (table `map_rules`, migration
+  9) answer or redirect proxied requests next to match-and-replace. **Map Local** serves a file from a directory the
+  user typed, so it is the one rule that reads this machine's disk on behalf of a client of the proxy: a list that holds a
+  Map Local rule needs the admin role to save (testers may change the other kinds), and the change is audited
+  (`maprules.update`, with counts per kind). The directory must exist when saved and is canonicalised; for each
+  request the path is percent-decoded and refused when it holds `..`, a backslash, a NUL or any non-normal component,
+  and the file's own canonical path (symlinks resolved) must still start with the directory's canonical path and be a
+  regular file, otherwise the answer is 403 and nothing is read. A missing file falls through to the real target. Only GET
+  and HEAD are answered from files, and a file larger than `proxy.max_buffered_response` is refused. Tests cover
+  `..`, encoded `..`, encoded separators, NUL, backslash and symlinks that point out (unit tests in
+  `bosun-proxy/src/mapping.rs`, and through a real proxy in `tests/mapping.rs`). Remaining gap: the file is opened by
+  its canonical path after the check, so someone who can already write into that directory could swap a link between
+  the check and the read; the directory is the user's own choice and is treated as trusted for writes.
+- *Map Remote.* A rule sends matching requests to another origin (`http(s)://host[:port]`, nothing else). That is a
+  new outbound target chosen by configuration, so it goes through `Gate::check` (as an automated source, which never
+  leaves scope and never reaches private addresses unless a scope rule allows them): when the rule is saved (a 400
+  naming the rule) and again for every request, because the scope can change afterwards. A refused request is
+  answered 403 and recorded with the error; nothing is sent. The connection is then made by the proxy's normal
+  upstream connector, which resolves the name again (the same resolve-then-connect gap the proxy's other traffic has,
+  since proxy traffic is the user's own browsing and is not pinned). The history keeps the target the client asked for,
+  and the Host header follows the new target.
+- *Throttle rules* only delay: latency of at most 60 s a rule, and a bandwidth limit on response bodies. They hold a
+  connection open longer, so they count against the same connection caps and budgets as a slow upstream.
+
+- *Client certificates (WP-33).* A project can hold a certificate and private key per host pattern
+  (`/client-certs`, table `client_certs`), for targets that require mutual TLS. The key is sealed with the data key
+  (purpose bound to the host) before it reaches the project file, so a copied or exported project does not carry a usable
+  key without the data key; the chain is public. No endpoint returns key material: a list shows host, subject and
+  expiry. Adding and removing need the admin role and are audited (`clientcert.add`, `clientcert.remove`). The key is
+  decrypted only into the proxy's in-memory registry, which the proxy's upstream connector and the tools' engine
+  share; a certificate is presented only to hosts that match its pattern (exact, or `*.` suffix), never to a host
+  chosen by target content. A PEM or PKCS#12 upload is untrusted input: 64 KiB cap, parsing off the async workers,
+  a key that does not match its certificate refused, fuzzed (`client_cert`). Anything running as the same OS user can
+  still read the data key (see above), and a target that asks for a certificate learns the subject of ours.
+- *Authorisation matrix (WP-56).* `POST /auth-matrix` is tester-only and audited. Account headers may name vault
+  entries, which are opened server-side and used only as request headers to hosts the scope gate allows; they are not
+  returned, logged or written to the audit entry (it holds counts only). A secret with a line break is refused, so a
+  vault value cannot inject headers. The replayed requests are recorded as flows like any Repeater send. With `save_issues` the findings become issues that
+  point at the probe's recorded flow; they hold labels and account names, no credentials.
+- *Advisory feeds (WP-82).* A feed changes what the scanner reports, so it is accepted only with a valid Ed25519
+  signature from a key the admin trusts; the keys and the feed are admin-only and audited (a refused feed is audited
+  too). The stored feed is verified again every time it is loaded, so editing the project file or changing the
+  trusted keys cannot make an unsigned feed count (the scanner falls back to the built-in advisories). `sequence`
+  must rise, so an old signed feed (one that lacks a later advisory) cannot be put back. The content is checked before
+  use: sizes, lowercase product names, known severities, numeric versions and `http(s)` links only (a reference is shown
+  as text, never as a script URL). Nothing is fetched: there is no automatic update and no lookup to a third party. A
+  feed signer is trusted to publish honest advisories; a bad one could hide a vulnerability, which is why the keys are
+  an explicit, audited choice. Versions come from banners, which the target controls: a target can claim any version, so
+  the findings are Tentative.
+- *Content and parameter discovery (WP-81).* Wordlist runs can send thousands of requests, so every one goes through
+  `Gate::check` (scope, kill switch, per-host rate limit), the run is capped (`max_requests`, 200000 at most; words
+  at most 100000; two runs at once), and a refused request ends the run instead of being asked again for every word.
+  Words cannot hold spaces, line breaks, `#`, `?`, `&` or `=`, so a word cannot change the request line. Only hits are
+  recorded as flows. Starting and stopping are audited.
+- *Signed-in scans and crawls (WP-56).* A `session` on a scan or crawl names a login request whose body and headers may
+  hold `{{vault:ID}}` placeholders. The secrets are opened on the server and appear only in the login request, which
+  goes through the scope gate like every request. The login exchange is not recorded as a flow, so the password is not
+  written to the history; the requests that follow carry the session cookie or token and are recorded like any request,
+  so the history holds a session credential (project data, as sensitive as the target's own traffic). A secret with a
+  line break or NUL is refused. The audit entry says a login macro was used and nothing else. A failed sign-in is never
+  repeated (account lockout), and a run signs in at most 25 times.
+- *Credential vault (WP-68).* Named secrets (auth configs, passwords, tokens, later OAST keys) in the project table
+  `vault`. Each secret is sealed with the data key, with a purpose bound to its row id, before it reaches the project
+  file, so a copied or exported project holds ciphertext only. No endpoint returns a secret: lists and results carry
+  id, name, kind, timestamps and a hint (the last two characters of a secret of 12 or more, otherwise a fixed mask).
+  Features refer to an entry by id and open it server-side (`vault::open_secret`). Writes need the admin role and are
+  audited by name, never by value; secrets are limited to 64 KiB and 500 entries. A secret is plain text in the
+  request that creates or replaces it (use TLS off loopback), and anything running as the same OS user can still read
+  the data key. The PKCS#12 password of a client certificate is not stored (it is used once to unpack the file), so
+  there is nothing of WP-33 to move into the vault.
 - *The CA key at rest.* Sealed with ChaCha20-Poly1305 under a 32-byte data key that lives apart from it:
   `BOSUN_DATA_KEY`, a mounted secret file, or `data.key` (0600). Files and directories are created 0600/0700, and
   the key file's permissions are checked on load.
+  The desktop apps keep the data key in the OS keychain for new installs (`data_key_store = "keychain"`;
+  Credential Manager, macOS Keychain, Secret Service), so copying the data directory alone no longer yields it.
+  An existing `data.key` stays until `bosun key migrate --to keychain` moves it (the CA key is opened with the
+  moved key before the file is overwritten and removed). A missing keychain entry is an error, never a silently
+  generated new key, so the sealed CA is not orphaned. Anything running as the same OS user can still ask the
+  keychain for the key; `doctor` reports where it lives. The real keychain is not exercised in CI (tests use an
+  in-memory store).
 - *The UI's certificate.* The interception CA never issues the UI's certificate, so nobody is pushed to trust it in
   an everyday browser. With `api.tls` the UI serves `api.tls_cert`/`api.tls_key` (re-read on change or SIGHUP) or a
   self-signed certificate of its own: not a CA, key sealed like the CA's. A reverse proxy is the recommended setup
@@ -151,14 +263,45 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *The CA's reach.* One CA per install, never shared. The launched browser trusts it by SPKI pin
   (`--ignore-certificate-errors-spki-list`) in its own profile, so it never needs installing system-wide.
   `doctor` warns if it finds the CA in a system bundle.
+  *Lifetime and rotation.* The CA lasts three years. `doctor` and the Settings page warn 30 days before expiry
+  (`doctor` fails once it has expired). `bosun ca rotate` makes a new CA and keeps only the old certificate (in
+  `ca/previous/`), deleting the old key so a retired key cannot be stolen later; it is a local command on the
+  data directory and needs a restart. Rotate after the data key or the data directory may have leaked, and
+  replace the CA wherever it was installed by hand. `--permit-domain` makes the new CA name-constrained (DNS
+  names under the listed domains only, all IP addresses excluded), which limits what a stolen key can
+  impersonate on test devices to the scope's own domains; it relies on the client enforcing the constraint
+  (current browsers and OSes do, some embedded TLS stacks do not).
 - *Secrets in child processes.* The launched browser (and any later child: crawler browsers, plugins) starts from an
   empty environment plus an allowlist (`PATH`, `HOME`, display and `XDG_*` variables and similar), so
   `BOSUN_DATA_KEY` never reaches a process that loads hostile pages. Every spawn goes through
   `child::clean_command`.
 - *Secrets in responses.* API responses are `Cache-Control: no-store`; tokens are stored only as SHA-256 hashes
-  and shown once; password hashes never leave the account database.
+  and shown once; password hashes never leave the account database. TOTP secrets are sealed with the data key
+  (ChaCha20-Poly1305, bound to the user id) before they reach the account database, and shown once at enrolment;
+  recovery codes are stored only as hashes. Someone who holds both the account database and the data key can read
+  the secrets, as with the CA key.
+- *Reports (`bosun-report`).* A report carries target content (URLs, evidence excerpts), so each format escapes it
+  for its own syntax, and secrets (URL credentials, `Authorization`, cookies, bearer tokens, JWTs, `password=`-style
+  pairs) are redacted unless the caller opts out. The HTML report has no script, no links and no external loads,
+  and a CSP of `default-src 'none'` plus the hash of its own stylesheet, in a `<meta>` and as the header to serve it
+  under (`html_csp`); it is never rendered in the UI's origin. Redaction is pattern-based and best effort: a secret
+  with an unusual name can survive, so treat a report as sensitive. `GET /issues/report` needs the viewer role; keeping secrets (`redact=0`) needs the tester role and is audited
+  (`issues.report`). The response is always an attachment, `nosniff`, with `sandbox` plus the report's own CSP (the
+  API's CSP layer keeps a handler's stricter policy), and the UI saves it as a file instead of showing it. A
+  Playwright test opens a saved report and checks that no script exists and nothing is requested. `bosun report
+  --input` renders a file offline.
+- *Issue tracker export (WP-85).* `GET /issues/{id}/tracker` prepares one issue (title, Markdown body, the
+  create-issue JSON for GitHub, Jira or Linear) for the user to copy or post by hand. Bosun makes no request to any
+  tracker, so there is no tracker credential, destination or outbound path to guard; the vault-backed push in the
+  roadmap is not built. Because the text leaves Bosun, the endpoint needs the tester role, redacts secrets by
+  default (the same redaction as reports; `redact=0` keeps them), and every export is audited
+  (`issues.tracker_export`). Content goes into JSON string fields and Markdown that is escaped and fenced, never
+  rendered in the UI's origin.
 - *An open proxy.* The proxy refuses to start on a non-loopback address without proxy authentication or a
-  client allowlist.
+  client allowlist. The same check applies to every listener added while running (`POST /proxy/listeners`), so an
+  admin cannot open one by mistake; each listener has its own credentials and allowlist, and a listener's
+  credentials are never returned by the API or written to the audit log. Added listeners (with their passwords) are
+  kept in the account database, the passwords sealed with the data key, so they come back after a restart.
 
 ### Denial of service
 
@@ -183,7 +326,9 @@ This document says what is protected, from whom, and how. Code comments refer ba
   cap, new connections are closed at once and existing ones keep working. Keep the caps well under half the
   process's open-file limit: a proxied connection also holds an upstream socket. Refused proxy connections are
   counted (`connections_refused` in `/proxy` stats): they never become flows, so a load test that opens more than
-  the cap will see fewer flows in History than requests sent.
+  the cap will see fewer flows in History than requests sent. Each proxy listener may also set `max_connections`
+  (changed live, audited with the other listener options): past it that listener closes new connections, so one
+  exposed listener cannot use up the shared cap; refusals there are not counted in `connections_refused`.
 - *History queries.* The query language (`docs/query-language.md`) is parsed in Rust and compiled to an SQL
   condition that uses bound parameters only: no query text is ever part of the statement. Length, term count and
   nesting are capped, a query that runs over five seconds is interrupted, and the result size is capped like any
@@ -199,15 +344,72 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - *Organizer and tags.* Notes, tags and the status of kept requests are text a tester wrote; they are shown as text.
   Bulk tag changes and the Organizer need the tester role, are capped (5,000 flows per call, 32 tags of 64 characters),
   and are not audited because they change no scope, rule, account or token.
+- *Passive scanner (`bosun-scan`).* A hostile target controls every byte the scanner reads. The rules only read
+  recorded flows: they send nothing, so they need no scope-gate check. They cap what they read (1 MiB of a body, 256
+  headers, no compressed bodies), copy only short, truncated strings into an issue (the cookie name, a header value of
+  at most 120 characters, the path without its query string, so tokens in URLs are not copied), and run behind
+  `catch_unwind` so a rule bug skips one flow instead of stopping the scanner. Issues are capped at 50,000 per project
+  (past that only the counts of known issues grow), and the queue is a mark on each flow in the project file, so a flood
+  of traffic cannot grow memory: the scanner works through it in batches of 32 on its own thread and pauses between
+  batches so the recorder's writes are not starved. The UI shows an issue's text and the matched excerpt only as text
+  (`<mark>` around the range, never `{@html}`). Reading issues needs the viewer role; changing a status and starting a
+  rescan need the tester role and are audited (`issue.status`, `issues.rescan`).
+- *Check language and passive checks (`bosun-checks`).* A check is data from a file or an import, so it is untrusted
+  like the traffic it runs on. The loader (`lang::parse`, `nuclei::import`) reads at most 256 KiB, refuses unknown
+  fields, wrong versions and anything past fixed caps (32 matchers, 64 patterns each, 8 requests, 16 paths), builds
+  regexes with the `regex` crate (linear time, 1 MiB size limit) and lets a YAML document expand only as far as the
+  parser's alias budget allows. A check cannot run code, and a request path must start with `{{BaseURL}}` or `/`, so a
+  check cannot send a request to another host; the variables are a fixed list and an unknown one is an error. Nuclei
+  features that would change what a check means (raw requests, payloads, `dsl`, flows, other protocols) are refused by
+  name, not dropped. Matching reads a body only when it is stored uncompressed, up to 1 MiB, and a part that cannot be
+  read never matches (negative matchers included). Findings copy only short strings (hosts of mixed-content URLs, claim
+  names of a JWT, library versions, extracted values cut at 120 characters), never a token, a password or a query
+  string. The loader is fuzzed (`check_language`). The code checks run behind the scanner's `catch_unwind`. Active
+  checks, once the scan engine sends them (WP-54), go through the scope gate like every other tool.
+- *Custom checks (WP-50).* A project can store its own passive checks (`/checks`, table `checks`). The text goes
+  through the same loader and caps as above before it is stored (256 KiB, 200 checks per project, a `passive` section
+  required, ids of built-in rules refused) and is compiled again when the scanner loads it, so a file edited by hand
+  gets the same validation; a check that no longer loads is skipped and logged. A custom check is data: it cannot send
+  a request or run code, and it only reads recorded flows, so it needs no scope-gate check. Reading needs the viewer
+  role; validating, adding, replacing, switching and deleting need the tester role and are audited (`check.add`,
+  `check.update`, `check.enable`, `check.delete`). The UI shows the YAML only in a textarea and the loader's message as
+  text. What a check extracts is cut at 120 characters like a built-in's.
+  The `jwt-weak-secret` check verifies a token's HMAC against a short fixed list of common secrets (no cracking, no network); it reports that the secret is on the list but never copies the secret or the token into the issue.
 - Held intercept items are released if the client goes away, and interception always starts off after a restart.
+
+- *Hostile import files (WP-60).* `POST /import` reads OpenAPI/Swagger (JSON or YAML), GraphQL introspection,
+  Postman, HAR, URL lists and Burp XML, all attacker-controlled when the file comes from a target or a third
+  party. Input is capped at 32 MiB, at most 2000 requests come out of one import, bodies are cut at 1 MiB, and
+  JSON/XML nesting is limited. YAML anchors and aliases are refused before parsing (no alias expansion, so no
+  "billion laughs"); the XML reader never resolves entities: a DOCTYPE that declares one is refused, and so is any
+  reference beyond the five predefined and numeric ones (no XXE, no entity expansion). `$ref` is followed only
+  inside the same document and to a bounded depth; nothing is fetched. Every parser has a fuzz target
+  (`import_formats`). The UI's Import panel shows the pasted text, the hosts and the request lines only as text
+  (never as HTML) and previews with a dry run first; the hosts are listed so the scope can be checked before a tab
+  is sent, which still passes `Gate::check`.
 
 ### Elevation of privilege
 
-- Roles: viewer (read), tester (change proxy settings, scope, intercept), admin (accounts, audit). Every handler
-  checks the role it needs. API tokens carry their owner's role.
+- Roles: viewer (read), tester (change scope, rules, intercept), admin (accounts, audit, proxy listeners and live
+  proxy settings: they decide who can reach the proxy and how much it holds). Every handler checks the role it
+  needs. API tokens carry their owner's role. Settings that cannot change safely while running (upstream proxy,
+  upstream TLS verification, memory budget, intercept queue limits, the configured address) are refused with 409
+  rather than half applied; removing a listener leaves connections it already accepted to finish.
 - *Out-of-scope traffic from tools.* Every request from Repeater, Intruder, the scanner, the crawler and plugins
   goes through one gate (`bosun-scope`) that refuses out-of-scope targets and honours a global stop switch. The
   proxy itself is exempt: it forwards what the user's own browser asks for.
+- *Imports send nothing of their own.* The importers only produce request definitions; they open no connection
+  (not even to fetch a `$ref` or a server URL). The one fetch is explicit: a GraphQL import with `introspection_url`
+  POSTs the standard introspection query to that URL through the Repeater's engine, so the scope gate (scope, kill
+  switch, rate limit, protected networks, the Repeater's out-of-scope setting) decides first; an out-of-scope
+  endpoint gets 403 and no connection. The answer is parsed like a pasted file, never rendered, and the import is
+  audited with the URL. HAR and Burp responses are stored as flows (source `import`) only when `store_responses` is
+  set: they are target-controlled bytes like any recorded response, shown only in the sandboxed viewers, and nothing
+  is sent. Items are saved as Repeater tabs, and a tab is sent
+  only when a tester sends it, through the same scope gate as any Repeater request. Imported items are validated
+  (absolute http/https URL, method token, no control characters in header names or values, framing headers
+  dropped) so a crafted file cannot smuggle a second request or header. The reply lists the hosts involved so the
+  scope can be checked first. The import needs the tester role and writes an audit entry (`import.requests`).
 - *A scoped name pointed at the machine Bosun runs on (SSRF, DNS rebinding).* The gate resolves the name itself and
   returns the addresses the tool must connect to; tools never resolve again. It refuses loopback, link-local (which
   includes `169.254.169.254` and the IPv6 metadata address), unspecified and multicast addresses, IPv4-mapped IPv6
@@ -250,11 +452,29 @@ This document says what is protected, from whom, and how. Code comments refer ba
   capped (very different large inputs are reported coarsely) and the work runs off the async threads. The codecs are
   in `bosun-codec` (no I/O), covered by property tests and the `codec` fuzz target. Output is data for display as text;
   the UI never renders it as HTML.
+- *`bosun decode`.* The Decoder's chain on stdin or a file, in the user's own process: no engine, no network, no
+  account. Input and every step's output are capped (`--limit`, 16 MiB by default), so a decompression bomb ends the
+  chain with exit code 2. MD5 and SHA-1 are offered to match what targets compute, not for anything Bosun protects.
+- *The host analysis (`/analysis`).* Read-only on stored requests, so the viewer role is enough; it sends nothing
+  and writes nothing, so it needs no gate check or audit entry. Cost is bounded: at most 20,000 requests are read,
+  a request body only up to 64 KiB, and the result holds at most 5,000 endpoints and 5,000 parameters with a few
+  short example values each. The work runs off the async threads. Every name, path and value in the result is the
+  target's text; the UI shows it as text only, and a link back to the history only fills the filter bar.
 - *The client commands (`bosun login`, `status`, `repeater send`).* They are clients of the API like any other: the
   server checks the role, the scope gate, the audit and the recording, so the CLI adds no way around them. `login` reads
   the password from stdin, makes a 90-day API token and signs the session out again; the token is kept in
   `profiles.json` in the client directory, created readable by its owner only (0600 on Unix; Windows relies on the
-  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. An OS keychain is not used yet.
+  profile folder's ACL). A token in the environment (`BOSUN_TOKEN`) wins over the file. Where the OS has a keychain (Windows Credential Manager, macOS Keychain, the Secret Service on Linux) `bosun login` keeps the token there instead and the file holds only the server address; with no keychain it falls back to the file, with a note. `BOSUN_KEYCHAIN=off` forces the file.
+- *The local admin commands (`bosun project`, `token`, `user role|delete|sessions`, `audit`).* They work on the data
+  directory directly, so they are as trusted as the account that can read it: whoever can run them can already read the
+  data key, the account database and every project. They add no remote surface. They write the same audit entries as
+  the API (account, role, session, token and project changes; imports that were refused), with no user name and
+  "via CLI" in the detail, and a project that a running engine holds is refused (exit 3) instead of being opened a
+  second time, by the same lock the engine uses. Deleting a project or an account asks for the name to be typed, or
+  `--yes` when there is no terminal; the last admin can neither be demoted nor deleted. `token create` prints the
+  token once on stdout (only its hash is stored), so keep it out of shared logs. Imports use the same rebuild as the
+  API (`import_foreign`), never opening the file in place. `serve --no-ui` runs the proxy and recorder without the
+  UI/API listener or accounts. A password typed at a terminal is not echoed.
 - *The Repeater API (`/repeater/send`, `/repeater/ws`, `/repeater/settings`).* Sending needs the tester role; reading the setting,
   the viewer role. Every send goes through the gate with the Repeater's policy: out-of-scope targets are refused
   unless the setting is on, and the setting starts off, is not stored in the project, goes back off whenever a
@@ -266,6 +486,91 @@ This document says what is protected, from whom, and how. Code comments refer ba
   stored as the flow's messages. A connection lasts one call and is closed before it returns. Tabs are saved in the project (`/repeater/tabs`, viewer to read, tester to write: at most 100 tabs and 8 MiB,
   each an object; responses are not stored). A request can hold credentials, but so does every flow in the same file,
   and the project file is already the place those live, with its permissions, export and backup rules.
+- *The Sequencer API (`/sequencer/analyze`, `/sequencer/capture`, `/sequencer/capture/{id}`, `.../stop`).* The
+  analysis is pure computation on strings (`bosun-sequencer`, no I/O): viewer role, at most 10,000 tokens of 1,024
+  characters and 4 MiB in all, FIPS blocks capped at eight, run off the async threads, covered by property tests and
+  the `sequencer` fuzz target (which also feeds the token extractor hostile responses and patterns). A live capture
+  needs the tester role and is a series of requests sent by the Repeater's engine, so each one goes through the
+  gate with the Repeater's policy (scope, kill switch, per-host rate limit: a rate-limit refusal is waited out a
+  second at a time, any other refusal ends the capture as failed), is recorded as a flow with source `repeater`,
+  and the capture is audited (target, count) as is its stop. The number of requests is capped (5,000), so is the
+  request (1 MiB) and the pause (10 s); at most two captures run at once and eight are kept in memory (not in the
+  project; they are gone on restart); a stop switch ends one after the request in flight, and ten failures in a row
+  end it. A body pattern is a regular expression run by the `regex` crate (no backtracking; 512 characters, compiled
+  size capped) over the response, and an extracted token is cut at 1,024 characters. Tokens are session secrets: they
+  stay in the server's memory and the page, are not written to the project, and are exported only when the user
+  saves the result (which holds per-position statistics, not the tokens).
+- *The Intruder API (`/intruder/*`).* Planning, starting, stopping and deleting an attack need the tester role;
+  listing attacks and reading results, the viewer role. Every request goes through the gate as source `intruder`
+  (an automated source), with no out-of-scope setting at all: a target outside the scope fails the attack at its first
+  request. The per-host rate limit applies on top of the attack's own concurrency (1 to 64) and delay; a request the
+  limit holds back is retried for up to 60 seconds, never dropped, and the kill switch ends the attack as stopped.
+  Starting, stopping and deleting an attack are audited (target, type, request count), and each request sent is
+  recorded as a flow with source `intruder`. An attack is bounded before it starts: at most 1,000,000 requests, 20
+  positions, 200,000 list items, a 1 MiB request and 64 KiB per payload, and at most 3 running at once; payload and
+  grep patterns are regular expressions run by the `regex` crate (linear time), and brute-force and number
+  sources are generated by index, so a large set costs no memory. Stopping drops the requests in flight; changing
+  or closing the project stops every attack first, and an attack found running when a project is opened is marked
+  interrupted. Results (payloads, status, length, time and grep values from the response) are kept in the project
+  file, a row at a time, so they hold what the target sent back and are shown only as text in the UI; a CSV export
+  puts a quote before any cell that a spreadsheet would run as a formula. Payload lists loaded from a file are read
+  in the browser and sent as text. The request template and payload sets parser has a fuzz target (`intruder_plan`).
+- *`bosun scan` (CI).* It is a client of the `/crawl/*` and `/scan/*` API, so the gate, the roles and the audit log
+  apply as for the UI. Without `--server` it runs its own engine on loopback ports in a fresh data directory (mode
+  0700, removed at the end) with a single-use login ticket, so nothing else can sign in to it. It puts only the
+  target URL's host and port (and `--also-scope` hosts) in the scope; `allow_private` is set only by
+  `--allow-private`, so a public name that resolves to a local address is still refused. Against a remote engine it
+  adds that one rule to the existing scope and removes nothing. Imported requests and crawled links are untrusted:
+  the ones outside the scope are refused by the gate and never sent. `POST` forms are scanned only with
+  `--post-forms`. Findings and SARIF are written as text; the exit code comes from the severities of the findings.
+- *The spider (`bosun-crawl`, API `/crawl/*`, `bosun crawl run`, the Spider panel).* Every request, `robots.txt` and sitemaps
+  included, goes through `Engine::send` and so through the gate as source `crawler` (an automated source: out of
+  scope is refused, never prompted). Links are also checked against the scope before they are queued, so an
+  out-of-scope link is listed in the report and not requested; the gate stays the guarantee. Redirects are not
+  followed by the engine: a `Location` is a link like the others, so every hop is checked. The target's pages decide
+  what gets requested, so the crawl is bounded: depth, a page limit (at most 1,000,000), a concurrency of 1 to 32,
+  a response cap per page, only `http` and `https` links, and the per-host rate limit is waited out (up to 60
+  seconds a request) and never bypassed; the kill switch ends the crawl. `POST` forms are listed and not sent unless
+  the tester turns that on, since a form can change data; `GET` forms are sent with the values the page gives
+  them. `robots.txt` is obeyed by default (what it hides is still listed) and its patterns are matched in linear
+  time. The HTML, robots and sitemap readers take untrusted input and have a fuzz target (`crawl_html`). Extra
+  headers (such as a session cookie) are refused if they hold a line break. The API: starting and stopping a crawl
+  need the tester role, listing and reading results the viewer role; start and stop are audited (start URLs, depth,
+  page limit, and whether `POST` forms were on). The API caps `max_pages` at 20,000, runs at most 2 crawls at once and
+  keeps the last 8 in memory only (nothing is added to the project file); the pages it fetched are recorded as flows
+  with source `crawler`, which is how they reach the history and the site map. Page rows, forms and links are
+  target content and are shown only as text in the UI. `POST` forms are sent only when the request sets
+  `submit_post_forms` (an explicit checkbox in the panel, a flag in the CLI).
+- *The active scanner (`bosun-active`, API `/scan/*`).* It sends attack probes (a quote, a marker with HTML
+  metacharacters), so starting, pausing, resuming and stopping a scan need the tester role (listing and reading
+  results, the viewer role) and each is audited (target count, strength, request cap). Every request goes through
+  `Engine::send` and so through the gate as source `scanner` (an automated source: out of scope is refused, never
+  prompted; the target is listed in `refused` and not contacted again). The per-host rate limit is waited out
+  (up to 60 seconds a request) and never bypassed; the kill switch ends the scan. The scan is bounded: at most 2,000
+  targets, 40 insertion points per target, a concurrency of 1 to 32, a request cap (default 5,000, at most 200,000)
+  and a response cap; the API runs at most 2 scans at once and keeps the last 8 in memory. Pause holds every
+  request that has not started. Targets, cookie values and headers are checked for line breaks, so a target cannot
+  smuggle a header; probe values are percent-encoded in the query, form and path. The built-in checks prove a finding from the answer (a database error that a doubled quote does not repeat; the
+  marker returned unescaped in an HTML page; a computed number, a delay that a sleep of zero does not cause, a
+  system file, a header only the probe could have named, an origin or host of the scanner's own choosing coming
+  back). Probes are a quote, a marker, template and shell arithmetic, short sleeps (2 seconds, at most a few
+  per insertion point), dot-dot paths, and `Origin`, `Host` and `X-Forwarded-Host` headers; none runs a command of
+  the scanner's choosing, and the hosts it plants end in `.invalid`. Redirects are read, never followed. A line break
+  is sent only in query, form and path values, never in a cookie or request header. The check that saves data in
+  the target (stored XSS and file upload, flagged `destructive` in `/scan/checks`) is off unless a scan names it in
+  `checks`; the upload sends one text file named with a script extension and nothing else. The other core checks
+  (XXE, JWT, deserialization, prototype pollution, GraphQL, session cookies, TLS) stay in-band: XXE asks for a
+  system file or a missing one, never an outside host; JWT forging and weak-secret guessing use only tokens the
+  request already carries (the guess runs offline, a forged token is sent only to the URL it came from);
+  deserialization probes are cut-off objects that cannot run code; GraphQL probes read `__typename`, the schema and
+  25 aliases of `__typename`; prototype pollution sets one inert property with a random name, which stays in the
+  target until it restarts. The TLS check sends bare ClientHello messages (no key exchange) and one ordinary
+  handshake that accepts any certificate to read it; both go through `Gate::check` as source `scanner` and count
+  against the request cap. Findings of these checks carry a point of their own (`jwt:alg-none`, `tls:rc4`) so that
+  separate weaknesses of one URL stay separate issues. Findings become issues with the proving flow attached; the target's
+  answers are target content and appear only as text. The target parser (URL, query, form, JSON) has a fuzz
+  target (`active_targets`). The testbed (`bosun-testbed`) is intentionally vulnerable: it listens on loopback
+  only by default, holds no data and is a test dependency, never part of the shipped binary.
 - *Target content served by the API.* The body endpoints return raw stored bytes as `application/octet-stream`
   with `Content-Disposition: attachment` and `nosniff`, so a browser never interprets them in the UI's origin;
   the UI shows them as text or in the sandboxed render frame. Reads are streamed with an enforced size, so a
@@ -282,3 +587,15 @@ This document says what is protected, from whom, and how. Code comments refer ba
 - An attacker who already controls the machine, the data directory or the data key.
 - Weaknesses of the targets themselves (finding those is the point).
 - A CA installed system-wide by the user despite the warnings.
+- *gRPC, Protobuf and GraphQL views and rules (WP-79).* The decoders (`bosun_codec::proto`, `bosun_codec::graphql`) read
+  bytes from target traffic: protobuf nesting is capped at 24 levels, every output is capped by the caller's limit, a
+  gRPC frame length that runs past the body is an error, and no step allocates from a length it has not checked. They
+  are pure functions, with property tests and the `grpc_graphql` fuzz target. The GraphQL scanner is not a parser: it
+  skips strings and comments and counts brackets, so a keyword inside a string never names an operation. A match rule
+  with an operation name fires only when the body names that operation; it adds no new reach, since rules already
+  rewrite any body. Decoded text is shown as text in the viewer, never as markup.
+  The `.proto` schema is untrusted text too (it can be pasted from anywhere): `bosun_codec::schema` reads it with a size
+  cap (256 KiB), caps on messages, fields and nesting, and no recursion without that cap; it never opens a file,
+  follows an `import` or runs anything. `POST /decoder/apply` parses a schema only in memory, per request, off the
+  async threads. Compressed gRPC messages are unpacked with the caller's output limit, like the Decoder's other
+  decompressors, so a bomb is refused. `PUT /proto/schema` needs the tester role and is audited.

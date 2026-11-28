@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use bosun_codec::{DiffLevel, DiffResult, Op};
+use bosun_codec::{DiffLevel, DiffResult, Op, Schema};
 use bosun_store::Role;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -46,6 +46,19 @@ pub struct DecodeBody {
     pub input: String,
     /// The steps to run, in order.
     pub ops: Vec<Op>,
+    /// A `.proto` schema (up to 256 KiB) for the protobuf and gRPC steps, so they show field names and types.
+    #[serde(default)]
+    pub schema: Option<String>,
+    /// The message the schema describes (its full name, or a short one that is unique).
+    #[serde(default)]
+    pub message: Option<String>,
+    /// Instead of `message`: a gRPC call's path (`/package.Service/Method`), which names the request and response
+    /// messages in the schema.
+    #[serde(default)]
+    pub rpc: Option<String>,
+    /// With `rpc`: use the call's response message (default: its request).
+    #[serde(default)]
+    pub response: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -97,19 +110,40 @@ pub async fn decode(caller: Caller, Json(b): Json<DecodeBody>) -> R {
     }
     let input = decode_input(&b.input, MAX_INPUT)?;
     let ops = b.ops;
+    // Reading the schema is bounded work, but it is still done off the async threads.
+    let (schema, message, rpc, response) = (b.schema, b.message, b.rpc, b.response);
     let reply = tokio::task::spawn_blocking(move || {
-        let (outs, err) = bosun_codec::apply_chain(&ops, &input, MAX_INPUT);
+        let schema = match schema.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(src) => Some(Schema::parse(src).map_err(|e| format!("the schema: {e}"))?),
+            None => None,
+        };
+        let typed = match (
+            &schema,
+            message.as_deref().filter(|m| !m.trim().is_empty()),
+            rpc.as_deref(),
+        ) {
+            (None, ..) => None,
+            (Some(s), Some(m), _) => Some(
+                s.typed(m)
+                    .ok_or_else(|| format!("the schema has no message `{m}`"))?,
+            ),
+            // A call the schema does not describe is decoded without names.
+            (Some(s), None, Some(path)) => s.rpc(path).map(|(req, resp)| if response { resp } else { req }),
+            (Some(_), None, None) => None,
+        };
+        let (outs, err) = bosun_codec::apply_chain_with(&ops, &input, MAX_INPUT, typed);
         let pairs: Vec<(Op, Vec<u8>)> = ops.iter().copied().zip(outs).collect();
-        DecodeReply {
+        Ok::<_, String>(DecodeReply {
             steps: steps_out(pairs),
             error: err.map(|(step, e)| StepError {
                 step,
                 message: e.to_string(),
             }),
-        }
+        })
     })
     .await
-    .map_err(|_| reject(StatusCode::INTERNAL_SERVER_ERROR, "the decoder failed"))?;
+    .map_err(|_| reject(StatusCode::INTERNAL_SERVER_ERROR, "the decoder failed"))?
+    .map_err(|m| reject(StatusCode::BAD_REQUEST, &m))?;
     Ok(Json(reply).into_response())
 }
 

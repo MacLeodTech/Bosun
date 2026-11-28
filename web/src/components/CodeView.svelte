@@ -9,7 +9,9 @@
   import { searchHistory } from '../lib/flowactions';
   import { toasts } from '../lib/toasts.svelte';
 
-  let { lines, label, wrap = true }: { lines: Line[]; label: string; wrap?: boolean } = $props();
+  import type { Mark } from '../lib/evidence';
+
+  let { lines, label, wrap = true, marks = [] }: { lines: Line[]; label: string; wrap?: boolean; marks?: Mark[] } = $props();
 
   const ROW = 18;
   const OVERSCAN = 20;
@@ -50,12 +52,21 @@
   });
   const byLine = $derived.by(() => {
     const m = new Map<number, { h: Hit; i: number }[]>();
-    hits.forEach((h, i) => {
+    const add = (h: Hit, i: number) => {
       const a = m.get(h.line);
       if (a) a.push({ h, i });
       else m.set(h.line, [{ h, i }]);
-    });
+    };
+    // Scanner evidence is index -1: drawn as a mark, not a search match.
+    marks.forEach((h) => add(h, -1));
+    hits.forEach((h, i) => add(h, i));
+    for (const a of m.values()) a.sort((x, y) => x.h.from - y.h.from);
     return m;
+  });
+  // Bring the first piece of evidence into view when a message is shown with some.
+  $effect(() => {
+    const first = marks[0];
+    if (first && scroller) void reveal(first.line);
   });
   $effect(() => {
     // A new query starts from the first match.
@@ -63,7 +74,7 @@
     cur = 0;
   });
 
-  interface Seg { t: string; c: string; hit: 0 | 1 | 2 }
+  interface Seg { t: string; c: string; hit: 0 | 1 | 2 | 3 }
   /** A line's tokens, split where search matches begin and end (1 = a match, 2 = the current match). */
   function segs(line: Line, idx: number): Seg[] {
     const ranges = byLine.get(idx);
@@ -75,10 +86,12 @@
       const end = pos + tk.t.length;
       for (const { h, i } of ranges) {
         if (h.to <= pos || h.from >= end) continue;
-        const s = Math.max(h.from, pos) - pos;
+        // Ranges are in order; one that overlaps an earlier one starts where that one ended.
+        const s = Math.max(h.from - pos, a, 0);
         const e = Math.min(h.to, end) - pos;
+        if (e <= s) continue;
         if (s > a) out.push({ t: tk.t.slice(a, s), c: tk.c, hit: 0 });
-        out.push({ t: tk.t.slice(s, e), c: tk.c, hit: i === cur ? 2 : 1 });
+        out.push({ t: tk.t.slice(s, e), c: tk.c, hit: i < 0 ? 3 : i === cur ? 2 : 1 });
         a = e;
       }
       if (a < tk.t.length) out.push({ t: tk.t.slice(a), c: tk.c, hit: 0 });
@@ -186,7 +199,7 @@
           {@const n = first + i}
           <div class="ln-row" data-line={n}>
             <span class="ln" aria-hidden="true">{n + 1}</span>
-            <span class="txt">{#each segs(line, n) as s, k (k)}<span class="sx-{s.c || 'none'}" class:hit={s.hit > 0} class:cur={s.hit === 2}>{s.t}</span>{/each}</span>
+            <span class="txt">{#each segs(line, n) as s, k (k)}<span class="sx-{s.c || 'none'}" class:hit={s.hit === 1 || s.hit === 2} class:cur={s.hit === 2} class:ev={s.hit === 3}>{s.t}</span>{/each}</span>
           </div>
         {/each}
       </div>
@@ -213,5 +226,6 @@
   .sx-hvalue { color: var(--sx-hvalue); } .sx-tag { color: var(--sx-tag); } .sx-attr { color: var(--sx-attr); }
   .sx-comment { color: var(--sx-comment); font-style: italic; }
   .hit { background: color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 2px; }
+  .ev { background: color-mix(in srgb, var(--bad) 30%, transparent); border-radius: 2px; outline: 1px solid var(--bad); }
   .hit.cur { background: color-mix(in srgb, var(--accent) 60%, transparent); outline: 1px solid var(--accent); }
 </style>

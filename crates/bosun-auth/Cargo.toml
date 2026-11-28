@@ -1,0 +1,25 @@
+[package]
+name = "bosun-auth"
+description = "Authentication and authorisation testing: the multi-account access matrix (IDOR and broken access control) and session handling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-http.workspace = true
+regex.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+utoipa.workspace = true
+
+[dev-dependencies]
+bosun-proxy.workspace = true
+bosun-scope.workspace = true
+bosun-testbed = { path = "../bosun-testbed" }
+
+[lints]
+workspace = true

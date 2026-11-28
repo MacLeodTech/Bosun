@@ -17,6 +17,7 @@ fn project() -> &'static Mutex<Project> {
             source: FlowSource::Proxy,
             started_ms: 1,
             duration_ms: Some(1),
+            ttfb_ms: None,
             scheme: Scheme::Https,
             host: "a.test".into(),
             port: 443,

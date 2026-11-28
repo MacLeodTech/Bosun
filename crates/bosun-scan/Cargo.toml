@@ -1,0 +1,20 @@
+[package]
+name = "bosun-scan"
+description = "The passive scanner: rules that read recorded flows and report issues, and the thread that feeds them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bosun-model.workspace = true
+bosun-store.workspace = true
+bosun-checks.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

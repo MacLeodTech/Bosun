@@ -32,5 +32,7 @@ USER 65532:65532
 VOLUME ["/data"]
 # 8080 proxy, 8090 web UI/API.
 EXPOSE 8080 8090
+# Podman keeps HEALTHCHECK only in Docker-format images; compose and Quadlet can set it too.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/usr/local/bin/bosun", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/bosun"]
 CMD ["serve"]

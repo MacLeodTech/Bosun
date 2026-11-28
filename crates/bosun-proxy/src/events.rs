@@ -45,6 +45,74 @@ pub enum ProxyEvent {
         name: Option<String>,
         temporary: bool,
     },
+    /// The passive scanner found something, or caught up with the history: look at the issues again.
+    IssuesChanged,
+    /// An Intruder attack started, moved on or ended.
+    IntruderState {
+        attack_id: i64,
+        /// `running`, `completed`, `stopped`, `failed` or `interrupted`.
+        state: String,
+        total: u64,
+        done: u64,
+        skipped: u64,
+        errors: u64,
+        error: Option<String>,
+    },
+    /// A crawl was accepted and is running.
+    CrawlStarted {
+        id: u64,
+        start: Vec<String>,
+    },
+    /// A running crawl has more pages (sent at most a few times a second). Fetch `/crawl/crawls/{id}?from=N`.
+    CrawlProgress {
+        id: u64,
+        pages: u64,
+        requests: u64,
+    },
+    /// A crawl ended: `state` is `done`, `stopped` or `failed`.
+    CrawlDone {
+        id: u64,
+        state: String,
+        pages: u64,
+        requests: u64,
+        error: Option<String>,
+    },
+    /// An active scan was accepted and is running.
+    ScanStarted {
+        id: u64,
+        targets: u64,
+    },
+    /// A running active scan moved on (sent at most four times a second). Fetch `/scan/scans/{id}`.
+    ScanProgress {
+        id: u64,
+        units_done: u64,
+        units_total: u64,
+        requests: u64,
+        findings: u64,
+    },
+    /// An active scan ended: `state` is `done`, `stopped` or `failed`.
+    ScanDone {
+        id: u64,
+        state: String,
+        requests: u64,
+        findings: u64,
+        error: Option<String>,
+    },
+    /// One request of an Intruder attack finished. (The same fields as a stored result.)
+    IntruderResult {
+        attack_id: i64,
+        index: u64,
+        position: Option<u32>,
+        payloads: Vec<String>,
+        status: Option<u16>,
+        length: u64,
+        time_ms: u64,
+        flow_id: Option<i64>,
+        error: Option<String>,
+        matches: Vec<bool>,
+        extracts: Vec<Option<String>>,
+        attempts: u32,
+    },
 }
 
 /// An event with its place in the stream.

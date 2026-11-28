@@ -1,0 +1,26 @@
+version: 1
+id: stack-trace-disclosure
+info:
+  name: Stack trace or debug error in a response
+  severity: low
+  confidence: firm
+  description: The response shows an unhandled error with the code that raised it, which helps an attacker map the application.
+  remediation: Turn off debug output in production and return a generic error page; log the details on the server.
+  cwe: [209]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  tags: [disclosure, debug]
+source:
+  origin: zap
+  id: "Information Disclosure - Debug Error Messages (10023)"
+  license: Apache-2.0
+  notice: Ported in spirit from the ZAP passive rule set, Copyright the ZAP Dev Team, Apache License 2.0.
+passive:
+  matchers:
+    - type: regex
+      part: body
+      regex:
+        - 'Traceback \(most recent call last\)'
+        - '\bat [A-Za-z_$][\w$.]*\([A-Za-z_$][\w$]*\.java:\d+\)'
+        - '(?:Fatal error|Warning|Parse error): .{1,200} in /[^ <]{1,200} on line \d+'
+        - '\bat System\.[A-Za-z.]+\(.{0,200}\) in [^ ]{1,200}:line \d+'
+        - 'goroutine \d+ \[running\]'

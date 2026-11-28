@@ -17,6 +17,8 @@ pub const RECORD_LIMIT: usize = 1024 * 1024;
 pub struct Frame {
     pub opcode: u8,
     pub fin: bool,
+    /// RSV1: with `permessage-deflate`, the message (this frame being its first) is compressed.
+    pub rsv1: bool,
     pub payload: Vec<u8>,
     pub truncated: bool,
 }
@@ -38,6 +40,7 @@ pub struct FrameParser {
     head: Vec<u8>,
     opcode: u8,
     fin: bool,
+    rsv1: bool,
     payload: Vec<u8>,
     truncated: bool,
     limit: usize,
@@ -50,6 +53,7 @@ impl FrameParser {
             head: Vec::with_capacity(14),
             opcode: 0,
             fin: false,
+            rsv1: false,
             payload: Vec::new(),
             truncated: false,
             limit,
@@ -68,6 +72,7 @@ impl FrameParser {
                         debug_assert_eq!(hlen, self.head.len());
                         self.fin = self.head[0] & 0x80 != 0;
                         self.opcode = self.head[0] & 0x0f;
+                        self.rsv1 = self.head[0] & 0x40 != 0;
                         self.head.clear();
                         self.payload.clear();
                         self.truncated = false;
@@ -117,8 +122,166 @@ impl FrameParser {
         Frame {
             opcode: self.opcode,
             fin: self.fin,
+            rsv1: self.rsv1,
             payload: std::mem::take(&mut self.payload),
             truncated: self.truncated,
+        }
+    }
+}
+
+/// The `permessage-deflate` parameters a handshake agreed on (RFC 7692).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeflateParams {
+    /// Client-to-server messages start with an empty window.
+    pub client_no_context_takeover: bool,
+    /// Server-to-client messages start with an empty window.
+    pub server_no_context_takeover: bool,
+}
+
+impl DeflateParams {
+    /// Read the server's `Sec-WebSocket-Extensions` response header; `None` unless it accepted
+    /// `permessage-deflate`. Tolerant of any input.
+    pub fn from_header(value: &str) -> Option<Self> {
+        value.split(',').find_map(|ext| {
+            let mut parts = ext.split(';').map(str::trim);
+            if !parts.next()?.eq_ignore_ascii_case("permessage-deflate") {
+                return None;
+            }
+            let mut p = Self {
+                client_no_context_takeover: false,
+                server_no_context_takeover: false,
+            };
+            for param in parts {
+                let name = param.split('=').next().unwrap_or("").trim();
+                if name.eq_ignore_ascii_case("client_no_context_takeover") {
+                    p.client_no_context_takeover = true;
+                } else if name.eq_ignore_ascii_case("server_no_context_takeover") {
+                    p.server_no_context_takeover = true;
+                }
+            }
+            Some(p)
+        })
+    }
+}
+
+/// Inflates the compressed messages of one direction for recording. The relayed bytes are never touched.
+///
+/// A compressed message is recorded once, whole, when its last frame arrives (with the opcode of its first
+/// frame), already inflated. If a message cannot be inflated (corrupt data, or larger than the record limit
+/// once inflated) it is recorded as the raw compressed bytes (or the inflated prefix) and flagged truncated,
+/// and later compressed messages are recorded raw too, since the shared window is lost.
+pub struct Inflater {
+    d: flate2::Decompress,
+    reset_each_message: bool,
+    limit: usize,
+    active: bool,
+    broken: bool,
+    opcode: u8,
+    buf: Vec<u8>,
+    truncated: bool,
+}
+
+impl Inflater {
+    pub fn new(reset_each_message: bool, limit: usize) -> Self {
+        Self {
+            d: flate2::Decompress::new(false),
+            reset_each_message,
+            limit,
+            active: false,
+            broken: false,
+            opcode: 0,
+            buf: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    /// Take a parsed frame; returns the frame to record, if any.
+    pub fn process(&mut self, f: Frame) -> Option<Frame> {
+        if f.opcode >= 8 {
+            return Some(f);
+        }
+        if f.opcode != 0 {
+            self.active = f.rsv1;
+            self.opcode = f.opcode;
+            self.buf.clear();
+            self.truncated = false;
+        }
+        if !self.active {
+            return Some(f);
+        }
+        self.truncated |= f.truncated;
+        let room = self.limit.saturating_sub(self.buf.len());
+        if f.payload.len() > room {
+            self.truncated = true;
+        }
+        self.buf
+            .extend_from_slice(&f.payload[..f.payload.len().min(room)]);
+        if !f.fin {
+            return None;
+        }
+        self.active = false;
+        let raw = std::mem::take(&mut self.buf);
+        let out = if self.broken || self.truncated {
+            // A cut message leaves the window unusable.
+            self.broken = true;
+            None
+        } else {
+            self.inflate(&raw)
+        };
+        if self.reset_each_message {
+            self.d.reset(false);
+        }
+        Some(match out {
+            Some((payload, truncated)) => Frame {
+                opcode: self.opcode,
+                fin: true,
+                rsv1: false,
+                payload,
+                truncated,
+            },
+            None => {
+                self.broken = true;
+                Frame {
+                    opcode: self.opcode,
+                    fin: true,
+                    rsv1: true,
+                    payload: raw,
+                    truncated: true,
+                }
+            }
+        })
+    }
+
+    /// Inflate one message (its trailing `00 00 ff ff` is added here). `None` on corrupt data.
+    fn inflate(&mut self, raw: &[u8]) -> Option<(Vec<u8>, bool)> {
+        let mut input = raw.to_vec();
+        input.extend_from_slice(&[0, 0, 0xff, 0xff]);
+        let mut out: Vec<u8> = Vec::new();
+        let start_in = self.d.total_in();
+        loop {
+            let consumed = ((self.d.total_in() - start_in) as usize).min(input.len());
+            if out.len() >= self.limit {
+                // Larger than we record: keep the first part; the window is out of step now.
+                self.broken = true;
+                return Some((out, true));
+            }
+            out.reserve(8192.min(self.limit - out.len()));
+            let before = (self.d.total_in(), self.d.total_out());
+            let status = self
+                .d
+                .decompress_vec(&input[consumed..], &mut out, flate2::FlushDecompress::Sync)
+                .ok()?;
+            if matches!(status, flate2::Status::StreamEnd) {
+                return Some((out, false));
+            }
+            let consumed = ((self.d.total_in() - start_in) as usize).min(input.len());
+            if consumed >= input.len() && (self.d.total_in(), self.d.total_out()) == before {
+                return Some((out, false));
+            }
+            if consumed >= input.len() && out.len() < out.capacity() {
+                // All input used and the output buffer was not the limiting factor: done.
+                return Some((out, false));
+            }
         }
     }
 }
@@ -160,8 +323,13 @@ fn parse_header(h: &[u8]) -> Option<(u64, Option<[u8; 4]>, usize)> {
 }
 
 /// Relay both directions until either side closes, recording frames.
-pub async fn relay<C, S>(client: C, server: S, flow_id: FlowId, recorder: Recorder)
-where
+pub async fn relay<C, S>(
+    client: C,
+    server: S,
+    flow_id: FlowId,
+    recorder: Recorder,
+    deflate: Option<DeflateParams>,
+) where
     C: AsyncRead + AsyncWrite + Unpin,
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -173,8 +341,16 @@ where
         flow_id,
         Direction::ClientToServer,
         recorder.clone(),
+        deflate.map(|d| Inflater::new(d.client_no_context_takeover, RECORD_LIMIT)),
     );
-    let down = pump(&mut sr, &mut cw, flow_id, Direction::ServerToClient, recorder);
+    let down = pump(
+        &mut sr,
+        &mut cw,
+        flow_id,
+        Direction::ServerToClient,
+        recorder,
+        deflate.map(|d| Inflater::new(d.server_no_context_takeover, RECORD_LIMIT)),
+    );
     // When one direction ends, finish the other too: a WebSocket is over once either side closes.
     tokio::select! {
         _ = up => {}
@@ -182,8 +358,14 @@ where
     }
 }
 
-async fn pump<R, W>(r: &mut R, w: &mut W, flow_id: FlowId, dir: Direction, recorder: Recorder)
-where
+async fn pump<R, W>(
+    r: &mut R,
+    w: &mut W,
+    flow_id: FlowId,
+    dir: Direction,
+    recorder: Recorder,
+    mut inflater: Option<Inflater>,
+) where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
@@ -198,6 +380,13 @@ where
             break;
         }
         for f in parser.feed(&buf[..n]) {
+            let f = match inflater.as_mut() {
+                Some(i) => match i.process(f) {
+                    Some(f) => f,
+                    None => continue,
+                },
+                None => f,
+            };
             recorder.ws(NewWsMessage {
                 flow_id,
                 time_ms: bosun_model::now_ms(),
@@ -263,6 +452,101 @@ mod tests {
         assert!(frames[0].truncated);
     }
 
+    fn deflate(data: &[u8], d: &mut flate2::Compress) -> Vec<u8> {
+        let mut out = Vec::with_capacity(data.len() + 64);
+        d.compress_vec(data, &mut out, flate2::FlushCompress::Sync)
+            .unwrap();
+        assert!(out.ends_with(&[0, 0, 0xff, 0xff]));
+        out.truncate(out.len() - 4);
+        out
+    }
+
+    fn compressed(opcode: u8, fin: bool, payload: Vec<u8>) -> Frame {
+        Frame {
+            opcode,
+            fin,
+            rsv1: opcode != 0,
+            payload,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn parses_extension_header() {
+        let p = DeflateParams::from_header(
+            "permessage-deflate; client_no_context_takeover; server_max_window_bits=10",
+        )
+        .unwrap();
+        assert!(p.client_no_context_takeover && !p.server_no_context_takeover);
+        assert!(DeflateParams::from_header("x-webkit-deflate-frame").is_none());
+        assert!(DeflateParams::from_header("foo, Permessage-Deflate").is_some());
+        assert!(DeflateParams::from_header("").is_none());
+    }
+
+    #[test]
+    fn inflates_messages_sharing_a_window() {
+        let mut c = flate2::Compress::new(flate2::Compression::default(), false);
+        let mut inf = Inflater::new(false, RECORD_LIMIT);
+        for text in ["hello hello hello hello", "hello hello again", ""] {
+            let f = inf
+                .process(compressed(1, true, deflate(text.as_bytes(), &mut c)))
+                .unwrap();
+            assert_eq!(f.payload, text.as_bytes());
+            assert_eq!(f.opcode, 1);
+            assert!(!f.truncated);
+        }
+    }
+
+    #[test]
+    fn inflates_fragmented_messages_and_passes_others_through() {
+        let mut c = flate2::Compress::new(flate2::Compression::default(), false);
+        let mut inf = Inflater::new(true, RECORD_LIMIT);
+        let z = deflate(b"fragmented message body", &mut c);
+        let (a, b) = z.split_at(z.len() / 2);
+        assert!(inf.process(compressed(2, false, a.to_vec())).is_none());
+        let f = inf.process(compressed(0, true, b.to_vec())).unwrap();
+        assert_eq!((f.opcode, &f.payload[..]), (2, &b"fragmented message body"[..]));
+        // A ping between, and an uncompressed message, are recorded as they are.
+        let ping = Frame {
+            opcode: 9,
+            fin: true,
+            rsv1: false,
+            payload: b"p".to_vec(),
+            truncated: false,
+        };
+        assert_eq!(inf.process(ping.clone()), Some(ping));
+        let plain = Frame {
+            opcode: 1,
+            fin: true,
+            rsv1: false,
+            payload: b"plain".to_vec(),
+            truncated: false,
+        };
+        assert_eq!(inf.process(plain.clone()), Some(plain));
+        // No context takeover: each message compresses from an empty window.
+        c.reset();
+        let z = deflate(b"again", &mut c);
+        assert_eq!(inf.process(compressed(1, true, z)).unwrap().payload, b"again");
+    }
+
+    #[test]
+    fn corrupt_and_oversized_messages_are_recorded_flagged() {
+        let mut inf = Inflater::new(false, RECORD_LIMIT);
+        let f = inf.process(compressed(1, true, vec![0xff; 20])).unwrap();
+        assert!(f.truncated && f.rsv1);
+        // A bomb is cut at the limit.
+        let mut c = flate2::Compress::new(flate2::Compression::best(), false);
+        let z = deflate(&vec![0u8; 200_000], &mut c);
+        let mut inf = Inflater::new(false, 1000);
+        let f = inf.process(compressed(1, true, z)).unwrap();
+        assert!(f.truncated);
+        assert!(
+            f.payload.len() >= 1000 && f.payload.len() < 100_000,
+            "{}",
+            f.payload.len()
+        );
+    }
+
     mod properties {
         use super::*;
         use proptest::prelude::*;
@@ -316,6 +600,17 @@ mod tests {
                 prop_assert_eq!(got[0].payload.len(), limit);
                 prop_assert_eq!(&got[1].payload[..], b"n");
                 prop_assert!(!got[1].truncated);
+            }
+
+            /// Arbitrary compressed-looking messages never panic the inflater or exceed its limit.
+            #[test]
+            fn inflater_survives_garbage(msgs in proptest::collection::vec((proptest::collection::vec(any::<u8>(), 0..200), any::<bool>()), 0..6)) {
+                let mut inf = Inflater::new(false, 256);
+                for (p, fin) in msgs {
+                    if let Some(f) = inf.process(compressed(1, fin, p)) {
+                        prop_assert!(f.payload.len() <= 256 + 8192);
+                    }
+                }
             }
 
             /// Random bytes (a hostile peer) never panic the parser and never make it keep more than the limit.

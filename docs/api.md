@@ -28,6 +28,9 @@ Every event has a `seq`. The first message is `{"type":"hello","epoch":"…","se
 connect with `?since=<last seq>&epoch=<epoch>`: missed events are replayed, or `{"type":"reload"}` says to fetch
 the data again.
 
+Active scans send `scan_started`, `scan_progress` (at most four a second) and `scan_done` (`done`, `stopped` or
+`failed`); fetch `/scan/scans/{id}` for the findings. `bosun scan` (see `docs/ci.md`) polls instead.
+
 A new epoch starts when the engine does and whenever the open project changes. A `project_switched` event
 (`{name, temporary}`) means everything held from before is from another project: clients drop it and fetch it
 again (the web UI reloads its pages). A position from an earlier epoch is answered with `reload`.
@@ -48,6 +51,62 @@ which is open). Everyone can list; the rest need the admin role and is audited.
 
 Status codes: 409 (name taken, project open or locked by another process), 422 (not a usable Bosun project, or
 from a newer Bosun), 413 (too large).
+
+## The credential vault
+
+`/vault` holds named secrets (kinds `password`, `token`, `api_key`, `auth_config`, `client_cert_password`, `oast_key`,
+`other`). `GET /vault` (viewer) lists id, name, kind, timestamps and a masked hint; no response ever carries the
+secret. `POST /vault`, `PATCH /vault/{id}` (rename, re-kind, replace the secret) and `DELETE /vault/{id}` need the admin
+role and are audited by name (`vault.create`, `vault.update`, `vault.delete`). Other features refer to an entry by its
+id. 400 (bad name, kind or secret), 404, 409 (name taken, or 500 entries).
+
+## Signed-in scans and crawls
+
+`POST /scan/scans` and `POST /crawl/crawls` take an optional `session`: `login` (`url`, `method` default `POST`, `headers`,
+`body`, `content_type`), `capture` (`{kind: "cookies"}`, `{kind: "body", pattern, header, prefix}` or
+`{kind: "header", from, header, prefix}`) and `expiry` (`statuses`, `redirect_contains`, `body_contains`; default 401 or a
+redirect to a login page). The first request signs in; every request then carries the session's headers, and an answer that
+means the session ended signs in again and repeats the request. The login may name vault entries as `{{vault:ID}}`,
+`{{vault:ID|url}}` (percent-encoded) or `{{vault:ID|json}}` (escaped for a JSON string); they are opened on the server and
+only go into the login request. A failed sign-in ends the scan (state `failed`, with the reason) or stops the crawl, and is
+not tried again, so a wrong password cannot lock the account. At most 25 sign-ins per run. 400 for a missing vault entry,
+a bad pattern or header.
+
+## Content and parameter discovery
+
+`POST /discover/runs` (tester; audited as `discover.start`) tries a wordlist against `base`. Mode `paths` (default)
+requests each word (and each word with every entry of `extensions`) below the directory and probes the directories it
+finds down to `max_depth`; mode `params` sends each name as a parameter (`post: true` puts it in a body). `words` empty
+means the built-in list. Before probing, random names are requested to learn what "not found" looks like: a site that
+answers 200 to everything gives no hits, and many hits with the same answer (8 or more) are dropped as a wildcard and
+counted in `noise`. `GET /discover/runs/{id}` lists the `results` (status, size, `note`, `cluster`), the `directories`
+probed and whether `max_requests` cut it short; `POST .../stop` throws the stop switch. Every request goes through the
+scope gate and the per-host rate limit; a refused request ends the run (`failed`, with the reason). Only hits are
+recorded as flows. 400 (bad URL, mode, word or header), 429 (two runs already going).
+
+## Known-vulnerable components
+
+The passive scanner fingerprints servers, frameworks and libraries (`technology-fingerprint`, Info) and matches the
+versions it finds against an offline advisory database (`vulnerable-component`). `GET /advisories` (viewer) says which
+database is in force: `bundled` (a small one that ships with the program) or `feed`. A feed is a JSON file
+(`schema` 1, `sequence`, `generated`, `advisories` with `id`, `product`, `summary`, `severity`, `ranges` of
+`introduced`/`fixed`/`last_affected`, `cwe`, `references`) and a detached Ed25519 signature over its exact bytes.
+`PUT /advisories/trust` (admin) sets the base64 public keys that may sign one (at most 5); `POST /advisories/feed`
+(admin) takes `{feed, signature, rescan}` (the feed as text; at most about 2 MiB over the API) and loads it only when
+the signature verifies under a trusted key and its `sequence` is higher than the database in force (422: no key or
+no match; 409: not newer; 400: not a valid feed). A loaded feed replaces the built-in advisories, and by default the
+recorded traffic is scanned again. `DELETE /advisories/feed` goes back to the built-in ones. `bosun advisory keygen
+<file>` and `bosun advisory sign <key> <feed>` make the keys and the signature.
+
+## The authorisation matrix
+
+`POST /auth-matrix` (tester; audited as `authmatrix.run`) replays recorded flows as each given account and as nobody,
+and compares every answer with the owner's. Body: `identities` (name plus `headers`, or `vault` entries naming a
+`vault_id`, the `header` to set and an optional `prefix`), `probes` (`flow_id`, `owner`, `allowed`, `label`) and
+`options`. Up to 20 identities and 200 probes. Vault secrets are opened on the server and never returned or audited.
+Every send goes through the scope gate. The answer has `rows` (one cell per account) and `findings` (broken access
+control, or no login needed). With `save_issues: true` each finding is also saved as an issue (rule `authz-matrix`,
+pointing at the probe's recorded flow, once per account and request), and `issues_saved` counts them. 400 (bad names or headers, missing vault entry), 404 (no such flow).
 
 ## Embedded mode
 

@@ -1,0 +1,22 @@
+version: 1
+id: private-ip-disclosure
+info:
+  name: Private IP address in a response
+  severity: low
+  confidence: tentative
+  description: The response contains an address from a private range, which can reveal the internal network layout.
+  remediation: Remove internal addresses from responses and headers, including those added by proxies and load balancers.
+  cwe: [200]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  tags: [disclosure]
+source:
+  origin: zap
+  id: "Private IP Disclosure (2)"
+  license: Apache-2.0
+  notice: Ported in spirit from the ZAP passive rule set, Copyright the ZAP Dev Team, Apache License 2.0.
+passive:
+  matchers:
+    - type: regex
+      part: all
+      regex:
+        - '(?:^|[^0-9.])(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(?:[^0-9.]|$)'

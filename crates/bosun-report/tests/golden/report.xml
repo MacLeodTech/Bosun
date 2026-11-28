@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bosun" tests="3" failures="2" skipped="1">
+  <testsuite name="bosun issues" tests="3" failures="2" skipped="1">
+    <testcase classname="missing-csp" name="GET https://app.example/">
+      <failure message="No Content-Security-Policy" type="medium">severity: medium
+confidence: firm
+status: new
+remediation: Send a Content-Security-Policy header.
+</failure>
+    </testcase>
+    <testcase classname="cookie-no-httponly" name="GET https://app.example/login?next=/home&amp;token=[redacted]">
+      <failure message="Session cookie without HttpOnly" type="low">severity: low
+confidence: certain
+status: confirmed
+The session cookie can be read by script.
+remediation: Set the HttpOnly attribute.
+evidence (response): HTTP/1.1 200 OK
+Set-Cookie: [redacted]
+Content-Type: text/html
+</failure>
+    </testcase>
+    <testcase classname="server-banner" name="GET https://app.example/status">
+      <skipped message="false positive"/>
+    </testcase>
+  </testsuite>
+</testsuites>

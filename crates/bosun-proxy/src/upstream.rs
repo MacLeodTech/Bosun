@@ -32,9 +32,33 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug, Clone, Default)]
 pub struct LoopGuard {
     inner: Arc<Mutex<HashSet<SocketAddr>>>,
+    /// Our own listeners (the proxy's and the API's): never valid targets. Shared by every connector.
+    selfs: Arc<Mutex<Vec<SocketAddr>>>,
 }
 
 impl LoopGuard {
+    /// Register our own listener addresses.
+    pub fn add_self(&self, addrs: impl IntoIterator<Item = SocketAddr>) {
+        let mut v = self.selfs.lock().unwrap_or_else(|e| e.into_inner());
+        for a in addrs {
+            if !v.contains(&a) {
+                v.push(a);
+            }
+        }
+    }
+
+    /// Is `a` one of our own registered listener addresses?
+    pub fn is_self(&self, a: &SocketAddr) -> bool {
+        self.selfs.lock().unwrap_or_else(|e| e.into_inner()).contains(a)
+    }
+
+    pub fn remove_self(&self, a: &SocketAddr) {
+        self.selfs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|x| x != a);
+    }
+
     fn add(&self, a: SocketAddr) {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).insert(a);
     }
@@ -143,9 +167,11 @@ enum Route {
 #[derive(Clone)]
 pub struct Connector {
     route: Route,
-    tls: TlsConnector,
+    cfg: Arc<ClientConfig>,
+    certs: crate::clientcert::ClientCerts,
     guard: LoopGuard,
-    self_ports: Arc<Vec<SocketAddr>>,
+    /// Lower-cased target host -> server name to send instead.
+    sni: Arc<std::collections::BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for Connector {
@@ -172,6 +198,7 @@ impl Connector {
                 addr,
                 username,
                 password,
+                ..
             }) => {
                 let uri: Uri = format!("http://{addr}")
                     .parse()
@@ -192,6 +219,7 @@ impl Connector {
                 username,
                 password,
                 local_dns,
+                ..
             }) => {
                 let uri: Uri = format!("socks5://{addr}")
                     .parse()
@@ -203,12 +231,46 @@ impl Connector {
                 Route::Socks(s)
             }
         };
+        guard.add_self(self_addrs);
         Ok(Self {
             route,
-            tls: TlsConnector::from(Arc::new(client_tls(verify_tls, alpn_h2))),
+            cfg: Arc::new(client_tls(verify_tls, alpn_h2)),
+            certs: crate::clientcert::ClientCerts::default(),
             guard,
-            self_ports: Arc::new(self_addrs),
+            sni: Arc::default(),
         })
+    }
+
+    /// Present client certificates from this shared registry to the hosts they are configured for.
+    #[must_use]
+    pub fn with_client_certs(mut self, certs: crate::clientcert::ClientCerts) -> Self {
+        self.certs = certs;
+        self
+    }
+
+    pub fn client_certs(&self) -> &crate::clientcert::ClientCerts {
+        &self.certs
+    }
+
+    /// Send a different TLS server name (SNI) to some targets: `host -> name`, hosts matched exactly and
+    /// case-insensitively. The certificate is verified against the name sent, when verification is on.
+    #[must_use]
+    pub fn with_sni_overrides(mut self, map: &std::collections::BTreeMap<String, String>) -> Self {
+        self.sni = Arc::new(
+            map.iter()
+                .map(|(h, n)| (h.to_ascii_lowercase(), n.clone()))
+                .collect(),
+        );
+        self
+    }
+
+    /// The TLS server name to send for `host`: the override if one is set, else the host itself.
+    pub fn sni_for(&self, host: &str) -> String {
+        let bare = host.trim_start_matches('[').trim_end_matches(']');
+        self.sni
+            .get(&bare.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_else(|| bare.to_string())
     }
 
     /// Open a TCP connection to `host:port` the way every outbound connection is opened: the self-target check,
@@ -242,6 +304,7 @@ impl Connector {
 
     /// Cheap pre-check for obvious loops: a loopback/unspecified target on one of our own ports.
     fn targets_self(&self, host: &str, port: u16) -> bool {
+        let selfs = self.guard.selfs.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let host = host.trim_start_matches('[').trim_end_matches(']');
         let local_name =
             host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost");
@@ -249,13 +312,12 @@ impl Connector {
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified());
         (local_name || local_ip)
-            && self
-                .self_ports
+            && selfs
                 .iter()
                 .any(|a| a.port() == port && (a.ip().is_loopback() || a.ip().is_unspecified()))
             || host
                 .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| self.self_ports.iter().any(|a| a.ip() == ip && a.port() == port))
+                .is_ok_and(|ip| selfs.iter().any(|a| a.ip() == ip && a.port() == port))
     }
 }
 
@@ -281,9 +343,15 @@ impl tower_service::Service<Uri> for Connector {
             let port = dst.port_u16().unwrap_or(if https { 443 } else { 80 });
             let (tcp, reg) = this.connect_tcp(&host, port).await?;
             let conn = if https {
-                let name =
-                    ServerName::try_from(host.trim_start_matches('[').trim_end_matches(']').to_string())?;
-                let tls = this.tls.connect(name, tcp).await?;
+                let bare = host.trim_start_matches('[').trim_end_matches(']').to_string();
+                let sni = this
+                    .sni
+                    .get(&bare.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| bare.clone());
+                let name = ServerName::try_from(sni)?;
+                let cfg = this.certs.apply(&bare, this.cfg.clone());
+                let tls = TlsConnector::from(cfg).connect(name, tcp).await?;
                 let h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
                 Conn {
                     io: ConnIo::Tls(Box::new(TokioIo::new(tls))),

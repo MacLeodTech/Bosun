@@ -4,13 +4,23 @@ import History from '../pages/History.svelte';
 import FlowDetail from '../pages/FlowDetail.svelte';
 import Intercept from '../pages/Intercept.svelte';
 import Repeater from '../pages/Repeater.svelte';
+import Intruder from '../pages/Intruder.svelte';
 import Decoder from '../pages/Decoder.svelte';
 import Comparer from '../pages/Comparer.svelte';
+import Sequencer from '../pages/Sequencer.svelte';
+import Spider from '../pages/Spider.svelte';
+import Discover from '../pages/Discover.svelte';
 import Findings from '../pages/Findings.svelte';
+import Issues from '../pages/Issues.svelte';
+import Checks from '../pages/Checks.svelte';
+import Analysis from '../pages/Analysis.svelte';
 import Organizer from '../pages/Organizer.svelte';
+import Import from '../pages/Import.svelte';
 import Rules from '../pages/Rules.svelte';
 import Target from '../pages/Target.svelte';
 import Projects from '../pages/Projects.svelte';
+import AuthMatrix from '../pages/AuthMatrix.svelte';
+import Vault from '../pages/Vault.svelte';
 import Settings from '../pages/Settings.svelte';
 import { shell } from './shell.svelte';
 
@@ -28,13 +38,23 @@ export const panels: PanelDef[] = [
   { id: 'history', title: 'HTTP history', component: History },
   { id: 'flow', title: 'Request / response', component: FlowDetail },
   { id: 'repeater', title: 'Repeater', component: Repeater },
+  { id: 'intruder', title: 'Intruder', component: Intruder },
   { id: 'organizer', title: 'Organizer', component: Organizer },
+  { id: 'import', title: 'Import', component: Import },
+  { id: 'issues', title: 'Issues', component: Issues },
+  { id: 'checks', title: 'Checks', component: Checks },
   { id: 'findings', title: 'Findings', component: Findings },
+  { id: 'analysis', title: 'Host analysis', component: Analysis },
   { id: 'decoder', title: 'Decoder', component: Decoder },
   { id: 'comparer', title: 'Comparer', component: Comparer },
+  { id: 'sequencer', title: 'Sequencer', component: Sequencer },
+  { id: 'spider', title: 'Spider', component: Spider },
+  { id: 'discover', title: 'Discover content', component: Discover },
   { id: 'rules', title: 'Match & replace', component: Rules },
   { id: 'target', title: 'Target', component: Target },
   { id: 'projects', title: 'Projects', component: Projects },
+  { id: 'authmatrix', title: 'Access matrix', component: AuthMatrix },
+  { id: 'vault', title: 'Vault', component: Vault },
   { id: 'settings', title: 'Settings', component: Settings },
 ];
 

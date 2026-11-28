@@ -393,6 +393,255 @@ pub fn parameters(path: &str, content_type: Option<&str>, body: &[u8]) -> Vec<Pa
     out
 }
 
+// ---- Target analysis across the history
+
+/// The most distinct endpoints, and the most distinct parameters, one analysis keeps. Past that, new ones are
+/// counted nowhere and `truncated` is set.
+pub const MAX_ANALYSIS_KEYS: usize = 5_000;
+/// Distinct example values kept per parameter.
+pub const MAX_SAMPLES: usize = 8;
+/// Parameter names listed on one endpoint, and endpoints counted for one parameter.
+const MAX_PER_KEY: usize = 100;
+
+/// One recorded request, as the analysis sees it.
+#[derive(Debug, Clone, Copy)]
+pub struct Observation<'a> {
+    pub method: &'a str,
+    /// The request target: path and query.
+    pub path: &'a str,
+    pub status: Option<u16>,
+    pub content_type: Option<&'a str>,
+    pub body: &'a [u8],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct StatusCount {
+    pub status: u16,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct EndpointStat {
+    pub method: String,
+    /// The path without its query, with ids replaced: `/users/{n}`, `/files/{uuid}`, `/blob/{hex}`.
+    pub path: String,
+    pub count: u32,
+    /// How often each response status came back (requests with no response are not listed).
+    pub statuses: Vec<StatusCount>,
+    /// The names of the parameters seen on this endpoint (at most 100).
+    pub params: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ParamStat {
+    pub name: String,
+    #[serde(rename = "where")]
+    pub location: ParamWhere,
+    /// Requests that carried it.
+    pub count: u32,
+    /// Distinct endpoints it appeared on (counted up to 100).
+    pub endpoints: u32,
+    /// The first distinct values seen.
+    pub values: Vec<String>,
+    /// More distinct values than `values` holds: likely an identifier, a token or free text, not a flag.
+    pub more_values: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct TargetAnalysis {
+    /// Requests analysed.
+    pub requests: u32,
+    /// Most requested first.
+    pub endpoints: Vec<EndpointStat>,
+    pub params: Vec<ParamStat>,
+    /// A limit was hit: there were more endpoints or parameters than are listed.
+    pub truncated: bool,
+}
+
+/// A path segment that is an identifier becomes a placeholder, so `/users/1` and `/users/2` are one endpoint.
+fn normalize_segment(seg: &str) -> &str {
+    let b = seg.as_bytes();
+    if b.is_empty() {
+        return seg;
+    }
+    if b.iter().all(u8::is_ascii_digit) {
+        return "{n}";
+    }
+    let is_uuid = b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                *c == b'-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        });
+    if is_uuid {
+        return "{uuid}";
+    }
+    if b.len() >= 16 && b.iter().all(u8::is_ascii_hexdigit) {
+        return "{hex}";
+    }
+    seg
+}
+
+/// The path of a request target with its query and fragment removed and its identifiers replaced.
+pub fn normalize_path(target: &str) -> String {
+    let path = target.split(['?', '#']).next().unwrap_or("");
+    let path = if let Some(rest) = path
+        .strip_prefix("http://")
+        .or_else(|| path.strip_prefix("https://"))
+    {
+        rest.find('/').map_or("/", |i| &rest[i..])
+    } else {
+        path
+    };
+    let mut out = String::with_capacity(path.len());
+    for (i, seg) in path.split('/').enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(normalize_segment(seg));
+    }
+    if out.is_empty() {
+        out.push('/');
+    }
+    let mut t: String = out.chars().take(MAX_VALUE).collect();
+    if t.len() < out.len() {
+        t.push('…');
+    }
+    t
+}
+
+#[derive(Default)]
+struct EndpointAcc {
+    count: u32,
+    statuses: std::collections::BTreeMap<u16, u32>,
+    params: std::collections::BTreeSet<String>,
+}
+
+#[derive(Default)]
+struct ParamAcc {
+    count: u32,
+    endpoints: std::collections::BTreeSet<usize>,
+    values: std::collections::BTreeSet<String>,
+    more: bool,
+}
+
+/// Accumulates requests into a [`TargetAnalysis`]. Memory is bounded by [`MAX_ANALYSIS_KEYS`] and the per-key caps,
+/// not by how many requests are added.
+#[derive(Default)]
+pub struct Analyzer {
+    requests: u32,
+    endpoint_ix: std::collections::HashMap<(String, String), usize>,
+    endpoints: Vec<((String, String), EndpointAcc)>,
+    params: std::collections::HashMap<(String, ParamWhere), ParamAcc>,
+    truncated: bool,
+}
+
+impl Analyzer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add(&mut self, o: &Observation<'_>) {
+        self.requests = self.requests.saturating_add(1);
+        let key = (o.method.to_ascii_uppercase(), normalize_path(o.path));
+        let ix = match self.endpoint_ix.get(&key) {
+            Some(&i) => Some(i),
+            None if self.endpoints.len() < MAX_ANALYSIS_KEYS => {
+                self.endpoints.push((key.clone(), EndpointAcc::default()));
+                self.endpoint_ix.insert(key, self.endpoints.len() - 1);
+                Some(self.endpoints.len() - 1)
+            }
+            None => {
+                self.truncated = true;
+                None
+            }
+        };
+        if let Some(i) = ix {
+            let e = &mut self.endpoints[i].1;
+            e.count = e.count.saturating_add(1);
+            if let Some(s) = o.status {
+                let c = e.statuses.entry(s).or_insert(0);
+                *c = c.saturating_add(1);
+            }
+        }
+        for p in parameters(o.path, o.content_type, o.body) {
+            let pk = (p.name.clone(), p.location);
+            if !self.params.contains_key(&pk) && self.params.len() >= MAX_ANALYSIS_KEYS {
+                self.truncated = true;
+                continue;
+            }
+            if let Some(i) = ix {
+                let e = &mut self.endpoints[i].1;
+                if e.params.len() < MAX_PER_KEY || e.params.contains(&p.name) {
+                    e.params.insert(p.name.clone());
+                }
+            }
+            let acc = self.params.entry(pk).or_default();
+            acc.count = acc.count.saturating_add(1);
+            if let Some(i) = ix
+                && (acc.endpoints.len() < MAX_PER_KEY || acc.endpoints.contains(&i))
+            {
+                acc.endpoints.insert(i);
+            }
+            if acc.values.len() < MAX_SAMPLES {
+                acc.values.insert(p.value);
+            } else if !acc.values.contains(&p.value) {
+                acc.more = true;
+            }
+        }
+    }
+
+    pub fn finish(self) -> TargetAnalysis {
+        let mut endpoints: Vec<EndpointStat> = self
+            .endpoints
+            .into_iter()
+            .map(|((method, path), a)| EndpointStat {
+                method,
+                path,
+                count: a.count,
+                statuses: a
+                    .statuses
+                    .into_iter()
+                    .map(|(status, count)| StatusCount { status, count })
+                    .collect(),
+                params: a.params.into_iter().collect(),
+            })
+            .collect();
+        endpoints.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.path.cmp(&b.path))
+                .then_with(|| a.method.cmp(&b.method))
+        });
+        let mut params: Vec<ParamStat> = self
+            .params
+            .into_iter()
+            .map(|((name, location), a)| ParamStat {
+                name,
+                location,
+                count: a.count,
+                endpoints: u32::try_from(a.endpoints.len()).unwrap_or(u32::MAX),
+                values: a.values.into_iter().collect(),
+                more_values: a.more,
+            })
+            .collect();
+        params.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.location.cmp(&b.location))
+        });
+        TargetAnalysis {
+            requests: self.requests,
+            endpoints,
+            params,
+            truncated: self.truncated,
+        }
+    }
+}
+
 // ---- CSRF proof of concept
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -569,6 +818,124 @@ pub fn csrf_poc(r: &PocInput<'_>) -> Result<String, PocError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analysis_groups_endpoints_and_counts_parameters() {
+        let mut a = Analyzer::new();
+        let get = |path: &'static str, status| Observation {
+            method: "get",
+            path,
+            status: Some(status),
+            content_type: None,
+            body: b"",
+        };
+        a.add(&get("/users/1?x=1&debug=1", 200));
+        a.add(&get("/users/2?x=2", 200));
+        a.add(&get("/users/3?x=3", 404));
+        a.add(&get("/files/123e4567-e89b-12d3-a456-426614174000", 200));
+        a.add(&Observation {
+            method: "POST",
+            path: "/login",
+            status: Some(302),
+            content_type: Some("application/x-www-form-urlencoded"),
+            body: b"u=a&p=b&x=9",
+        });
+        a.add(&get("http://t.test/users/4#frag", 200));
+        let r = a.finish();
+        assert_eq!(r.requests, 6);
+        assert!(!r.truncated);
+        assert_eq!(
+            (
+                r.endpoints[0].method.as_str(),
+                r.endpoints[0].path.as_str(),
+                r.endpoints[0].count
+            ),
+            ("GET", "/users/{n}", 4)
+        );
+        assert_eq!(
+            r.endpoints[0].statuses,
+            vec![
+                StatusCount {
+                    status: 200,
+                    count: 3
+                },
+                StatusCount {
+                    status: 404,
+                    count: 1
+                }
+            ]
+        );
+        assert_eq!(r.endpoints[0].params, vec!["debug", "x"]);
+        assert!(r.endpoints.iter().any(|e| e.path == "/files/{uuid}"));
+        let x_query = r
+            .params
+            .iter()
+            .find(|p| p.name == "x" && p.location == ParamWhere::Query)
+            .unwrap();
+        assert_eq!(
+            (x_query.count, x_query.endpoints, x_query.values.len()),
+            (3, 1, 3)
+        );
+        let x_form = r
+            .params
+            .iter()
+            .find(|p| p.name == "x" && p.location == ParamWhere::Form)
+            .unwrap();
+        assert_eq!(x_form.count, 1);
+        assert_eq!(r.params[0].name, "x");
+    }
+
+    #[test]
+    fn analysis_is_bounded() {
+        let mut a = Analyzer::new();
+        for i in 0..(MAX_ANALYSIS_KEYS + 50) {
+            let path = format!("/p{i}?q{i}=v");
+            a.add(&Observation {
+                method: "GET",
+                path: &path,
+                status: None,
+                content_type: None,
+                body: b"",
+            });
+        }
+        for i in 0..100 {
+            let path = format!("/same?k=value{i}");
+            a.add(&Observation {
+                method: "GET",
+                path: &path,
+                status: None,
+                content_type: None,
+                body: b"",
+            });
+        }
+        let r = a.finish();
+        assert!(r.truncated);
+        assert_eq!(r.endpoints.len(), MAX_ANALYSIS_KEYS);
+        assert!(r.params.len() <= MAX_ANALYSIS_KEYS);
+        assert!(r.params.iter().all(|p| p.values.len() <= MAX_SAMPLES));
+        assert_eq!(normalize_path("/a/b/"), "/a/b/");
+        assert_eq!(normalize_path(""), "/");
+        assert_eq!(normalize_path("/x/0123456789abcdef/y"), "/x/{hex}/y");
+        assert_eq!(normalize_path("/v1/abc"), "/v1/abc");
+    }
+
+    #[test]
+    fn many_values_are_flagged() {
+        let mut a = Analyzer::new();
+        for i in 0..(MAX_SAMPLES + 3) {
+            let path = format!("/s?id={i}");
+            a.add(&Observation {
+                method: "GET",
+                path: &path,
+                status: None,
+                content_type: None,
+                body: b"",
+            });
+        }
+        let r = a.finish();
+        assert!(r.params[0].more_values);
+        assert_eq!(r.params[0].values.len(), MAX_SAMPLES);
+    }
 
     const PAGE: &str = r#"<!doctype html><html><head><title>x</title>
 <!-- TODO: remove the debug admin at /admin-old -->

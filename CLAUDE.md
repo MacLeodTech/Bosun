@@ -22,3 +22,14 @@
   - target content is never rendered in the UI's origin;
   - anything that changes scope, rules, accounts or tokens writes an audit entry.
 - Keep `docs/threat-model.md` in step with behaviour changes that affect it.
+
+## Navigating the code
+
+If `.codegraph/` exists, use `codegraph_explore` (or `codegraph explore "<symbols or question>"`) before grep/find
+or reading files. If not, use normal search and do not run `codegraph init`.
+
+## Workflow
+
+- Branch for work. Commit only when asked. Never push or open a PR until the owner confirms.
+- Every bug fix gets a regression test that fails without the fix.
+- Ask before adding a dependency.

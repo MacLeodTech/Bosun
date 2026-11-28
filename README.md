@@ -19,8 +19,8 @@ is in [docs/releases.md](docs/releases.md).
 
 - **Intercepting proxy**: HTTP/1.1 and HTTP/2, HTTPS interception with a per-install CA, WebSockets (recorded
   message by message), streaming responses (SSE, large downloads), upstream HTTP and SOCKS5 proxies, TLS
-  pass-through for pinned hosts, invisible (transparent) proxying for plain HTTP only (transparent HTTPS is
-  planned).
+  pass-through for pinned hosts, invisible (transparent) proxying for plain HTTP and for HTTPS (the host comes from the SNI, the port from the redirect on Linux,
+  port 443).
 - **Intercept**: hold requests and/or responses, edit them as raw text, forward or drop; in-scope only by default.
 - **Match and replace** on request/response first lines, headers and bodies (literal or regex).
 - **HTTP history** with full-text search (FTS5 trigram), a virtualised list that stays fast at millions of rows,
@@ -32,12 +32,13 @@ is in [docs/releases.md](docs/releases.md).
 - **Repeater**: raw requests sent byte for byte over HTTP/1.1 or HTTP/2 (opt-in connection reuse, single-packet
   batches), tabs saved in the project, a WebSocket mode, a message editor, response diff. Every send goes through
   the scope gate.
-- **Decoder and Comparer**: encode, decode and hash chains, smart decode, and a diff of two items. "Send to Decoder"
+- **Decoder and Comparer**: encode, decode, compress and hash chains (MD5, SHA-1, SHA-2), smart decode, and a diff of two items. `bosun decode` runs the same chains from the command line, offline. "Send to Decoder"
   and "Send to Comparer" are in the History menu.
 - **Export**: copy as cURL (POSIX shells and PowerShell), snippets in Python, JavaScript and Go, and HAR 1.2. Cookie
   and authorization values are written as `REDACTED` unless you tick "Keep cookies and authorization values".
 - **Findings panel**: comments, scripts, links, forms, references and parameters found in a message, and a CSRF
-  proof of concept page for a request (downloaded as an attachment with a sandboxing CSP).
+  proof of concept page for a request (downloaded as an attachment with a sandboxing CSP). The **Host analysis**
+  panel counts the distinct endpoints and parameters of a host across the whole history.
 - **Target**: site map and a scope editor (include/exclude rules). Every active tool sends only to in-scope
   targets.
 - **Open browser**: launches Chromium/Chrome with its own profile, already using the proxy and trusting the CA by
@@ -148,15 +149,40 @@ See [docs/testing.md](docs/testing.md) for the details.
 |---|---|
 | `bosun serve [--project NAME] [--proxy ADDR] [--listen ADDR]` | Run the proxy and the UI/API |
 | `bosun doctor` | Check the install (permissions, keys, CA trust, exposure) |
-| `bosun ca export [--der] [--out FILE]`, `ca info` | The CA certificate and its fingerprints |
-| `bosun user add NAME [--role viewer\|tester\|admin]`, `user passwd NAME`, `user list` | Accounts (password on stdin) |
+| `bosun ca export [--der] [--out FILE]`, `ca info`, `ca rotate [--permit-domain D]...` | The CA certificate, its fingerprints and expiry; replace it, optionally limited to some domains |
+| `bosun user add NAME [--role viewer\|tester\|admin]`, `user passwd NAME`, `user totp-reset NAME`, `user list` | Accounts (password on stdin) |
+| `bosun user role NAME ROLE`, `user delete NAME [--yes]`, `user sessions NAME [--revoke]`, `user list --json` | More account administration |
+| `bosun token create USER --name N [--scope read\|full] [--expires-days D]`, `token list [USER]`, `token revoke ID` | API tokens (`--json` on create and list) |
+| `bosun project list\|create\|rename\|delete\|export\|import\|backup` | Projects in the data directory; refuses (exit 3) while a running Bosun has the project |
+| `bosun audit [-n N] [--action P] [--user U] [--json]` | The audit log |
+| `bosun serve --no-ui`, `bosun completions SHELL`, `bosun man --out DIR` | Record without the UI; shell completions; man pages |
 | `bosun example-config` | An annotated configuration file |
 | `bosun login --server URL [--profile NAME] [-u USER]` | Sign in to an engine and keep an API token in a profile (password on stdin) |
 | `bosun status [--server URL] [--profile NAME] [--json]` | Show the engine you are signed in to |
 | `bosun repeater send TARGET [FILE] [--http2] [--count N] [--mode sequential\|parallel\|single-packet] [-i] [--json]` | Send a raw request file (or stdin) through the Repeater; exit code 3 when the scope refused it, 4 when nothing came back |
 
+Which CA to use: the default CA (valid for any name) is for the launched browser, which pins it without
+installing it. For a device you have to install a CA on (a phone, a VM), run
+`bosun ca rotate --permit-domain target.example --permit-domain other.example` first: the new CA is accepted only
+for those domains and never for IP addresses, so a leaked key cannot impersonate anything else to that device.
+The CA lasts three years; `doctor` and the Settings page warn 30 days before it ends. Rotate, restart Bosun and
+replace the installed copy (`bosun ca export`). The old certificate stays in `ca/previous/`, its key is deleted.
+
 Configuration: `--config FILE` or `BOSUN_CONFIG`. Data: `--data-dir`, `BOSUN_DATA_DIR`, else the platform data
 directory. The data key: `BOSUN_DATA_KEY` (base64) or `BOSUN_DATA_KEY_FILE`, else `<data>/data.key`.
+
+Server mode (containers):
+
+- `GET /healthz` answers `ok` without authentication, and `bosun healthcheck` exits 0 when the configured UI/API
+  listener answers it (no curl needed; with `api.tls` it only checks that the port accepts connections).
+- Setup without a terminal: `BOSUN_ADMIN_USER` and `BOSUN_ADMIN_PASSWORD_FILE` create the first admin at start-up, and
+  `BOSUN_BOOTSTRAP_TOKEN_FILE` (a file holding a token of at least 32 characters) adds a full API token for it. Both
+  are audited and ignored once any user exists.
+- `password_file` replaces `password` in `proxy.auth` and `proxy.upstream`.
+- `BOSUN_LOG_FORMAT=json` writes one JSON object per log line.
+- `metrics_listen = "10.0.0.5:9090"` serves Prometheus `/metrics` on its own listener (off by default, no
+  authentication).
+- The memory budget defaults to half the container's cgroup memory limit (`proxy.memory_budget_mib` overrides it).
 
 ## Security
 

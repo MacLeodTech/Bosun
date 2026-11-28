@@ -1,6 +1,9 @@
 // A stand-in for a hostile site. Its pages try to run script in whatever shows them; `/hit` records every
 // call-back, so a test can assert that none arrived.
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
+
+let counter = 41000;
 
 export const hits: string[] = [];
 export const seen: { path: string; headers: http.IncomingHttpHeaders }[] = [];
@@ -25,12 +28,34 @@ export function startTarget(port: number): Promise<http.Server> {
       // 700 KiB of text with a marker at each end: more than one page of the history view.
       const body = 'START-MARK ' + 'x'.repeat(700 * 1024) + ' END-MARK';
       res.writeHead(200, { 'content-type': 'text/plain' }).end(body);
+    } else if (url.pathname === '/leaky') {
+      // Things the passive scanner reports: a version header, a cookie without flags, a key in the body.
+      res
+        .writeHead(200, { 'content-type': 'text/plain', server: 'nginx/1.18.0', 'set-cookie': 'leaky=1; Path=/' })
+        .end('-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----\n');
     } else if (url.pathname === '/json') {
       // About 190 KiB of compact JSON: 2,500 records, and tens of thousands of lines once pretty-printed.
       const items = Array.from({ length: 2500 }, (_, i) => ({ id: i, name: `item-${i}`, tags: ['a', 'b'], ok: i % 2 === 0, score: i * 1.5, note: null }));
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ items }));
+    } else if (url.pathname === '/shop.v1.Shop/Get') {
+      // A gRPC response: one message (1: 7, 2: "hi") and the trailers frame.
+      const msg = Buffer.from([0x08, 0x07, 0x12, 0x02, 0x68, 0x69]);
+      const trailers = Buffer.from('grpc-status: 0\r\n');
+      const frame = (flag: number, p: Buffer) => Buffer.concat([Buffer.from([flag, 0, 0, 0, p.length]), p]);
+      res.writeHead(200, { 'content-type': 'application/grpc-web+proto' }).end(Buffer.concat([frame(0, msg), frame(0x80, trailers)]));
     } else if (url.pathname === '/hits') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(hits));
+    } else if (url.pathname === '/seq-random' || url.pathname === '/seq-counter') {
+      // A session cookie per call: random (a CSPRNG) or a counter, for the Sequencer.
+      const tok = url.pathname === '/seq-random' ? randomBytes(16).toString('hex') : String(counter++);
+      res.writeHead(200, { 'content-type': 'text/plain', 'set-cookie': `seqid=${tok}; Path=/` }).end(`token ${tok}`);
+    } else if (url.pathname === '/spider') {
+      res.writeHead(200, { 'content-type': 'text/html' }).end(
+        '<title>Spider home</title><a href="/spider/a">a</a> <a href="http://other.invalid/x">out</a>' +
+          '<form method="post" action="/spider/post"><input name="q" value="1"></form>',
+      );
+    } else if (url.pathname === '/spider/a') {
+      res.writeHead(200, { 'content-type': 'text/html' }).end('<title>Spider A</title><a href="/spider/c">c</a>');
     } else if (url.pathname === '/echo') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(req.headers));
     } else {
@@ -76,7 +101,7 @@ export function viaProxy(proxyPort: number, url: string, headers: Record<string,
   return new Promise<{ status: number; body: string }>((resolve, reject) => {
     const u = new URL(url);
     const req = http.request(
-      { host: '127.0.0.1', port: proxyPort, method: 'GET', path: url, headers: { host: u.host, ...headers } },
+      { host: '127.0.0.1', port: proxyPort, method: 'GET', path: url, agent: false, headers: { host: u.host, ...headers } },
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c) => chunks.push(c));

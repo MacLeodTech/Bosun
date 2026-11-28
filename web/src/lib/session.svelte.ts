@@ -7,6 +7,8 @@ class Session {
   me = $state<Me | null>(null);
   ready = $state(false);
   setupRequired = $state(false);
+  /** An admin requires a second factor and this account has none yet: only its setup is offered. */
+  totpSetup = $state(false);
   connected = $state(false);
   private ws: WebSocket | null = null;
   private listeners = new Set<(e: ProxyEvent) => void>();
@@ -22,7 +24,7 @@ class Session {
       this.setupRequired = st.setup_required;
       if (!st.setup_required) {
         const me = await api.get<Me>('/auth/me');
-        this.signedIn(me);
+        await this.signedIn(me);
       }
     } catch {
       // Not signed in.
@@ -31,8 +33,13 @@ class Session {
     }
   }
 
-  signedIn(me: Me) {
+  async signedIn(me: Me) {
     setCsrf(me.csrf);
+    try {
+      this.totpSetup = (await api.get<{ setup_required: boolean }>('/auth/totp')).setup_required;
+    } catch {
+      this.totpSetup = false;
+    }
     this.me = me;
     this.setupRequired = false;
     this.connect();
@@ -40,6 +47,7 @@ class Session {
 
   clear() {
     this.me = null;
+    this.totpSetup = false;
     setCsrf(null);
     this.ws?.close();
     this.ws = null;

@@ -16,6 +16,14 @@
   import DiffView from '../components/DiffView.svelte';
 
   let selected = $state<FlowMeta | null>(null);
+
+  /** The scanner's evidence for one message of the open flow (only when it was opened from an issue, and only on
+   * the stored messages, which is what the offsets are into). */
+  function evidenceFor(part: 'request' | 'response') {
+    const e = v.evidence;
+    if (!e || !selected || e.flowId !== selected.id || v.detailTab !== 'messages') return [];
+    return e.ranges.filter((r) => r.part === part);
+  }
   let req = $state<Loaded | null>(null);
   let resp = $state<Loaded | null>(null);
   let loadError = $state('');
@@ -210,6 +218,7 @@
             role="request"
             scheme={selected.scheme}
             onFilterHeader={filterBy}
+            evidence={evidenceFor('request')}
             raw={toB64(req)}
             rawRemaining={req ? req.bodyLen - req.body.length : 0}
             onMore={(d) => loadNext('req', d)}
@@ -218,7 +227,9 @@
           <MessageView
             title={selected.response_truncated ? 'Response (truncated)' : 'Response'}
             role="response"
+            rpcPath={selected.path.split(/[?#]/)[0]}
             onFilterHeader={filterBy}
+            evidence={evidenceFor('response')}
             raw={toB64(resp)}
             decodedBody={resp?.decoded ? bytesToB64(resp.decoded) : null}
             rawRemaining={resp ? resp.bodyLen - resp.body.length : 0}

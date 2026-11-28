@@ -13,12 +13,16 @@
 //! an API token ([`ClientBuilder::token`]), or a username and password ([`Client::login`]) which keeps the session
 //! cookie and sends the CSRF token for you.
 
+mod checks;
+pub use checks::{ClientCert, VaultEntry};
 mod client;
 mod error;
 mod events;
+mod issues;
 pub mod types;
 
 pub use client::{Client, ClientBuilder};
 pub use error::{Error, Result};
 pub use events::{EventStream, Position, Sequenced};
+pub use issues::*;
 pub use types::*;

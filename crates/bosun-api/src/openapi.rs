@@ -12,15 +12,37 @@ use utoipa::OpenApi;
 use utoipa::ToSchema;
 
 use bosun_model::{FlowSummary, WsMessage};
-use bosun_proxy::intercept::{Decision, InterceptItem, InterceptSettings, InterceptSummary};
+use bosun_proxy::intercept::{Decision, InterceptItem, InterceptSettings, InterceptSummary, ResponseFilter};
 use bosun_proxy::{ProxyEvent, ProxyStats};
 use bosun_store::{ApiToken, AuditEntry, FlowMeta, Role, SessionInfo, SiteMapEntry, TokenScope, User};
 
+use crate::advisories::{
+    FeedBody as AdvisoryFeedBody, Status as AdvisoryStatus, TrustBody as AdvisoryTrustBody,
+};
+use crate::authmatrix::{MatrixBody, MatrixResult};
+use crate::checks::{CheckBody, CheckEnabled, CheckList, CheckValidation, CheckView};
+use crate::clientcerts::{ClientCertBody, ClientCertList};
 use crate::codec::{DecodeBody, DecodeReply, DiffBody, SmartBody};
-use crate::handlers::{ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, QueryCheck, SavedFilter};
+use crate::crawl::{CrawlDetail, CrawlInfo, CrawlList, CrawlStartBody, CrawlStopReply};
+use crate::discover::{
+    Detail as DiscoverDetail, Info as DiscoverInfo, List as DiscoverList, StartBody as DiscoverStartBody,
+    StopReply as DiscoverStopReply,
+};
+use crate::handlers::{
+    ChangeTags, FlowOverview, OrganizerAdd, OrganizerChange, ProtoSchema, ProtoSchemaBody, QueryCheck,
+    SavedFilter,
+};
+use crate::intruder::{AttackDetail, AttackInfo, AttackList, PlanReply, ResultsReply, StartBody, StopReply};
+use crate::issues::{IssueChange, IssueList};
+use crate::listeners::ProxyConfigView;
 use crate::projects::{BackupInfo, CurrentProject, NewProject, ProjectInfo, ProjectList, RenameProject};
 use crate::repeater::{RepeaterSettings, SendBody, SendReply, TabsDoc, WsBody, WsReply};
+use crate::scan::{ScanChecks, ScanControlReply, ScanDetail, ScanInfo, ScanList, ScanStartBody};
+use crate::sequencer::{AnalyzeBody, CaptureBody, CaptureStarted, CaptureStatus};
+use crate::vault::{VaultCreate, VaultList, VaultUpdate};
+use bosun_proxy::mapping::MapRule;
 use bosun_proxy::rules::RuleSpec as MatchRule;
+use bosun_proxy::{ListenerInfo, ListenerSpec, LiveSettings};
 use bosun_scope::ScopeSpec;
 
 #[derive(ToSchema, Serialize)]
@@ -82,6 +104,14 @@ pub struct CaInfo {
     pub fingerprint_sha256: String,
     pub spki_sha256: String,
     pub pem: String,
+    /// Expiry, seconds since the Unix epoch.
+    pub not_after: i64,
+    /// Whole days until expiry (negative once expired).
+    pub days_left: i64,
+    /// True when the CA expires within 30 days or already has.
+    pub expiring: bool,
+    /// Domains a name-constrained CA is limited to; empty when unconstrained.
+    pub permitted_domains: Vec<String>,
 }
 #[derive(ToSchema, Serialize)]
 pub struct NewTokenReply {
@@ -125,6 +155,59 @@ pub struct PasswordBody {
     pub revoke_tokens: Option<bool>,
 }
 #[derive(ToSchema, Serialize)]
+pub struct SecondFactor {
+    /** The kind of second factor to present: `totp`. */
+    pub second_factor: String,
+    /** Send this with the code to `POST /auth/login/totp`. Valid for five minutes, from the same address. */
+    pub pending: String,
+}
+/// The answer to a password sign-in: a session, or a request for the second factor (no session yet).
+#[derive(ToSchema, Serialize)]
+#[serde(untagged)]
+pub enum LoginReply {
+    Signed(Me),
+    SecondFactor(SecondFactor),
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpLoginBody {
+    pub pending: String,
+    /** A 6-digit code, or an unused recovery code. */
+    pub code: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpCodeBody {
+    /** A 6-digit code (a recovery code also works where the operation allows it). */
+    pub code: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpStatus {
+    /** A confirmed second factor is on for this account. */
+    pub enabled: bool,
+    /** A secret was made but no code has confirmed it yet. */
+    pub enrolling: bool,
+    pub recovery_codes_left: i64,
+    /** An admin requires every password account to have a second factor. */
+    pub required: bool,
+    /** This account must set up a second factor before it can do anything else. */
+    pub setup_required: bool,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpEnrolment {
+    /** The shared secret, base32. Shown once. */
+    pub secret: String,
+    /** The same secret as an `otpauth://` URI. */
+    pub otpauth_uri: String,
+}
+#[derive(ToSchema, Serialize)]
+pub struct RecoveryCodes {
+    /** Shown once; each works once. */
+    pub recovery_codes: Vec<String>,
+}
+#[derive(ToSchema, Serialize)]
+pub struct TotpRequiredBody {
+    pub required: bool,
+}
+#[derive(ToSchema, Serialize)]
 pub struct DeleteFlows {
     pub ids: Vec<i64>,
 }
@@ -164,8 +247,11 @@ fn status() {}
 #[utoipa::path(post, path = "/setup", operation_id = "setup", tag = "session", description = "Create the first admin account with the code printed at startup. No sign-in needed.", request_body = SetupBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn setup() {}
 
-#[utoipa::path(post, path = "/auth/login", operation_id = "login", tag = "session", description = "Sign in with a username and password. Sets the session cookie. No sign-in needed.", request_body = LoginBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+#[utoipa::path(post, path = "/auth/login", operation_id = "login", tag = "session", description = "Sign in with a username and password. Sets the session cookie, unless the account has a second factor: then the answer holds a `pending` token for `POST /auth/login/totp` and no cookie is set. No sign-in needed.", request_body = LoginBody, responses((status = 200, description = "A session (cookie set), or `second_factor` and `pending` when the account has a second factor: no session exists until `POST /auth/login/totp`", body = LoginReply), (status = 400, description = "Bad request", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn login() {}
+
+#[utoipa::path(post, path = "/auth/login/totp", operation_id = "login_totp", tag = "session", description = "Finish a sign-in that asked for a second factor: the `pending` token and a TOTP code (or an unused recovery code). Each code works once; wrong codes count against the sign-in limits (429 with Retry-After). No sign-in needed.", request_body = TotpLoginBody, responses((status = 200, description = "OK", body = Me), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Wrong code, or the pending sign-in expired", body = Error), (status = 429, description = "Too many attempts", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn login_totp() {}
 
 #[utoipa::path(post, path = "/auth/logout", operation_id = "logout", tag = "session", description = "End the current session. Needs the viewer role or above.", responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn logout() {}
@@ -181,6 +267,27 @@ fn sso_config() {}
 
 #[utoipa::path(post, path = "/auth/password", operation_id = "change_password", tag = "session", description = "Change your own password. Needs the viewer role or above.", request_body = PasswordBody, responses((status = 204, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn change_password() {}
+
+#[utoipa::path(get, path = "/auth/totp", operation_id = "totp_status", tag = "session", description = "Your own second-factor state. Needs the viewer role or above.", responses((status = 200, description = "OK", body = TotpStatus), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn totp_status() {}
+
+#[utoipa::path(post, path = "/auth/totp/enroll", operation_id = "totp_enroll", tag = "session", description = "Make a TOTP secret for your account (base32 and an `otpauth://` URI). Nothing asks for a code until `POST /auth/totp/confirm` receives a valid one; enrolling again before that replaces the secret. 409 when a second factor is already on. Audited. Needs the viewer role or above.", responses((status = 200, description = "OK", body = TotpEnrolment), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "Already set up", body = Error)))]
+fn totp_enroll() {}
+
+#[utoipa::path(post, path = "/auth/totp/confirm", operation_id = "totp_confirm", tag = "session", description = "Turn the second factor on with the first valid code, and get ten one-time recovery codes (shown once). Audited. Needs the viewer role or above.", request_body = TotpCodeBody, responses((status = 200, description = "OK", body = RecoveryCodes), (status = 400, description = "Wrong code, or no enrolment in progress", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "Already set up", body = Error), (status = 429, description = "Too many attempts", body = Error)))]
+fn totp_confirm() {}
+
+#[utoipa::path(post, path = "/auth/totp/disable", operation_id = "totp_disable", tag = "session", description = "Turn your own second factor off. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.", request_body = TotpCodeBody, responses((status = 204, description = "Done"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Wrong code, or not allowed", body = Error), (status = 429, description = "Too many attempts", body = Error)))]
+fn totp_disable() {}
+
+#[utoipa::path(post, path = "/auth/totp/recovery-codes", operation_id = "totp_recovery_codes", tag = "session", description = "Make a new set of ten recovery codes; the old ones stop working. Needs a valid code or an unused recovery code. Audited. Needs the viewer role or above.", request_body = TotpCodeBody, responses((status = 200, description = "OK", body = RecoveryCodes), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Wrong code, or not allowed", body = Error), (status = 429, description = "Too many attempts", body = Error)))]
+fn totp_recovery_codes() {}
+
+#[utoipa::path(put, path = "/auth/totp/required", operation_id = "totp_set_required", tag = "accounts", description = "Require a second factor of every password account (single sign-on accounts and the desktop ticket are not asked). Accounts without one can then only reach the pages that set it up. Audited. Needs the admin role.", request_body = TotpRequiredBody, responses((status = 200, description = "OK", body = TotpStatus), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn totp_set_required() {}
+
+#[utoipa::path(delete, path = "/users/{id}/totp", operation_id = "reset_user_totp", tag = "accounts", description = "Remove a user's second factor and recovery codes (a lost device) and end their sessions. Audited. Needs the admin role.", params(("id" = i64, Path, description = "User id")), responses((status = 204, description = "Done"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "That user has no second factor", body = Error)))]
+fn reset_user_totp() {}
 
 #[utoipa::path(get, path = "/flows", operation_id = "list_flows", tag = "history", description = "List recorded flows, newest first unless sorted. Needs the viewer role or above.", params(("text" = Option<String>, Query), ("host" = Option<String>, Query), ("methods" = Option<String>, Query), ("status_min" = Option<i64>, Query), ("status_max" = Option<i64>, Query), ("in_scope_only" = Option<bool>, Query), ("source" = Option<String>, Query), ("hide_ext" = Option<String>, Query), ("before" = Option<i64>, Query), ("after" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("sort" = Option<String>, Query, description = "id (default), time, method, host, path, status, size, duration or mime. Ties break on the id."), ("asc" = Option<bool>, Query, description = "Oldest or smallest first."), ("offset" = Option<i64>, Query, description = "Rows to skip, for paging a list sorted by something other than id."), ("q" = Option<String>, Query, description = "A history query (docs/query-language.md), combined with the other filters by and. A mistake in it is a 400.")), responses((status = 200, description = "OK", body = Vec<FlowSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn list_flows() {}
@@ -239,11 +346,23 @@ fn get_rules() {}
 #[utoipa::path(put, path = "/rules", operation_id = "put_rules", tag = "rules", description = "Replace the rules (audited). Needs the tester role or above.", request_body = Vec<MatchRule>, responses((status = 200, description = "OK", body = Vec<MatchRule>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn put_rules() {}
 
+#[utoipa::path(get, path = "/map-rules", operation_id = "get_map_rules", tag = "rules", description = "Map Local, Map Remote and throttle rules, in the order they are tried. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<MapRule>), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn get_map_rules() {}
+
+#[utoipa::path(put, path = "/map-rules", operation_id = "put_map_rules", tag = "rules", description = "Replace the Map Local, Map Remote and throttle rules (audited). A Map Local directory must exist and a Map Remote target must pass the scope gate, or the whole list is refused with a 400 that names the rule. Needs the tester role or above, and the admin role when the list holds a Map Local rule (it serves files from this machine).", request_body = Vec<MapRule>, responses((status = 200, description = "OK", body = Vec<MapRule>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn put_map_rules() {}
+
 #[utoipa::path(get, path = "/intercept", operation_id = "get_intercept", tag = "intercept", description = "Interception settings. Needs the viewer role or above.", responses((status = 200, description = "OK", body = InterceptSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn get_intercept() {}
 
 #[utoipa::path(put, path = "/intercept", operation_id = "put_intercept", tag = "intercept", description = "Change interception settings. Needs the tester role or above.", request_body = InterceptSettings, responses((status = 200, description = "OK", body = InterceptSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn put_intercept() {}
+
+#[utoipa::path(get, path = "/intercept/response-filter", operation_id = "get_response_filter", tag = "intercept", description = "Which responses are held when response interception is on. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ResponseFilter), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_response_filter() {}
+
+#[utoipa::path(put, path = "/intercept/response-filter", operation_id = "put_response_filter", tag = "intercept", description = "Change which responses are held (audited). Needs the tester role or above.", request_body = ResponseFilter, responses((status = 200, description = "OK", body = ResponseFilter), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_response_filter() {}
 
 #[utoipa::path(get, path = "/intercept/queue", operation_id = "intercept_queue", tag = "intercept", description = "Held messages. Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<InterceptSummary>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn intercept_queue() {}
@@ -259,6 +378,24 @@ fn intercept_forward_all() {}
 
 #[utoipa::path(get, path = "/proxy", operation_id = "proxy_info", tag = "proxy", description = "Proxy settings and resource counters. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ProxyInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn proxy_info() {}
+
+#[utoipa::path(get, path = "/proxy/listeners", operation_id = "list_listeners", tag = "proxy", description = "The proxy listeners and their options (passwords are never returned). Needs the viewer role or above.", responses((status = 200, description = "OK", body = Vec<ListenerInfo>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn list_listeners() {}
+
+#[utoipa::path(post, path = "/proxy/listeners", operation_id = "add_listener", tag = "proxy", description = "Start another proxy listener without a restart (audited). Needs the admin role.", request_body = ListenerSpec, responses((status = 200, description = "OK", body = ListenerInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn add_listener() {}
+
+#[utoipa::path(put, path = "/proxy/listeners/{id}", operation_id = "update_listener", tag = "proxy", description = "Change a listener's options live (audited); an empty password keeps the current one. Only an added listener can move to another address. Needs the admin role.", request_body = ListenerSpec, responses((status = 200, description = "OK", body = ListenerInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn update_listener() {}
+
+#[utoipa::path(delete, path = "/proxy/listeners/{id}", operation_id = "remove_listener", tag = "proxy", description = "Stop an added listener (audited); connections it already accepted run to their end. Needs the admin role.", responses((status = 204, description = "Removed"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn remove_listener() {}
+
+#[utoipa::path(get, path = "/proxy/config", operation_id = "get_proxy_config", tag = "proxy", description = "The proxy settings that change live, and the names of those that need a restart. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ProxyConfigView), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn get_proxy_config() {}
+
+#[utoipa::path(put, path = "/proxy/config", operation_id = "put_proxy_config", tag = "proxy", description = "Change live proxy settings without a restart (audited). A setting that needs a restart is refused with 409. Needs the admin role.", request_body = LiveSettings, responses((status = 200, description = "OK", body = ProxyConfigView), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn put_proxy_config() {}
 
 #[utoipa::path(put, path = "/tools/stop", operation_id = "set_stopped", tag = "proxy", description = "The kill switch for all tool traffic. Needs the tester role or above.", request_body = StopBody, responses((status = 200, description = "OK", body = Stopped), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn set_stopped() {}
@@ -335,11 +472,53 @@ fn export_project() {}
 #[utoipa::path(post, path = "/projects/{name}/backup", operation_id = "backup_project", tag = "projects", description = "Save a copy of a project in the backups folder. Needs the admin role or above; audited.", params(("name" = String, Path)), responses((status = 200, description = "OK", body = BackupInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Conflict (name taken, project locked or open)", body = Error)))]
 fn backup_project() {}
 
+#[utoipa::path(get, path = "/client-certs", operation_id = "list_client_certs", tag = "clientcerts", description = "The project's client certificates for mutual-TLS targets: host pattern, subject and expiry. Private keys are never returned. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ClientCertList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn list_client_certs() {}
+#[utoipa::path(post, path = "/client-certs", operation_id = "add_client_cert", tag = "clientcerts", description = "Add a client certificate (PEM with certificate and key, or PKCS#12 in base64 with its password) for a host pattern; the proxy and every tool present it to that host. The key is sealed with the data key. Needs the admin role; audited as `clientcert.add`.", request_body = ClientCertBody, responses((status = 201, description = "Added", body = bosun_store::ClientCertMeta), (status = 400, description = "Not a usable certificate or host; the message says what is wrong", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "The host already has a certificate, or the project holds the most", body = Error)))]
+fn add_client_cert() {}
+#[utoipa::path(delete, path = "/client-certs/{id}", operation_id = "delete_client_cert", tag = "clientcerts", description = "Remove a client certificate. Needs the admin role; audited as `clientcert.remove`.", params(("id" = i64, Path, description = "Row id")), responses((status = 204, description = "Removed"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such certificate", body = Error)))]
+fn delete_client_cert() {}
+#[utoipa::path(get, path = "/vault", operation_id = "list_vault", tag = "vault", description = "The vault's named secrets: id, name, kind, timestamps and a masked hint. The secret itself is never returned. Needs the viewer role or above.", responses((status = 200, description = "OK", body = VaultList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn list_vault() {}
+#[utoipa::path(post, path = "/vault", operation_id = "create_vault_entry", tag = "vault", description = "Store a named secret, sealed with the data key. Needs the admin role; audited as `vault.create` (by name, never by value).", request_body = VaultCreate, responses((status = 201, description = "Created", body = bosun_store::VaultEntry), (status = 400, description = "Bad name, kind or secret", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "The name is taken, or the vault is full", body = Error)))]
+fn create_vault_entry() {}
+#[utoipa::path(patch, path = "/vault/{id}", operation_id = "update_vault_entry", tag = "vault", description = "Rename an entry, change its kind or replace its secret (left out keeps it). Needs the admin role; audited as `vault.update`.", params(("id" = i64, Path, description = "Entry id")), request_body = VaultUpdate, responses((status = 200, description = "Updated", body = bosun_store::VaultEntry), (status = 400, description = "Bad name, kind or secret", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such entry", body = Error), (status = 409, description = "The name is taken", body = Error)))]
+fn update_vault_entry() {}
+#[utoipa::path(delete, path = "/vault/{id}", operation_id = "delete_vault_entry", tag = "vault", description = "Delete an entry. Needs the admin role; audited as `vault.delete`.", params(("id" = i64, Path, description = "Entry id")), responses((status = 204, description = "Deleted"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such entry", body = Error)))]
+fn delete_vault_entry() {}
+#[utoipa::path(get, path = "/checks", operation_id = "list_checks", tag = "checks", description = "The project's custom passive checks. Needs the viewer role or above.", responses((status = 200, description = "OK", body = CheckList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn list_checks() {}
+#[utoipa::path(post, path = "/checks", operation_id = "add_check", tag = "checks", description = "Add a custom passive check written in the YAML check language. The text is validated with the check loader (size and pattern limits, a `passive` section, an id that is not a built-in's); a new check applies to new traffic at once and to recorded traffic after a rescan. Needs the tester role or above; audited.", request_body = CheckBody, responses((status = 201, description = "Added", body = CheckView), (status = 400, description = "Not a valid check; the message says what is wrong", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "The id is taken, or the project holds the most checks", body = Error)))]
+fn add_check() {}
+#[utoipa::path(post, path = "/checks/validate", operation_id = "validate_check", tag = "checks", description = "Check a custom check's YAML without storing it. Always 200: `valid` and, when false, `error`. Needs the tester role or above.", request_body = CheckBody, responses((status = 200, description = "OK", body = CheckValidation), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn validate_check() {}
+#[utoipa::path(put, path = "/checks/{id}", operation_id = "replace_check", tag = "checks", description = "Replace a custom check's YAML (validated like a new one). Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Check row id")), request_body = CheckBody, responses((status = 200, description = "Replaced", body = CheckView), (status = 400, description = "Not a valid check", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such check", body = Error), (status = 409, description = "The id is taken", body = Error)))]
+fn replace_check() {}
+#[utoipa::path(patch, path = "/checks/{id}", operation_id = "set_check_enabled", tag = "checks", description = "Switch a custom check on or off. Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Check row id")), request_body = CheckEnabled, responses((status = 204, description = "Changed"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such check", body = Error)))]
+fn set_check_enabled() {}
+#[utoipa::path(delete, path = "/checks/{id}", operation_id = "delete_check", tag = "checks", description = "Delete a custom check. Issues it already found stay. Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Check row id")), responses((status = 204, description = "Deleted"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such check", body = Error)))]
+fn delete_check() {}
+#[utoipa::path(get, path = "/issues", operation_id = "list_issues", tag = "issues", description = "Issues the passive scanner found in recorded traffic, newest sighting first, with the number of flows it has not read yet. Filter by status, severity, confidence, rule, host, evidence flow or text. Needs the viewer role or above.", params(("status" = Option<String>, Query, description = "new, confirmed or false_positive"), ("severity" = Option<String>, Query, description = "info, low, medium or high"), ("confidence" = Option<String>, Query, description = "tentative, firm or certain"), ("rule" = Option<String>, Query), ("host" = Option<String>, Query), ("flow_id" = Option<i64>, Query), ("q" = Option<String>, Query, description = "Text in the title, detail or path"), ("limit" = Option<u32>, Query, description = "Up to 5000; default 1000")), responses((status = 200, description = "OK", body = IssueList), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn list_issues() {}
+#[utoipa::path(get, path = "/issues/report", operation_id = "issues_report", tag = "issues", description = "The issues (same filters as the list) as a report file: format html (default), json, sarif, junit or markdown. Always an attachment with a CSP that lets nothing run. Secrets (cookies, tokens, passwords) are redacted unless redact=0, which needs the tester role and is audited. Needs the viewer role or above.", params(("format" = Option<String>, Query, description = "html, json, sarif, junit or markdown"), ("redact" = Option<String>, Query, description = "0 keeps secrets"), ("status" = Option<String>, Query), ("severity" = Option<String>, Query), ("confidence" = Option<String>, Query), ("rule" = Option<String>, Query), ("host" = Option<String>, Query), ("q" = Option<String>, Query)), responses((status = 200, description = "A report file", content_type = "text/html", body = String), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn issues_report() {}
+#[utoipa::path(get, path = "/issues/{id}/tracker", operation_id = "issue_tracker", tag = "issues", description = "One issue prepared for GitHub, Jira or Linear: title, Markdown body, labels and the JSON body of the tracker's create-issue call, to copy or post by hand. Bosun makes no request to the tracker. Secrets are redacted unless redact=0. Needs the tester role; every export is audited.", params(("id" = i64, Path), ("tracker" = Option<String>, Query, description = "github (default), jira or linear"), ("redact" = Option<String>, Query, description = "0 keeps secrets")), responses((status = 200, description = "OK", body = crate::issues::TrackerReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such issue", body = Error)))]
+fn issue_tracker() {}
+#[utoipa::path(post, path = "/issues/rescan", operation_id = "rescan_issues", tag = "issues", description = "Queue every recorded flow for the scanner again (after a rule changed). Counts start over; statuses are kept. Needs the tester role or above; audited.", responses((status = 204, description = "Queued"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn rescan_issues() {}
+#[utoipa::path(get, path = "/issues/{id}", operation_id = "get_issue", tag = "issues", description = "One issue with its evidence ranges and remediation. Needs the viewer role or above.", params(("id" = i64, Path, description = "Issue id")), responses((status = 200, description = "OK", body = bosun_store::Issue), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such issue", body = Error)))]
+fn get_issue() {}
+#[utoipa::path(patch, path = "/issues/{id}", operation_id = "change_issue", tag = "issues", description = "Set an issue's status (new, confirmed or false_positive). Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Issue id")), request_body = IssueChange, responses((status = 204, description = "Changed"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such issue", body = Error)))]
+fn change_issue() {}
+
 #[utoipa::path(get, path = "/audit", operation_id = "audit_log", tag = "accounts", description = "The audit log, newest first. Needs the admin role or above.", params(("before" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = Vec<AuditEntry>), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn audit_log() {}
 
 #[utoipa::path(get, path = "/flows/{id}/engage", operation_id = "flow_engage", tag = "history", description = "Comments, scripts, references and URLs in the response, and the parameters of the request, for finding what to test next. Scans up to 2 MiB of each body. Needs the viewer role.", params(("id" = i64, Path, description = "Flow id")), responses((status = 200, description = "OK", body = crate::engage::EngageReport), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such flow", body = Error)))]
 fn flow_engage() {}
+
+#[utoipa::path(get, path = "/analysis", operation_id = "host_analysis", tag = "history", description = "The distinct endpoints (ids in paths replaced by {n}, {uuid} and {hex}) and parameters of one host across the history, with counts, status codes and example values. Reads the newest 5,000 requests of the host (?limit up to 20,000); `capped` says there were more. Needs the viewer role.", params(("host" = String, Query, description = "Exact host name"), ("port" = Option<u16>, Query, description = "Only this port"), ("limit" = Option<u32>, Query, description = "How many of the newest requests to read")), responses((status = 200, description = "OK", body = crate::engage::HostAnalysis), (status = 400, description = "No host given", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn host_analysis() {}
 
 #[utoipa::path(get, path = "/flows/{id}/csrf-poc", operation_id = "flow_csrf_poc", tag = "history", description = "A cross-site request forgery proof of concept for the recorded request, as an HTML attachment to open in a test browser that is signed in to the target. Only a GET or POST with a form, JSON-object or multipart body can be reproduced; anything else is a 422 that says why. ?auto=1 submits on load. Needs the viewer role.", params(("id" = i64, Path, description = "Flow id"), ("auto" = Option<String>, Query, description = "1 to submit on load")), responses((status = 200, description = "An HTML file", content_type = "text/html", body = String), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such flow", body = Error), (status = 422, description = "The request cannot be reproduced by a form", body = Error)))]
 fn flow_csrf_poc() {}
@@ -347,12 +526,20 @@ fn flow_csrf_poc() {}
 #[utoipa::path(get, path = "/events", operation_id = "events", tag = "events", description = "WebSocket event stream. ?since=N&epoch=E resumes after event N of that engine run (see ProxyEvent). Needs the viewer role or above.", params(("since" = Option<i64>, Query), ("epoch" = Option<String>, Query)), responses((status = 101, description = "Done"), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn events() {}
 
-#[utoipa::path(post, path = "/decoder/apply", operation_id = "decoder_apply", tag = "decoder", description = "Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes) on base64 input. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role.", request_body = DecodeBody, responses((status = 200, description = "OK", body = DecodeReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Input too large", body = Error)))]
+#[utoipa::path(get, path = "/proto/schema", operation_id = "get_proto_schema", tag = "decoder", description = "The project's .proto schema, with the messages and gRPC calls it defines. Needs the viewer role or above.", responses((status = 200, description = "OK", body = ProtoSchema), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn get_proto_schema() {}
+
+#[utoipa::path(put, path = "/proto/schema", operation_id = "put_proto_schema", tag = "decoder", description = "Replace the project's .proto schema (up to 256 KiB; empty clears it). It must parse. Audited. Needs the tester role or above.", request_body = ProtoSchemaBody, responses((status = 200, description = "OK", body = ProtoSchema), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn put_proto_schema() {}
+
+#[utoipa::path(post, path = "/decoder/apply", operation_id = "decoder_apply", tag = "decoder", description = "Run a chain of up to 16 decoders or encoders (URL, HTML, Base64, hex, gzip, deflate, brotli, zstd, JWT, Unicode escapes, hashes, protobuf, gRPC, GraphQL) on base64 input. The protobuf and gRPC steps take an optional .proto schema (and a message or a gRPC call path) to show field names and types. Returns each step's output (the last in full); a failing step is reported and the steps before it are still returned. Input and each output are limited to 4 MiB. Needs the viewer role.", request_body = DecodeBody, responses((status = 200, description = "OK", body = DecodeReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Input too large", body = Error)))]
 fn decoder_apply() {}
 #[utoipa::path(post, path = "/decoder/smart", operation_id = "decoder_smart", tag = "decoder", description = "Guess and apply a chain of decoders (up to 16 layers). Plain text is returned with no steps. Needs the viewer role.", request_body = SmartBody, responses((status = 200, description = "OK", body = DecodeReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Input too large", body = Error)))]
 fn decoder_smart() {}
 #[utoipa::path(post, path = "/comparer/diff", operation_id = "comparer_diff", tag = "decoder", description = "Compare two inputs (up to 1 MiB each, base64) by word or by byte. Returns runs of equal, deleted and inserted bytes with their offsets. Very different large inputs are reported coarsely. Needs the viewer role.", request_body = DiffBody, responses((status = 200, description = "OK", body = bosun_codec::DiffResult), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Input too large", body = Error)))]
 fn comparer_diff() {}
+#[utoipa::path(post, path = "/import", operation_id = "import_requests", tag = "repeater", description = "Import request definitions from an OpenAPI or Swagger file, a GraphQL introspection result, a Postman collection, a HAR file, a list of URLs or a Burp XML export, and save them as Repeater tabs. The file is only parsed: nothing is sent, and a tab is sent later through the Repeater, which passes the scope gate. The one exception is a GraphQL import with introspection_url, which POSTs the introspection query to that endpoint through the same gate (an out-of-scope endpoint is refused with 403) and records the fetch as a Repeater flow. HAR and Burp responses are stored as flows (source import, nothing sent) only when store_responses is set. Files over 32 MiB, YAML aliases, XML entities and deeply nested input are refused. The reply lists the hosts the requests go to. The import is audited. Needs the tester role or above.", request_body = crate::imports::ImportBody, responses((status = 200, description = "OK", body = crate::imports::ImportReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Too large", body = Error), (status = 422, description = "The file could not be imported", body = Error)))]
+fn import_requests() {}
 #[utoipa::path(post, path = "/repeater/send", operation_id = "repeater_send", tag = "repeater", description = "Send a raw request once or many times (sequentially, in parallel, or as an HTTP/2 single-packet batch). Every send passes the scope gate and is recorded as a flow with source repeater. A send that is refused or fails comes back as a result with an error, not as an HTTP error. Needs the tester role or above.", request_body = SendBody, responses((status = 200, description = "OK", body = SendReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
 fn repeater_send() {}
 #[utoipa::path(get, path = "/repeater/settings", operation_id = "get_repeater_settings", tag = "repeater", description = "Whether the Repeater may send out of scope.", responses((status = 200, description = "OK", body = RepeaterSettings), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
@@ -363,16 +550,79 @@ fn put_repeater_settings() {}
 fn get_repeater_tabs() {}
 #[utoipa::path(post, path = "/repeater/ws", operation_id = "repeater_ws", tag = "repeater", description = "Open a WebSocket with a raw handshake, send frames exactly as described (any opcode, reserved bits, FIN and mask), listen for a while, then close. The handshake is recorded as a flow with source repeater and the frames as its messages. Passes the scope gate. A refused or failed connection comes back as a reply with an error. Needs the tester role or above.", request_body = WsBody, responses((status = 200, description = "OK", body = WsReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
 fn repeater_ws() {}
-#[utoipa::path(put, path = "/repeater/tabs", operation_id = "put_repeater_tabs", tag = "repeater", description = "Replace the Repeater's saved tabs (at most 100). Needs the tester role or above.", request_body = TabsDoc, responses((status = 200, description = "OK", body = TabsDoc), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Too large", body = Error)))]
+#[utoipa::path(put, path = "/repeater/tabs", operation_id = "put_repeater_tabs", tag = "repeater", description = "Replace the Repeater's saved tabs (at most 500). Needs the tester role or above.", request_body = TabsDoc, responses((status = 200, description = "OK", body = TabsDoc), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 413, description = "Too large", body = Error)))]
 fn put_repeater_tabs() {}
+#[utoipa::path(post, path = "/sequencer/analyze", operation_id = "sequencer_analyze", tag = "sequencer", description = "Analyse how random a set of tokens is (20 to 10000, each up to 1024 characters): per-position character statistics, bit-level bias, FIPS 140-2 (monobit, poker, runs, long run) on blocks of 20000 bits, an entropy estimate, checks for repeats and counters, and a verdict (excellent, good, poor, not_random). The result is the export. Needs the viewer role.", request_body = AnalyzeBody, responses((status = 200, description = "OK", body = bosun_sequencer::Analysis), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn sequencer_analyze() {}
+#[utoipa::path(post, path = "/sequencer/capture", operation_id = "sequencer_capture", tag = "sequencer", description = "Start collecting tokens: send a request up to 5000 times (one after another, with an optional pause) and take the token from a response header, a Set-Cookie cookie or a regular expression over the body. Every request passes the scope gate (scope, kill switch, per-host rate limit; a rate-limit refusal is waited out) through the Repeater's engine and is recorded as a flow with source repeater. At most two captures run at once. Poll /sequencer/capture/{id}. Needs the tester role or above.", request_body = CaptureBody, responses((status = 202, description = "Started", body = CaptureStarted), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 429, description = "Too many running", body = Error)))]
+fn sequencer_capture() {}
+#[utoipa::path(get, path = "/sequencer/capture/{id}", operation_id = "sequencer_capture_status", tag = "sequencer", description = "The progress of a capture and its tokens from index `from` on. Needs the viewer role.", params(("id" = u64, Path, description = "Capture id"), ("from" = Option<usize>, Query, description = "Return tokens from this index on")), responses((status = 200, description = "OK", body = CaptureStatus), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such capture", body = Error)))]
+fn sequencer_capture_status() {}
+#[utoipa::path(post, path = "/sequencer/capture/{id}/stop", operation_id = "sequencer_capture_stop", tag = "sequencer", description = "The stop switch: the capture ends after the request in flight. Needs the tester role or above.", params(("id" = u64, Path, description = "Capture id")), responses((status = 200, description = "OK", body = CaptureStatus), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such capture", body = Error)))]
+fn sequencer_capture_stop() {}
+
+#[utoipa::path(post, path = "/intruder/plan", operation_id = "intruder_plan", tag = "intruder", description = "Check an attack without sending anything: the request's positions, the payload sets, the options and the grep rules are validated, and the number of requests and the first `limit` requests' payloads (default 10, at most 1000) come back. A problem is a 400 that says what. Needs the tester role or above.", params(("limit" = Option<u32>, Query, description = "How many requests to list, 10 by default, 1000 at most.")), request_body = StartBody, responses((status = 200, description = "OK", body = PlanReply), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error)))]
+fn intruder_plan() {}
+#[utoipa::path(post, path = "/intruder/attacks", operation_id = "intruder_start", tag = "intruder", description = "Start an attack: fill the marked positions of a request with payloads (sniper, battering ram, pitchfork or cluster bomb) and send every request through the scope gate (the target must be in scope; there is no out-of-scope setting), recorded as flows with source intruder. Results are stored in the project and sent on the event stream (intruder_result, intruder_state). Up to three attacks run at once. Needs the tester role or above; audited.", request_body = StartBody, responses((status = 200, description = "The attack, running", body = AttackInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such item", body = Error), (status = 409, description = "Too many attacks running or stored", body = Error)))]
+fn intruder_start() {}
+#[utoipa::path(get, path = "/intruder/attacks", operation_id = "intruder_attacks", tag = "intruder", description = "The project's attacks, newest first, with live progress for running ones.", responses((status = 200, description = "OK", body = AttackList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn intruder_attacks() {}
+#[utoipa::path(get, path = "/intruder/attacks/{id}", operation_id = "intruder_attack", tag = "intruder", description = "One attack, with its request (position markers included) and the configuration it was started with.", params(("id" = i64, Path, description = "Attack id")), responses((status = 200, description = "OK", body = AttackDetail), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error)))]
+fn intruder_attack() {}
+#[utoipa::path(delete, path = "/intruder/attacks/{id}", operation_id = "intruder_delete", tag = "intruder", description = "Delete an attack and its results (the flows it recorded stay in history). A running attack is a 409. Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Attack id")), responses((status = 204, description = "Deleted"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error), (status = 409, description = "The attack is running", body = Error)))]
+fn intruder_delete() {}
+#[utoipa::path(get, path = "/intruder/attacks/{id}/results", operation_id = "intruder_results", tag = "intruder", description = "An attack's results in request order, up to 5000 per page (?offset and ?limit).", params(("id" = i64, Path, description = "Attack id"), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, description = "OK", body = ResultsReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error)))]
+fn intruder_results() {}
+#[utoipa::path(post, path = "/intruder/attacks/{id}/stop", operation_id = "intruder_stop", tag = "intruder", description = "The stop switch: no further request is sent and the ones in flight are dropped, at once. `stopped` is false when the attack was not running. (The kill switch, PUT /tools/stop, ends every attack too.) Needs the tester role or above; audited.", params(("id" = i64, Path, description = "Attack id")), responses((status = 200, description = "OK", body = StopReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such attack", body = Error)))]
+fn intruder_stop() {}
+#[utoipa::path(post, path = "/crawl/crawls", operation_id = "crawl_start", tag = "crawl", description = "Start a spider crawl from one or more URLs: it follows links, frames, redirects, GET forms, robots.txt and sitemaps, up to a depth and a page limit. Every request goes through the scope gate (a link outside the scope is listed in out_of_scope, never requested) and is recorded as a flow with source crawler, so the pages appear in the history and site map. POST forms are sent only with submit_post_forms. Two crawls run at once. Needs the tester role or above; audited.", request_body = CrawlStartBody, responses((status = 200, description = "The crawl, running", body = CrawlInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 429, description = "Too many crawls running", body = Error)))]
+fn crawl_start() {}
+#[utoipa::path(get, path = "/crawl/crawls", operation_id = "crawl_list", tag = "crawl", description = "The crawls of this run of the server, newest first, with live counts. Progress is also sent on the event stream (crawl_started, crawl_progress, crawl_done).", responses((status = 200, description = "OK", body = CrawlList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn crawl_list() {}
+#[utoipa::path(get, path = "/crawl/crawls/{id}", operation_id = "crawl_get", tag = "crawl", description = "One crawl: its state, the pages found so far from index ?from on, and, once it has ended, forms, out-of-scope links, robots and sitemap findings.", params(("id" = u64, Path, description = "Crawl id"), ("from" = Option<u64>, Query)), responses((status = 200, description = "OK", body = CrawlDetail), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such crawl", body = Error)))]
+fn crawl_get() {}
+#[utoipa::path(post, path = "/crawl/crawls/{id}/stop", operation_id = "crawl_stop", tag = "crawl", description = "The stop switch: no further request is sent. `stopped` is false when the crawl was not running. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Crawl id")), responses((status = 200, description = "OK", body = CrawlStopReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such crawl", body = Error)))]
+fn crawl_stop() {}
+#[utoipa::path(post, path = "/discover/runs", operation_id = "discover_start", tag = "discover", description = "Start content or parameter discovery (forced browsing). Mode paths tries a wordlist (and optional extensions) below a directory URL and probes the directories it finds; mode params tries parameter names on one page. Before probing, random names that cannot exist are requested to learn what not found looks like, so a site that answers 200 to everything gives no hits, and many hits with the same answer are dropped as a wildcard (counted in noise). Every request goes through the scope gate and the per-host rate limit; only hits are recorded as flows (source intruder). Two runs at once. Needs the tester role or above; audited.", request_body = DiscoverStartBody, responses((status = 200, description = "The run, started", body = DiscoverInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 429, description = "Too many runs", body = Error)))]
+fn discover_start() {}
+#[utoipa::path(get, path = "/discover/runs", operation_id = "discover_list", tag = "discover", description = "The discovery runs of this run of the server, newest first, with live counts.", responses((status = 200, description = "OK", body = DiscoverList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn discover_list() {}
+#[utoipa::path(get, path = "/discover/runs/{id}", operation_id = "discover_get", tag = "discover", description = "One discovery run: its state and the hits found so far (once it has ended also the directories probed, the wildcard noise dropped and whether the request limit cut it short).", params(("id" = u64, Path, description = "Run id")), responses((status = 200, description = "OK", body = DiscoverDetail), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such run", body = Error)))]
+fn discover_get() {}
+#[utoipa::path(post, path = "/discover/runs/{id}/stop", operation_id = "discover_stop", tag = "discover", description = "The stop switch: no further request is sent. `stopped` is false when the run was not running. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Run id")), responses((status = 200, description = "OK", body = DiscoverStopReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such run", body = Error)))]
+fn discover_stop() {}
+#[utoipa::path(get, path = "/advisories", operation_id = "advisories_status", tag = "advisories", description = "Which advisory database the passive scanner matches detected component versions against: the small built-in one or a loaded feed, with its sequence, date, size and the public keys that may sign a feed.", responses((status = 200, description = "OK", body = AdvisoryStatus), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn advisories_status() {}
+#[utoipa::path(put, path = "/advisories/trust", operation_id = "advisories_trust", tag = "advisories", description = "Set the Ed25519 public keys (base64, 32 bytes each, at most 5) that may sign an advisory feed. An empty list means no feed can be loaded. Needs the admin role; audited.", request_body = AdvisoryTrustBody, responses((status = 204, description = "Saved"), (status = 400, description = "A key is not valid", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn advisories_trust() {}
+#[utoipa::path(post, path = "/advisories/feed", operation_id = "advisories_load_feed", tag = "advisories", description = "Load an offline advisory feed: the file as text and its detached Ed25519 signature (base64). It is accepted only when the signature verifies under a trusted key and its sequence is higher than the database in force; it then replaces the built-in advisories and, by default, every recorded flow is queued for the scanner again. Nothing is fetched from a third party. Needs the admin role; audited (refusals too).", request_body = AdvisoryFeedBody, responses((status = 200, description = "Loaded", body = AdvisoryStatus), (status = 400, description = "Not a valid feed or signature", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 409, description = "The sequence is not higher than the one in force", body = Error), (status = 422, description = "No trusted key, or the signature does not verify", body = Error)))]
+fn advisories_load_feed() {}
+#[utoipa::path(delete, path = "/advisories/feed", operation_id = "advisories_reset", tag = "advisories", description = "Drop the loaded feed and go back to the built-in advisories. Needs the admin role; audited.", responses((status = 204, description = "Done"), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn advisories_reset() {}
+#[utoipa::path(post, path = "/auth-matrix", operation_id = "auth_matrix", tag = "scan", description = "The authorisation matrix: replay recorded flows as each of the given accounts and as nobody, and compare each answer with the owner's. An account that gets the same answer and is neither the owner nor listed in allowed is a finding (broken access control; missing authentication for no login). Account headers are given inline or taken from a vault entry opened on the server. Every send goes through the scope gate. Up to 200 probes and 20 accounts. With save_issues each finding is also saved as an issue. Needs the tester role or above; audited.", request_body = MatrixBody, responses((status = 200, description = "OK", body = MatrixResult), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such flow", body = Error)))]
+fn auth_matrix() {}
+#[utoipa::path(post, path = "/scan/scans", operation_id = "scan_start", tag = "scan", description = "Start an active scan of the given requests: each query, form or JSON value, cookie and (by strength) the last path segment or a header is probed by the enabled checks (see scan_checks). Every request goes through the scope gate (a target outside the scope is listed in refused, never contacted), is rate limited by the gate and the scan's own delay, and is recorded as a flow with source scanner. Findings become issues. Two scans run at once. Needs the tester role or above; audited.", request_body = ScanStartBody, responses((status = 200, description = "The scan, running", body = ScanInfo), (status = 400, description = "Bad request", body = Error), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 429, description = "Too many scans running", body = Error)))]
+fn scan_start() {}
+#[utoipa::path(get, path = "/scan/scans", operation_id = "scan_list", tag = "scan", description = "The scans of this run of the server, newest first, with live progress (units finished of planned, requests, findings).", responses((status = 200, description = "OK", body = ScanList), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn scan_list() {}
+#[utoipa::path(get, path = "/scan/checks", operation_id = "scan_checks", tag = "scan", description = "The active checks the scanner has: id, what each looks for, and whether it is destructive (saves data in the target, so it runs only when named in the scan's checks).", responses((status = 200, description = "OK", body = ScanChecks), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error)))]
+fn scan_checks() {}
+#[utoipa::path(get, path = "/scan/scans/{id}", operation_id = "scan_get", tag = "scan", description = "One scan: its state, progress, the findings so far and, once it has ended, the refused targets.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanDetail), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_get() {}
+#[utoipa::path(post, path = "/scan/scans/{id}/stop", operation_id = "scan_stop", tag = "scan", description = "The stop switch: no further request is sent. `changed` is false when the scan had ended. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanControlReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_stop() {}
+#[utoipa::path(post, path = "/scan/scans/{id}/pause", operation_id = "scan_pause", tag = "scan", description = "No request starts until the scan is resumed; requests in flight finish. `changed` is false when the scan had ended or was paused already. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanControlReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_pause() {}
+#[utoipa::path(post, path = "/scan/scans/{id}/resume", operation_id = "scan_resume", tag = "scan", description = "Continue a paused scan where it stopped. `changed` is false when it was not paused. Needs the tester role or above; audited.", params(("id" = u64, Path, description = "Scan id")), responses((status = 200, description = "OK", body = ScanControlReply), (status = 401, description = "Not signed in", body = Error), (status = 403, description = "Not allowed", body = Error), (status = 404, description = "No such scan", body = Error)))]
+fn scan_resume() {}
 
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Bosun API", version = env!("CARGO_PKG_VERSION"),
         description = "Local API of the Bosun engine. Sign in with a session cookie (send the CSRF token on changes) or an API token (`Authorization: Bearer bosun_…`)."),
-    paths(status, setup, login, logout, me, login_ticket, sso_config, change_password, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, site_map, get_scope, put_scope, get_rules, put_rules, get_intercept, put_intercept, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, events),
-    components(schemas(crate::engage::EngageReport, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
-    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "accounts"), (name = "projects"), (name = "events"))
+    paths(status, setup, login, login_totp, logout, me, login_ticket, sso_config, change_password, totp_status, totp_enroll, totp_confirm, totp_disable, totp_recovery_codes, totp_set_required, reset_user_totp, list_flows, check_flow_query, change_tags, list_organizer, add_to_organizer, update_organizer_item, delete_organizer_item, get_saved_filters, put_saved_filters, delete_flows, get_flow, annotate_flow, ws_messages, flow_body, flow_engage, flow_csrf_poc, host_analysis, site_map, get_scope, put_scope, get_rules, put_rules, get_proto_schema, put_proto_schema, get_map_rules, put_map_rules, get_intercept, put_intercept, get_response_filter, put_response_filter, intercept_queue, intercept_item, intercept_decide, intercept_forward_all, list_listeners, add_listener, update_listener, remove_listener, get_proxy_config, put_proxy_config, proxy_info, set_stopped, decoder_apply, decoder_smart, comparer_diff, import_requests, repeater_send, get_repeater_settings, put_repeater_settings, get_repeater_tabs, put_repeater_tabs, repeater_ws, intruder_plan, intruder_start, intruder_attacks, intruder_attack, intruder_delete, intruder_results, intruder_stop, crawl_start, crawl_list, crawl_get, crawl_stop, discover_start, discover_list, discover_get, discover_stop, advisories_status, advisories_trust, advisories_load_feed, advisories_reset, auth_matrix, scan_start, scan_list, scan_checks, scan_get, scan_stop, scan_pause, scan_resume, issues_report, issue_tracker, list_checks, add_check, validate_check, replace_check, set_check_enabled, delete_check, list_issues, rescan_issues, get_issue, change_issue, sequencer_analyze, sequencer_capture, sequencer_capture_status, sequencer_capture_stop, ca_info, ca_pem, launch_browser, list_tokens, create_token, delete_token, list_users, create_user, delete_user, set_user_role, list_user_sessions, revoke_user_sessions, revoke_user_session, list_user_tokens, revoke_user_token, list_projects, create_project, close_project, import_project, delete_project, open_project, rename_project, export_project, backup_project, audit_log, add_client_cert, delete_client_cert, list_client_certs, list_vault, create_vault_entry, update_vault_entry, delete_vault_entry, events),
+    components(schemas(bosun_proxy::ListenerSpec, bosun_proxy::ListenerInfo, bosun_proxy::LiveSettings, bosun_proxy::ProxyAuth, crate::listeners::ProxyConfigView, crate::imports::ImportBody, crate::imports::ImportReply, bosun_import::Format, ResponseFilter, bosun_store::Issue, bosun_store::Severity, bosun_store::Confidence, bosun_store::IssueStatus, bosun_store::Evidence, bosun_store::EvidencePart, LoginReply, SecondFactor, TotpStatus, TotpEnrolment, RecoveryCodes, crate::engage::EngageReport, crate::engage::HostAnalysis, bosun_codec::engage::TargetAnalysis, bosun_codec::engage::EndpointStat, bosun_codec::engage::StatusCount, bosun_codec::engage::ParamStat, bosun_codec::engage::Finding, bosun_codec::engage::FindingKind, bosun_codec::engage::Param, bosun_codec::engage::ParamWhere, OrganizerAdd, OrganizerChange, AddedCount, bosun_store::OrganizerItem, bosun_store::OrganizerStatus, ChangeTags, ChangedCount, QueryCheck, SavedFilter, bosun_store::query::TermSpan, bosun_store::query::QueryError, ProjectInfo, CurrentProject, ProjectList, NewProject, RenameProject, BackupInfo, ProxyEvent, FlowMeta, FlowSummary, WsMessage, InterceptItem, InterceptSummary, Decision)),
+    tags((name = "session"), (name = "history"), (name = "scope"), (name = "rules"), (name = "intercept"), (name = "proxy"), (name = "repeater"), (name = "decoder"), (name = "intruder"), (name = "crawl"), (name = "discover"), (name = "advisories"), (name = "scan"), (name = "issues"), (name = "checks"), (name = "clientcerts"), (name = "vault"), (name = "sequencer"), (name = "accounts"), (name = "projects"), (name = "events"))
 )]
 pub struct Api;
 
@@ -395,6 +645,14 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/auth/ticket"),
     ("get", "/auth/sso"),
     ("post", "/auth/password"),
+    ("post", "/auth/login/totp"),
+    ("get", "/auth/totp"),
+    ("post", "/auth/totp/enroll"),
+    ("post", "/auth/totp/confirm"),
+    ("post", "/auth/totp/disable"),
+    ("post", "/auth/totp/recovery-codes"),
+    ("put", "/auth/totp/required"),
+    ("delete", "/users/{id}/totp"),
     ("get", "/flows"),
     ("get", "/flows/query"),
     ("post", "/flows/tags"),
@@ -410,29 +668,74 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("get", "/flows/{id}/ws"),
     ("get", "/flows/{id}/engage"),
     ("get", "/flows/{id}/csrf-poc"),
+    ("get", "/analysis"),
     ("get", "/flows/{id}/{part}/body"),
     ("get", "/sitemap"),
     ("get", "/scope"),
     ("put", "/scope"),
     ("get", "/rules"),
     ("put", "/rules"),
+    ("get", "/proto/schema"),
+    ("put", "/proto/schema"),
+    ("get", "/map-rules"),
+    ("put", "/map-rules"),
     ("get", "/intercept"),
     ("put", "/intercept"),
+    ("get", "/intercept/response-filter"),
+    ("put", "/intercept/response-filter"),
     ("get", "/intercept/queue"),
     ("get", "/intercept/queue/{id}"),
     ("post", "/intercept/queue/{id}"),
     ("post", "/intercept/forward-all"),
     ("get", "/proxy"),
+    ("get", "/proxy/listeners"),
+    ("post", "/proxy/listeners"),
+    ("put", "/proxy/listeners/{id}"),
+    ("delete", "/proxy/listeners/{id}"),
+    ("get", "/proxy/config"),
+    ("put", "/proxy/config"),
     ("put", "/tools/stop"),
     ("post", "/decoder/apply"),
     ("post", "/decoder/smart"),
     ("post", "/comparer/diff"),
+    ("post", "/import"),
     ("post", "/repeater/send"),
     ("get", "/repeater/settings"),
     ("put", "/repeater/settings"),
     ("post", "/repeater/ws"),
     ("get", "/repeater/tabs"),
     ("put", "/repeater/tabs"),
+    ("post", "/sequencer/analyze"),
+    ("post", "/sequencer/capture"),
+    ("get", "/sequencer/capture/{id}"),
+    ("post", "/sequencer/capture/{id}/stop"),
+    ("post", "/intruder/plan"),
+    ("post", "/intruder/attacks"),
+    ("get", "/intruder/attacks"),
+    ("get", "/intruder/attacks/{id}"),
+    ("delete", "/intruder/attacks/{id}"),
+    ("get", "/intruder/attacks/{id}/results"),
+    ("post", "/intruder/attacks/{id}/stop"),
+    ("post", "/crawl/crawls"),
+    ("get", "/crawl/crawls"),
+    ("get", "/crawl/crawls/{id}"),
+    ("post", "/crawl/crawls/{id}/stop"),
+    ("post", "/discover/runs"),
+    ("get", "/discover/runs"),
+    ("get", "/discover/runs/{id}"),
+    ("post", "/discover/runs/{id}/stop"),
+    ("get", "/advisories"),
+    ("put", "/advisories/trust"),
+    ("post", "/advisories/feed"),
+    ("delete", "/advisories/feed"),
+    ("post", "/auth-matrix"),
+    ("post", "/scan/scans"),
+    ("get", "/scan/scans"),
+    ("get", "/scan/checks"),
+    ("get", "/scan/scans/{id}"),
+    ("post", "/scan/scans/{id}/stop"),
+    ("post", "/scan/scans/{id}/pause"),
+    ("post", "/scan/scans/{id}/resume"),
     ("get", "/ca"),
     ("get", "/ca/cert.pem"),
     ("post", "/browser/launch"),
@@ -457,6 +760,25 @@ pub const OPERATIONS: &[(&str, &str)] = &[
     ("post", "/projects/{name}/rename"),
     ("get", "/projects/{name}/export"),
     ("post", "/projects/{name}/backup"),
+    ("get", "/client-certs"),
+    ("post", "/client-certs"),
+    ("delete", "/client-certs/{id}"),
+    ("get", "/vault"),
+    ("post", "/vault"),
+    ("patch", "/vault/{id}"),
+    ("delete", "/vault/{id}"),
+    ("get", "/checks"),
+    ("post", "/checks"),
+    ("post", "/checks/validate"),
+    ("put", "/checks/{id}"),
+    ("patch", "/checks/{id}"),
+    ("delete", "/checks/{id}"),
+    ("get", "/issues"),
+    ("get", "/issues/report"),
+    ("get", "/issues/{id}/tracker"),
+    ("post", "/issues/rescan"),
+    ("get", "/issues/{id}"),
+    ("patch", "/issues/{id}"),
     ("get", "/audit"),
     ("get", "/events"),
 ];

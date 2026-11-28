@@ -52,13 +52,7 @@ pub fn run(cfg: &Config) -> Vec<Finding> {
             format!("data directory is accessible by other users (mode {m:o}); run chmod 700"),
         );
     }
-    let key_source = if std::env::var_os("BOSUN_DATA_KEY").is_some() {
-        "BOSUN_DATA_KEY".to_string()
-    } else if let Some(f) = &cfg.data_key_file {
-        f.display().to_string()
-    } else {
-        paths.key().display().to_string()
-    };
+    let key_source = crate::keychain::describe(cfg, &paths);
     match crate::load_key(cfg, &paths) {
         Ok(_) => push(&mut out, Level::Ok, format!("data key loaded from {key_source}")),
         Err(e) => push(&mut out, Level::Fail, format!("data key: {e:#}")),
@@ -71,6 +65,26 @@ pub fn run(cfg: &Config) -> Vec<Finding> {
                     Level::Ok,
                     format!("CA fingerprint (SHA-256): {}", ca.fingerprint()),
                 );
+                if ca.days_left() < 0 {
+                    push(
+                        &mut out,
+                        Level::Fail,
+                        format!(
+                            "the CA expired on {}; run `bosun ca rotate`",
+                            ca.not_after().date()
+                        ),
+                    );
+                } else if ca.days_left() <= bosun_ca::EXPIRY_WARN_DAYS {
+                    push(
+                        &mut out,
+                        Level::Warn,
+                        format!(
+                            "the CA expires in {} days ({}); run `bosun ca rotate` and replace it wherever it is installed",
+                            ca.days_left(),
+                            ca.not_after().date()
+                        ),
+                    );
+                }
                 if in_system_store(ca.cert_pem()) {
                     push(
                         &mut out,

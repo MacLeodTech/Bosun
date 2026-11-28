@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,9 @@ pub enum UpstreamProxy {
         username: Option<String>,
         #[serde(default, skip_serializing)]
         password: Option<String>,
+        /// File holding the password (container secrets); read at start-up, and instead of `password`.
+        #[serde(default)]
+        password_file: Option<PathBuf>,
     },
     Socks5 {
         addr: String,
@@ -21,6 +25,9 @@ pub enum UpstreamProxy {
         username: Option<String>,
         #[serde(default, skip_serializing)]
         password: Option<String>,
+        /// File holding the password (container secrets); read at start-up, and instead of `password`.
+        #[serde(default)]
+        password_file: Option<PathBuf>,
         /// Resolve names locally instead of at the SOCKS server.
         #[serde(default)]
         local_dns: bool,
@@ -41,6 +48,10 @@ pub struct ProxyConfig {
     /// self-signed certificates, and the tool must reach them. Turn it on when the network between you and
     /// the target is not trusted.
     pub verify_upstream_tls: bool,
+    /// Host name to send as the TLS server name (SNI) to that target instead of its own name, keyed by target
+    /// host (exact, case-insensitive). With `verify_upstream_tls` the certificate is checked against the
+    /// override. The `Host` header is not changed.
+    pub upstream_sni: std::collections::BTreeMap<String, String>,
     /// Offer HTTP/2 to clients (browsers) over ALPN.
     pub http2: bool,
     /// Requests whose body is larger than this are refused with 413.
@@ -77,11 +88,22 @@ pub struct ProxyConfig {
     pub self_addrs: Vec<SocketAddr>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ProxyAuth {
     pub username: String,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub password: String,
+    /// File holding the password (container secrets); read at start-up, and instead of `password`.
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub password_file: Option<PathBuf>,
+}
+
+/// Read a secret from a file: the contents without the trailing newline.
+pub fn read_secret_file(path: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read the secret file {}: {e}", path.display()))?;
+    Ok(text.trim_end_matches(['\r', '\n']).to_string())
 }
 
 impl Default for ProxyConfig {
@@ -92,6 +114,7 @@ impl Default for ProxyConfig {
             allow_clients: Vec::new(),
             upstream: None,
             verify_upstream_tls: false,
+            upstream_sni: std::collections::BTreeMap::new(),
             http2: true,
             max_request_body: 64 * 1024 * 1024,
             record_body_limit: 16 * 1024 * 1024,
@@ -111,6 +134,41 @@ impl Default for ProxyConfig {
 }
 
 impl ProxyConfig {
+    /// Load every `password_file` into its `password`. Setting both a password and its file is an error.
+    pub fn resolve_secrets(&mut self) -> Result<(), String> {
+        if let Some(a) = &mut self.auth
+            && let Some(f) = &a.password_file
+        {
+            if !a.password.is_empty() {
+                return Err("proxy.auth: set password or password_file, not both".into());
+            }
+            a.password = read_secret_file(f)?;
+        }
+        match &mut self.upstream {
+            Some(
+                UpstreamProxy::Http {
+                    password,
+                    password_file,
+                    ..
+                }
+                | UpstreamProxy::Socks5 {
+                    password,
+                    password_file,
+                    ..
+                },
+            ) => {
+                if let Some(f) = password_file {
+                    if password.is_some() {
+                        return Err("proxy.upstream: set password or password_file, not both".into());
+                    }
+                    *password = Some(read_secret_file(f)?);
+                }
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
     /// Refuse configurations that would make an open proxy.
     pub fn validate(&self) -> Result<(), String> {
         if !self.listen.ip().is_loopback() && self.auth.is_none() && self.allow_clients.is_empty() {
@@ -125,6 +183,139 @@ impl ProxyConfig {
         {
             return Err("proxy.auth needs a username and a password of at least 12 characters".into());
         }
+        for (host, sni) in &self.upstream_sni {
+            if host.is_empty() || rustls::pki_types::ServerName::try_from(sni.as_str()).is_err() {
+                return Err(format!(
+                    "proxy.upstream_sni: \"{host}\" -> \"{sni}\" is not a host name to send as the server name"
+                ));
+            }
+        }
         Ok(())
     }
 }
+
+/// One proxy listener and the options that belong to it. The first listener comes from the `proxy` section of the
+/// config file; others are added while running. Everything here changes live (a new address means a new bind).
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListenerSpec {
+    /// Address to listen on, for example `127.0.0.1:8081`. Loopback unless `auth` or `allow_clients` is set.
+    #[schema(value_type = String)]
+    pub addr: SocketAddr,
+    /// Accept origin-form requests (`GET /path` with a Host header) as if they were proxied.
+    #[serde(default)]
+    pub invisible: bool,
+    /// Hosts whose TLS this listener tunnels untouched (scope host pattern syntax).
+    #[serde(default)]
+    pub tls_passthrough: Vec<String>,
+    /// Basic credentials clients must send as `Proxy-Authorization`. The password is never returned.
+    #[serde(default)]
+    pub auth: Option<ProxyAuth>,
+    /// Only these client networks may use this listener (empty: anyone who can reach it).
+    #[serde(default)]
+    #[schema(value_type = Vec<String>)]
+    pub allow_clients: Vec<IpNet>,
+    /// At most this many connections open on this listener at once; more are closed at accept (existing ones keep
+    /// running). Unset: only the proxy-wide connection limit applies.
+    #[serde(default)]
+    pub max_connections: Option<usize>,
+}
+
+impl ListenerSpec {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.addr.ip().is_loopback() && self.auth.is_none() && self.allow_clients.is_empty() {
+            return Err(format!(
+                "the proxy listener {} is not on loopback: set credentials (auth) or a client allowlist \
+                 (allow_clients) so it cannot be used as an open proxy",
+                self.addr
+            ));
+        }
+        if let Some(a) = &self.auth
+            && (a.username.is_empty() || a.password.len() < 12)
+        {
+            return Err("auth needs a username and a password of at least 12 characters".into());
+        }
+        if self.max_connections == Some(0) {
+            return Err("max_connections must be at least 1 (leave it unset for no per-listener cap)".into());
+        }
+        if self.tls_passthrough.len() > 1000 || self.allow_clients.len() > 1000 {
+            return Err("too many pass-through hosts or client networks".into());
+        }
+        Ok(())
+    }
+}
+
+impl ProxyConfig {
+    /// The listener the `proxy` section describes.
+    pub fn listener_spec(&self) -> ListenerSpec {
+        ListenerSpec {
+            addr: self.listen,
+            invisible: self.invisible,
+            tls_passthrough: self.tls_passthrough.clone(),
+            auth: self.auth.clone(),
+            allow_clients: self.allow_clients.clone(),
+            max_connections: None,
+        }
+    }
+}
+
+/// Settings that change while running, without a restart. Everything else in the `proxy` section needs one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LiveSettings {
+    /// Requests whose body is larger than this are refused with 413.
+    pub max_request_body: usize,
+    /// Only this much of each body is recorded.
+    pub record_body_limit: usize,
+    /// Buffered responses (response intercept, body rules) larger than this fail.
+    pub max_buffered_response: usize,
+    /// Record traffic to hosts that are out of scope.
+    pub record_out_of_scope: bool,
+    /// Seconds to wait for an upstream response head.
+    pub upstream_timeout_secs: u64,
+    /// Seconds a client may take to send a request's headers (applies to new connections).
+    pub header_timeout_secs: u64,
+    /// Offer HTTP/2 to clients over ALPN (applies to new connections).
+    pub http2: bool,
+    /// Most client connections at once, summed over all listeners.
+    pub max_connections: usize,
+}
+
+impl LiveSettings {
+    pub fn from_config(c: &ProxyConfig) -> Self {
+        Self {
+            max_request_body: c.max_request_body,
+            record_body_limit: c.record_body_limit,
+            max_buffered_response: c.max_buffered_response,
+            record_out_of_scope: c.record_out_of_scope,
+            upstream_timeout_secs: c.upstream_timeout_secs,
+            header_timeout_secs: c.header_timeout_secs,
+            http2: c.http2,
+            max_connections: c.max_connections,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_connections == 0 || self.max_connections > 1_000_000 {
+            return Err("max_connections must be between 1 and 1000000".into());
+        }
+        if self.upstream_timeout_secs == 0 || self.header_timeout_secs == 0 {
+            return Err("timeouts must be at least 1 second".into());
+        }
+        if self.record_body_limit == 0 || self.max_request_body == 0 || self.max_buffered_response == 0 {
+            return Err("body limits must be above zero".into());
+        }
+        Ok(())
+    }
+}
+
+/// `proxy` settings that cannot change while running. A change to one of these needs a restart.
+pub const RESTART_ONLY: &[&str] = &[
+    "upstream",
+    "verify_upstream_tls",
+    "upstream_sni",
+    "memory_budget_mib",
+    "max_intercept_items",
+    "max_intercept_bytes",
+    "listen",
+];

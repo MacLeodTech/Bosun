@@ -3,6 +3,8 @@
   // server (`/decoder/apply`, `/decoder/smart`); nothing here is rendered as HTML, only shown as text.
   import { api } from '../lib/api';
   import { inbox } from '../lib/inbox.svelte';
+  import { protoSchema } from '../lib/protoschema.svelte';
+  import { session } from '../lib/session.svelte';
   import { b64ToBytes, bytesToB64, bytesToText, fmtSize, hexDump, textToBytes } from '../lib/bytes';
   import type { components } from '../lib/api-types';
 
@@ -22,12 +24,23 @@
     { id: 'brotli_decode', label: 'Brotli decompress', group: 'Decode' },
     { id: 'zstd_decode', label: 'Zstandard decompress', group: 'Decode' },
     { id: 'jwt_decode', label: 'JWT decode', group: 'Decode' },
+    { id: 'protobuf_decode', label: 'Protobuf to text (no schema)', group: 'Decode' },
+    { id: 'grpc_decode', label: 'gRPC frames to text', group: 'Decode' },
+    { id: 'graphql_decode', label: 'GraphQL query and variables', group: 'Decode' },
     { id: 'url_encode', label: 'URL encode', group: 'Encode' },
     { id: 'html_encode', label: 'HTML encode', group: 'Encode' },
     { id: 'base64_encode', label: 'Base64 encode', group: 'Encode' },
     { id: 'base64url_encode', label: 'Base64url encode', group: 'Encode' },
     { id: 'hex_encode', label: 'Hex encode', group: 'Encode' },
     { id: 'unicode_escape', label: 'Unicode escape', group: 'Encode' },
+    { id: 'protobuf_encode', label: 'Text to protobuf', group: 'Encode' },
+    { id: 'grpc_encode', label: 'Text to gRPC frames', group: 'Encode' },
+    { id: 'gzip_encode', label: 'gzip compress', group: 'Encode' },
+    { id: 'deflate_encode', label: 'deflate (zlib) compress', group: 'Encode' },
+    { id: 'brotli_encode', label: 'Brotli compress', group: 'Encode' },
+    { id: 'zstd_encode', label: 'Zstandard compress', group: 'Encode' },
+    { id: 'md5', label: 'MD5', group: 'Hash' },
+    { id: 'sha1', label: 'SHA-1', group: 'Hash' },
     { id: 'sha256', label: 'SHA-256', group: 'Hash' },
     { id: 'sha512', label: 'SHA-512', group: 'Hash' },
   ];
@@ -43,6 +56,28 @@
   let busy = $state(false);
   let hex = $state(false);
   let seq = 0;
+
+  // A .proto schema for the protobuf and gRPC steps. The text here is tried as it is typed; "Save to project" keeps
+  // it for the message viewer and the Repeater too.
+  const PROTO_OPS: Op[] = ['protobuf_decode', 'protobuf_encode', 'grpc_decode', 'grpc_encode'];
+  let draft = $state('');
+  let message = $state('');
+  let schemaNote = $state('');
+  let draftTouched = false;
+  protoSchema.ensure();
+  $effect(() => { if (!draftTouched) draft = protoSchema.source; });
+  const usesProto = $derived(chain.some((o) => PROTO_OPS.includes(o)));
+  /** A call path (`/pkg.Service/Method`) names the request message of that call; anything else is a message name. */
+  function schemaFields(): { schema?: string; message?: string; rpc?: string } {
+    if (!usesProto || !draft.trim()) return {};
+    const m = message.trim();
+    return m.startsWith('/') ? { schema: draft, rpc: m } : { schema: draft, ...(m ? { message: m } : {}) };
+  }
+  async function saveSchema() {
+    schemaNote = '';
+    try { await protoSchema.save(draft); draftTouched = false; schemaNote = 'Saved to the project.'; }
+    catch (e) { schemaNote = e instanceof Error ? e.message : String(e); }
+  }
 
   // "Send to Decoder" puts text here; take it once.
   $effect(() => {
@@ -61,7 +96,7 @@
     if (!chain.length) { reply = null; return; }
     busy = true;
     try {
-      const r = await api.post<Reply>('/decoder/apply', { input: bytesToB64(inputBytes()), ops: chain });
+      const r = await api.post<Reply>('/decoder/apply', { input: bytesToB64(inputBytes()), ops: chain, ...schemaFields() });
       if (mine === seq) reply = r;
     } catch (e) {
       if (mine === seq) error = e instanceof Error ? e.message : String(e);
@@ -121,6 +156,20 @@
   <label class="small"><input type="checkbox" bind:checked={hex} /> Show as hex</label>
 </div>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
+<details class="schema">
+  <summary>Protobuf schema{#if protoSchema.source} (the project has one){/if}</summary>
+  <p class="small muted pad">Paste a <code>.proto</code> file to see field names and types in the protobuf and gRPC steps. Name a message, or a call such as <code>/pkg.Service/Method</code>.</p>
+  <textarea class="code edit short" spellcheck="false" bind:value={draft} oninput={() => { draftTouched = true; void run(); }} aria-label="Protobuf schema"></textarea>
+  <div class="toolbar small">
+    <label>Message or call <input list="proto-names" bind:value={message} oninput={() => void run()} placeholder="shop.v1.Item or /shop.v1.Shop/Get" /></label>
+    <datalist id="proto-names">
+      {#each protoSchema.messages as m (m)}<option value={m}></option>{/each}
+      {#each protoSchema.calls as c (c)}<option value={c}></option>{/each}
+    </datalist>
+    <button onclick={saveSchema} disabled={!session.can('tester')} title="Keep this schema in the open project">Save to project</button>
+    {#if schemaNote}<span class="muted" role="status">{schemaNote}</span>{/if}
+  </div>
+</details>
 
 <div class="body">
   <div class="block">
@@ -157,6 +206,9 @@
 <style>
   .body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
   .block { border-bottom: 1px solid var(--line); display: flex; flex-direction: column; }
+  .schema { border-bottom: 1px solid var(--line); }
+  .schema summary { padding: .3rem .5rem; cursor: pointer; }
+  .edit.short { min-height: 5rem; width: 100%; box-sizing: border-box; }
   .edit { min-height: 8rem; resize: vertical; border: 0; background: var(--bg); padding: .5rem; }
   .out { margin: 0; padding: .5rem; max-height: 16rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

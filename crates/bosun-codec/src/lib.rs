@@ -5,10 +5,14 @@
 
 mod diff;
 pub mod engage;
+pub mod graphql;
 mod ops;
+pub mod proto;
+pub mod schema;
 
 pub use diff::{DiffKind, DiffLevel, DiffOp, DiffResult, diff};
-pub use ops::{Op, apply, apply_chain, smart_decode};
+pub use ops::{Op, apply, apply_chain, apply_chain_with, apply_with, smart_decode};
+pub use schema::{Schema, Typed};
 
 /// Why a step failed. The message is safe to show to the user.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
